@@ -1,13 +1,28 @@
 <!doctype html>
 <html lang="es">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>SnapMovieNow</title>
-<meta name="description" content="Sitio oficial de SnapMovieNow">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SnapMovieNow</title><meta name="description" content="SnapMovieNow — películas y series">
 <style>
-*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:#07131f;color:#fff;font-family:Arial,sans-serif}.card{text-align:center;padding:42px 24px;max-width:720px}.brand{font-size:clamp(42px,9vw,76px);font-weight:800;letter-spacing:-2px}.brand span{color:#28d7d1}p{font-size:20px;color:#c9d7e3;line-height:1.5}.badge{display:inline-block;margin-top:14px;padding:10px 18px;border:1px solid #28d7d1;border-radius:999px;color:#28d7d1}
-</style>
-</head>
-<body><main class="card"><div class="brand">Snap<span>MovieNow</span></div><p>Tu entretenimiento, en un solo lugar.</p><div class="badge">Sitio oficial</div></main></body>
-</html>
+:root{--bg:#05090d;--panel:#0b1218;--line:#1b2a33;--accent:#25d9d1;--muted:#94a7b3}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:#fff;font-family:Arial,sans-serif}button{font:inherit}
+header{position:sticky;top:0;z-index:5;background:#05090df2;border-bottom:1px solid var(--line);padding:14px 4%;display:flex;align-items:center;gap:22px}
+.logo{font-weight:900;font-size:25px}.logo span{color:var(--accent)}nav{display:flex;gap:26px;margin:auto}nav a{color:#dce7ec;text-decoration:none}.active{color:var(--accent)!important;border-bottom:2px solid var(--accent);padding-bottom:8px}
+.icon{border:0;background:none;color:#fff;font-size:25px;cursor:pointer}.hero{min-height:330px;padding:70px 6%;display:flex;align-items:center;background:radial-gradient(circle at 70% 40%,#123747 0,transparent 36%),linear-gradient(100deg,#07131b,#05090d)}
+.hero h1{font-size:clamp(38px,7vw,72px);margin:0 0 12px}.hero p{max-width:570px;color:#b9c8d0;font-size:18px;line-height:1.5}.cta{display:inline-block;background:var(--accent);color:#031014;padding:12px 20px;border-radius:8px;font-weight:bold}
+main{padding:18px 4% 60px}.section{margin:30px 0}.section-head{display:flex;justify-content:space-between;align-items:center}.section h2{font-size:24px}.more{color:var(--accent)}
+.row{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(155px,1fr);gap:14px;overflow-x:auto;padding:8px 0 14px;scrollbar-width:none}.card{height:235px;border-radius:10px;background:linear-gradient(145deg,#17303d,#0c1820);border:1px solid #1c303b;display:flex;align-items:flex-end;padding:14px;position:relative;overflow:hidden}.card:before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 70% 20%,#23576c,transparent 50%)}.card b{z-index:1}.tag{position:absolute;z-index:2;top:9px;right:9px;background:var(--accent);color:#041114;padding:4px 7px;border-radius:4px;font-size:11px;font-weight:bold}
+.drawer{position:fixed;z-index:20;right:-360px;top:0;width:min(360px,88vw);height:100vh;background:#0b0f12;border-left:1px solid #26343c;padding:28px 24px;transition:.25s}.drawer.open{right:0}.drawer h2{color:var(--accent)}.drawer a{display:block;color:#fff;text-decoration:none;padding:14px 4px;border-bottom:1px solid #1d282e}.close{float:right}
+@media(max-width:700px){nav{display:none}.hero{min-height:270px}.row{grid-auto-columns:42%}.card{height:210px}}
+</style></head>
+<body>
+<header><div class="logo">SNAP<span>MOVIENOW</span></div><nav><a class="active" href="#">Destacados</a><a href="#movies">Películas</a><a href="#series">Series</a><a href="#lists">Mi Lista</a></nav><button class="icon" aria-label="Buscar">⌕</button><button class="icon" onclick="menu()" aria-label="Menú">☰</button></header>
+<section class="hero"><div><div style="color:var(--accent);font-weight:bold">SNAPMOVIENOW ORIGINAL</div><h1>Tu entretenimiento<br>en un solo lugar</h1><p>Una experiencia moderna para descubrir películas y series, guardar favoritos y continuar viendo desde cualquier dispositivo compatible.</p><span class="cta">Explorar contenido</span></div></section>
+<main>
+<section class="section"><div class="section-head"><h2>Continuar viendo</h2><span class="more">Ver más</span></div><div class="row"><div class="card"><b>Continuar película</b></div><div class="card"><b>Continuar serie · E5</b></div><div class="card"><b>Tu selección</b></div><div class="card"><b>Recomendado</b></div><div class="card"><b>Último episodio</b></div></div></section>
+<section class="section" id="movies"><div class="section-head"><h2>Películas populares</h2><span class="more">Ver más</span></div><div class="row"><div class="card"><span class="tag">4K</span><b>Acción</b></div><div class="card"><span class="tag">NUEVO</span><b>Estrenos</b></div><div class="card"><b>Aventura</b></div><div class="card"><span class="tag">HD</span><b>Drama</b></div><div class="card"><b>Familia</b></div><div class="card"><b>Comedia</b></div></div></section>
+<section class="section" id="series"><div class="section-head"><h2>Series para ti</h2><span class="more">Ver más</span></div><div class="row"><div class="card"><b>Series nuevas</b></div><div class="card"><b>Más vistas</b></div><div class="card"><b>Temporadas completas</b></div><div class="card"><b>Documentales</b></div><div class="card"><b>Infantil</b></div></div></section>
+</main>
+<aside class="drawer" id="drawer"><button class="icon close" onclick="menu()">✕</button><h2>SnapMovieNow</h2><a href="#">⌂ Inicio</a><a href="#movies">▶ Películas</a><a href="#series">▣ Series</a><a href="#lists">♥ Favoritos</a><a href="#">◷ Historial</a><a href="#">♙ Perfiles</a><a href="#">☻ Modo infantil</a><a href="#">▣ Dispositivos</a><a href="#">? Ayuda</a><a href="#">⚙ Configuración</a></aside>
+<script>function menu(){document.getElementById('drawer').classList.toggle('open')}</script>
+</body></html>
