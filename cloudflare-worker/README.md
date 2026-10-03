@@ -5,3 +5,6 @@ Cloudflare Worker backend for authentication/catalog requests and temporary play
 ## Deploy
 
 Use Cloudflare's Deploy to Cloudflare flow for this directory. Set TICKET_SECRET to a long random value when prompted.
+
+
+Deployment refresh: Cloudflare root directory configured as `cloudflare-worker` (2026-10-03).
