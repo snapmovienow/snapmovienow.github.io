@@ -18,6 +18,33 @@ const headers = {
 };
 
 Deno.serve(async (req) => {
+  const requestUrl = new URL(req.url);
+
+  if (requestUrl.pathname === "/stream" && req.method === "GET") {
+    try {
+      const token = requestUrl.searchParams.get("t") || "";
+      const raw = atob(token.replace(/-/g, "+").replace(/_/g, "/"));
+      const data = JSON.parse(raw);
+      if (!data.username || !data.password || !data.id || !data.type) {
+        return new Response("Bad stream request", { status: 400 });
+      }
+      const folder = data.type === "series" ? "series" : "movie";
+      const ext = String(data.ext || "mp4").replace(/[^a-zA-Z0-9]/g, "") || "mp4";
+      const target = ORIGIN + "/" + folder + "/" + encodeURIComponent(data.username) + "/" + encodeURIComponent(data.password) + "/" + encodeURIComponent(data.id) + "." + ext;
+      const range = req.headers.get("range");
+      const upstream = await fetch(target, { headers: range ? { Range: range } : {}, redirect: "follow" });
+      const h = new Headers();
+      for (const name of ["content-type","content-length","content-range","accept-ranges"]) {
+        const v = upstream.headers.get(name); if (v) h.set(name,v);
+      }
+      h.set("Access-Control-Allow-Origin", SITE);
+      h.set("Cache-Control","no-store");
+      return new Response(upstream.body,{status:upstream.status,headers:h});
+    } catch {
+      return new Response("Stream unavailable",{status:502});
+    }
+  }
+
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 204, headers });
   }
@@ -33,7 +60,7 @@ Deno.serve(async (req) => {
     const body = await req.json();
     const op = String(body.op || "");
 
-    if (op !== "auth" && !Object.hasOwn(actions, op)) {
+    if (op !== "auth" && op !== "stream_token" && !Object.hasOwn(actions, op)) {
       return Response.json(
         { error: "operation_not_allowed" },
         { status: 403, headers },
@@ -45,6 +72,12 @@ Deno.serve(async (req) => {
         { error: "credentials_required" },
         { status: 400, headers },
       );
+    }
+
+    if (op === "stream_token") {
+      const payload = JSON.stringify({ username: String(body.username), password: String(body.password), type: String(body.type || "movie"), id: String(body.id || ""), ext: String(body.ext || "mp4") });
+      const token = btoa(payload).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+      return Response.json({ url: requestUrl.origin + "/stream?t=" + token }, { headers });
     }
 
     const url = new URL(ORIGIN + "/player_api.php");
