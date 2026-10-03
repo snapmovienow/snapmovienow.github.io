@@ -7,6 +7,7 @@ const actions: Record<string, string> = {
   series_categories: "get_series_categories",
   series: "get_series",
   series_info: "get_series_info",
+  vod_info: "get_vod_info",
 };
 
 const headers = {
@@ -56,6 +57,9 @@ Deno.serve(async (req) => {
 
     if (op === "series_info" && body.series_id) {
       url.searchParams.set("series_id", String(body.series_id));
+    }
+    if (op === "vod_info" && body.vod_id) {
+      url.searchParams.set("vod_id", String(body.vod_id));
     }
 
     const upstream = await fetch(url, {
