@@ -14,8 +14,8 @@ const streamTickets = new Map<string, Record<string, any>>();
 
 const headers = {
   "Access-Control-Allow-Origin": SITE,
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "content-type",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Headers": "content-type, range, if-range",
   "Cache-Control": "no-store",
 };
 
@@ -27,6 +27,20 @@ Deno.serve(async (req) => {
       return Response.json({ ok: true, tickets: "memory", version: "playback-v3" }, { headers: { ...headers, "Access-Control-Allow-Methods": "GET, POST, OPTIONS" } });
     } catch (e) {
       return Response.json({ ok: false, kv: false, error: String(e) }, { status: 500, headers });
+    }
+  }
+
+  if (requestUrl.pathname === "/storage-health" && req.method === "GET") {
+    try {
+      const kv = await Deno.openKv();
+      const key = ["health", crypto.randomUUID()];
+      await kv.set(key, "ok", { expireIn: 60000 });
+      const value = await kv.get(key);
+      await kv.delete(key);
+      kv.close();
+      return Response.json({ ok: value.value === "ok", storage: "deno-kv" }, { headers });
+    } catch (e) {
+      return Response.json({ ok: false, storage: "deno-kv", error: String(e) }, { status: 500, headers });
     }
   }
 
@@ -55,7 +69,7 @@ Deno.serve(async (req) => {
         const v = upstream.headers.get(name); if (v) h.set(name,v);
       }
       h.set("Access-Control-Allow-Origin", SITE);
-      h.set("Access-Control-Expose-Headers","Content-Length, Content-Range, Accept-Ranges, ETag, Last-Modified");
+      h.set("Access-Control-Expose-Headers","Content-Length, Content-Range, Accept-Ranges, ETag, Last-Modified, X-Stream-Range-Warning");
       h.set("Cache-Control","no-store");
       if (range && upstream.status !== 206) h.set("X-Stream-Range-Warning", "upstream-did-not-return-206");
       return new Response(upstream.body,{status:upstream.status,headers:h});
