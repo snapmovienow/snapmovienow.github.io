@@ -20,6 +20,19 @@ const headers = {
 Deno.serve(async (req) => {
   const requestUrl = new URL(req.url);
 
+  if (requestUrl.pathname === "/health" && req.method === "GET") {
+    try {
+      const kv = await Deno.openKv();
+      const key = ["health", crypto.randomUUID()];
+      await kv.set(key, "ok", { expireIn: 60000 });
+      const check = await kv.get(key);
+      await kv.delete(key);
+      return Response.json({ ok: check.value === "ok", kv: true, version: "playback-v2" }, { headers: { ...headers, "Access-Control-Allow-Methods": "GET, POST, OPTIONS" } });
+    } catch (e) {
+      return Response.json({ ok: false, kv: false, error: String(e) }, { status: 500, headers });
+    }
+  }
+
   if (requestUrl.pathname === "/stream" && req.method === "GET") {
     try {
       const token = requestUrl.searchParams.get("t") || "";
