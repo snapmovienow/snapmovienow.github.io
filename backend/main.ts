@@ -10,7 +10,17 @@ const actions: Record<string, string> = {
   vod_info: "get_vod_info",
 };
 
+let kv: Deno.Kv | null = null;
+try { kv = await Deno.openKv(); } catch { kv = null; }
 const streamTickets = new Map<string, Record<string, any>>();
+async function putTicket(token:string,data:Record<string,any>){
+  if(kv){ await kv.set(["stream_ticket",token],data,{expireIn:43200000}); return "kv"; }
+  streamTickets.set(token,data); return "memory";
+}
+async function getTicket(token:string){
+  if(kv){ return (await kv.get<Record<string,any>>(["stream_ticket",token])).value; }
+  return streamTickets.get(token)||null;
+}
 
 const headers = {
   "Access-Control-Allow-Origin": SITE,
@@ -24,7 +34,7 @@ Deno.serve(async (req) => {
 
   if (requestUrl.pathname === "/health" && req.method === "GET") {
     try {
-      return Response.json({ ok: true, tickets: "memory", version: "playback-v3" }, { headers: { ...headers, "Access-Control-Allow-Methods": "GET, POST, OPTIONS" } });
+      return Response.json({ ok: true, tickets: kv ? "kv" : "memory-fallback", version: "playback-v4" }, { headers: { ...headers, "Access-Control-Allow-Methods": "GET, POST, OPTIONS" } });
     } catch (e) {
       return Response.json({ ok: false, kv: false, error: String(e) }, { status: 500, headers });
     }
@@ -47,10 +57,9 @@ Deno.serve(async (req) => {
   if (requestUrl.pathname === "/stream" && req.method === "GET") {
     try {
       const token = requestUrl.searchParams.get("t") || "";
-      const data = streamTickets.get(token) || null;
+      const data = await getTicket(token);
       if (!data || data.expires < Date.now()) {
-        streamTickets.delete(token);
-        return new Response("Stream link expired", { status: 410 });
+        if (!kv) streamTickets.delete(token);\n        return new Response("Stream link expired", { status: 410 });
       }
       if (!data.username || !data.password || !data.id || !data.type) {
         return new Response("Bad stream request", { status: 400 });
@@ -109,8 +118,9 @@ Deno.serve(async (req) => {
 
     if (op === "stream_token") {
       const token = crypto.randomUUID();
-      streamTickets.set(token, { username: String(body.username), password: String(body.password), type: String(body.type || "movie"), id: String(body.id || ""), ext: String(body.ext || "mp4"), expires: Date.now() + 43200000 });
-      return Response.json({ url: requestUrl.origin + "/stream?t=" + token }, { headers });
+      const ticket={ username:String(body.username), password:String(body.password), type:String(body.type||"movie"), id:String(body.id||""), ext:String(body.ext||"mp4"), expires:Date.now()+43200000 };
+      const store=await putTicket(token,ticket);
+      return Response.json({ url:requestUrl.origin+"/stream?t="+token, ticket_store:store }, { headers });
     }
 
     const url = new URL(ORIGIN + "/player_api.php");
