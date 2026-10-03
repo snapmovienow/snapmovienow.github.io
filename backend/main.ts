@@ -23,8 +23,10 @@ Deno.serve(async (req) => {
   if (requestUrl.pathname === "/stream" && req.method === "GET") {
     try {
       const token = requestUrl.searchParams.get("t") || "";
-      const raw = atob(token.replace(/-/g, "+").replace(/_/g, "/"));
-      const data = JSON.parse(raw);
+      const kv = await Deno.openKv();
+      const saved = await kv.get(["stream", token]);
+      const data = saved.value as Record<string, string> | null;
+      if (!data) return new Response("Stream link expired", { status: 410 });
       if (!data.username || !data.password || !data.id || !data.type) {
         return new Response("Bad stream request", { status: 400 });
       }
@@ -75,8 +77,9 @@ Deno.serve(async (req) => {
     }
 
     if (op === "stream_token") {
-      const payload = JSON.stringify({ username: String(body.username), password: String(body.password), type: String(body.type || "movie"), id: String(body.id || ""), ext: String(body.ext || "mp4") });
-      const token = btoa(payload).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+      const token = crypto.randomUUID();
+      const kv = await Deno.openKv();
+      await kv.set(["stream", token], { username: String(body.username), password: String(body.password), type: String(body.type || "movie"), id: String(body.id || ""), ext: String(body.ext || "mp4") }, { expireIn: 300000 });
       return Response.json({ url: requestUrl.origin + "/stream?t=" + token }, { headers });
     }
 
