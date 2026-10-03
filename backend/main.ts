@@ -10,6 +10,8 @@ const actions: Record<string, string> = {
   vod_info: "get_vod_info",
 };
 
+const streamTickets = new Map<string, Record<string, any>>();
+
 const headers = {
   "Access-Control-Allow-Origin": SITE,
   "Access-Control-Allow-Methods": "POST, OPTIONS",
@@ -22,12 +24,7 @@ Deno.serve(async (req) => {
 
   if (requestUrl.pathname === "/health" && req.method === "GET") {
     try {
-      const kv = await Deno.openKv();
-      const key = ["health", crypto.randomUUID()];
-      await kv.set(key, "ok", { expireIn: 60000 });
-      const check = await kv.get(key);
-      await kv.delete(key);
-      return Response.json({ ok: check.value === "ok", kv: true, version: "playback-v2" }, { headers: { ...headers, "Access-Control-Allow-Methods": "GET, POST, OPTIONS" } });
+      return Response.json({ ok: true, tickets: "memory", version: "playback-v3" }, { headers: { ...headers, "Access-Control-Allow-Methods": "GET, POST, OPTIONS" } });
     } catch (e) {
       return Response.json({ ok: false, kv: false, error: String(e) }, { status: 500, headers });
     }
@@ -36,10 +33,11 @@ Deno.serve(async (req) => {
   if (requestUrl.pathname === "/stream" && req.method === "GET") {
     try {
       const token = requestUrl.searchParams.get("t") || "";
-      const kv = await Deno.openKv();
-      const saved = await kv.get(["stream", token]);
-      const data = saved.value as Record<string, string> | null;
-      if (!data) return new Response("Stream link expired", { status: 410 });
+      const data = streamTickets.get(token) || null;
+      if (!data || data.expires < Date.now()) {
+        streamTickets.delete(token);
+        return new Response("Stream link expired", { status: 410 });
+      }
       if (!data.username || !data.password || !data.id || !data.type) {
         return new Response("Bad stream request", { status: 400 });
       }
@@ -91,8 +89,7 @@ Deno.serve(async (req) => {
 
     if (op === "stream_token") {
       const token = crypto.randomUUID();
-      const kv = await Deno.openKv();
-      await kv.set(["stream", token], { username: String(body.username), password: String(body.password), type: String(body.type || "movie"), id: String(body.id || ""), ext: String(body.ext || "mp4") }, { expireIn: 300000 });
+      streamTickets.set(token, { username: String(body.username), password: String(body.password), type: String(body.type || "movie"), id: String(body.id || ""), ext: String(body.ext || "mp4"), expires: Date.now() + 300000 });
       return Response.json({ url: requestUrl.origin + "/stream?t=" + token }, { headers });
     }
 
