@@ -45,13 +45,19 @@ Deno.serve(async (req) => {
       const ext = String(data.ext || "mp4").replace(/[^a-zA-Z0-9]/g, "") || "mp4";
       const target = ORIGIN + "/" + folder + "/" + encodeURIComponent(data.username) + "/" + encodeURIComponent(data.password) + "/" + encodeURIComponent(data.id) + "." + ext;
       const range = req.headers.get("range");
-      const upstream = await fetch(target, { headers: range ? { Range: range } : {}, redirect: "follow" });
+      const upstreamHeaders = new Headers();
+      if (range) upstreamHeaders.set("Range", range);
+      const ifRange = req.headers.get("if-range");
+      if (ifRange) upstreamHeaders.set("If-Range", ifRange);
+      const upstream = await fetch(target, { headers: upstreamHeaders, redirect: "follow" });
       const h = new Headers();
-      for (const name of ["content-type","content-length","content-range","accept-ranges"]) {
+      for (const name of ["content-type","content-length","content-range","accept-ranges","etag","last-modified"]) {
         const v = upstream.headers.get(name); if (v) h.set(name,v);
       }
       h.set("Access-Control-Allow-Origin", SITE);
+      h.set("Access-Control-Expose-Headers","Content-Length, Content-Range, Accept-Ranges, ETag, Last-Modified");
       h.set("Cache-Control","no-store");
+      if (range && upstream.status !== 206) h.set("X-Stream-Range-Warning", "upstream-did-not-return-206");
       return new Response(upstream.body,{status:upstream.status,headers:h});
     } catch {
       return new Response("Stream unavailable",{status:502});
