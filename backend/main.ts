@@ -102,7 +102,7 @@ Deno.serve(async (req) => {
     const body = await req.json();
     const op = String(body.op || "");
 
-    if (op !== "auth" && op !== "stream_token" && !Object.hasOwn(actions, op)) {
+    if (op !== "auth" && op !== "stream_token" && op !== "stream_probe" && !Object.hasOwn(actions, op)) {
       return Response.json(
         { error: "operation_not_allowed" },
         { status: 403, headers },
@@ -114,6 +114,26 @@ Deno.serve(async (req) => {
         { error: "credentials_required" },
         { status: 400, headers },
       );
+    }
+
+    if (op === "stream_probe") {
+      const folder = body.type === "series" ? "series" : "movie";
+      const ext = String(body.ext || "mp4").replace(/[^a-zA-Z0-9]/g, "") || "mp4";
+      const target = ORIGIN + "/" + folder + "/" + encodeURIComponent(String(body.username)) + "/" + encodeURIComponent(String(body.password)) + "/" + encodeURIComponent(String(body.id || "")) + "." + ext;
+      const started = performance.now();
+      const first = await fetch(target, { headers: { Range: "bytes=0-1" }, redirect: "follow", signal: AbortSignal.timeout(12000) });
+      const cr = first.headers.get("content-range"), ar = first.headers.get("accept-ranges"), ct = first.headers.get("content-type"), cl = first.headers.get("content-length");
+      const initialMs = Math.round(performance.now() - started);
+      await first.body?.cancel();
+      let randomStatus = 0, randomRange = null, randomMs = null;
+      const totalMatch = cr?.match(/\/(\d+)$/);
+      if (first.status === 206 && totalMatch) {
+        const total = Number(totalMatch[1]), pos = Math.max(0, Math.floor(total * 0.5)), t1 = performance.now();
+        const second = await fetch(target, { headers: { Range: "bytes=" + pos + "-" + (pos + 1) }, redirect: "follow", signal: AbortSignal.timeout(12000) });
+        randomStatus = second.status; randomRange = second.headers.get("content-range"); randomMs = Math.round(performance.now() - t1);
+        await second.body?.cancel();
+      }
+      return Response.json({ rangeSupported:first.status===206 && !!cr, initialStatus:first.status, contentRange:cr, acceptRanges:ar, contentType:ct, contentLength:cl, initialMs, randomStatus, randomRange, randomMs }, { headers });
     }
 
     if (op === "stream_token") {
