@@ -89,7 +89,7 @@ Deno.serve(async (req) => {
 
     if (op === "stream_token") {
       const token = crypto.randomUUID();
-      streamTickets.set(token, { username: String(body.username), password: String(body.password), type: String(body.type || "movie"), id: String(body.id || ""), ext: String(body.ext || "mp4"), expires: Date.now() + 300000 });
+      streamTickets.set(token, { username: String(body.username), password: String(body.password), type: String(body.type || "movie"), id: String(body.id || ""), ext: String(body.ext || "mp4"), expires: Date.now() + 43200000 });
       return Response.json({ url: requestUrl.origin + "/stream?t=" + token }, { headers });
     }
 
