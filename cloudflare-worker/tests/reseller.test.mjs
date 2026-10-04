@@ -20,3 +20,12 @@ await call('/pool-sync',{lines:[{id:'2',external:0,maxConnections:3,encrypted:'f
 const leases=await storage.get('leases');assert.ok(Object.values(leases).every(l=>l.provider_id==='2'));
 const overview=await call('/overview');assert.equal(overview.data.provider.activeAccounts,1);assert.ok(!JSON.stringify(overview).includes('encrypted'));
 console.log('PASS: reseller login/read-only pagination, active-line parsing, capacity with existing external connections, concurrent pool allocation, ownership, release, removed-line revocation and public credential isolation.');
+
+const before=Object.keys(await storage.get('leases')).length;
+await call('/provider-add',{source:'panel:second',mode:'panel',username:'second',encrypted:'second-secret',lines:[{id:'2',external:0,maxConnections:3,encrypted:'line2'},{id:'3',external:0,maxConnections:3,encrypted:'line3'}]});
+let added=await call('/overview');assert.equal(added.data.provider.sourceCount,2);assert.equal(added.data.provider.activeAccounts,2);assert.equal(added.data.provider.maxConnections,6);assert.equal(Object.keys(await storage.get('leases')).length,before);
+await call('/provider-add',{source:'panel:second',mode:'panel',username:'second',encrypted:'updated-secret',lines:[{id:'2',external:0,maxConnections:3,encrypted:'line2'},{id:'3',external:0,maxConnections:3,encrypted:'line3'}]});
+assert.equal((await call('/overview')).data.provider.sourceCount,2);
+await call('/pool-sync',{source:'panel:owner',lines:[{id:'4',external:0,maxConnections:3,encrypted:'line4'}]});
+added=await call('/overview');assert.equal(added.data.provider.activeAccounts,3);assert.equal(added.data.provider.maxConnections,9);assert.ok(!JSON.stringify(added).includes('secret'));
+console.log('PASS: additive panels, duplicate accounts counted once, same panel updated without duplication, source refresh preserves other panels, existing leases preserved.');
