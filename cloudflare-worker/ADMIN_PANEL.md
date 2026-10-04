@@ -34,3 +34,12 @@ Account records and lease allocation use the existing SQLite-backed `PlaybackSes
 Run `node cloudflare-worker/tests/accounts.test.mjs` from the repository root. The test uses isolated in-memory Durable Object storage and a mock CCF service. It verifies administrator protection, customer authentication, provider credential isolation, movie/series catalogs, three-slot concurrent allocation, revocation on suspension/password change/deletion/expiration, and logout. No production credentials are present in the test.
 
 Production activation and a real panel-created customer's video/audio test require the private administrator setup and service-account connection. Local tests do not constitute a real browser playback or load test.
+
+
+## Automatic reseller account selection
+
+Choose `Panel general CCF (automático)` in the admin connection form. The Worker signs in to the authorized XUI reseller panel and reads only its Active lines table. It never edits, creates, renews, or deletes upstream lines. Panel credentials and playback credentials are encrypted with TICKET_SECRET before Durable Object storage; they are never included in public account summaries.
+
+The table is refreshed on demand every 30 seconds. Allocation is transactional across SNAPMOVIENOW sessions, caps each line at 3 or its smaller provider limit, and conservatively subtracts existing upstream connections as well as local reservations. This may temporarily reserve fewer slots than the theoretical maximum. External applications can race after a snapshot; the upstream provider remains the final connection-limit authority. Failed or expired accounts are excluded from selection; connection checks run before issuing playback tickets. Logout and customer suspension revoke leases.
+
+Tests: `node --test cloudflare-worker/tests/*.test.mjs`. Tests cover independent auth, reseller parsing/login, external occupancy, concurrent allocation across two accounts, six accepted plays and a seventh rejected, release, revocation, and credential isolation. Production managed-account validation requires the administrator to connect the reseller panel through the protected form.
