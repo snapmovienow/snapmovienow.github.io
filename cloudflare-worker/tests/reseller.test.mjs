@@ -1,0 +1,22 @@
+import assert from 'node:assert/strict';
+import {parseLines,readPanel} from '../src/reseller.mjs';
+import {accountsFetch} from '../src/accounts.mjs';
+const row=(id,used=0,max=3,active=true)=>["<a href=\"line?id="+id+"\">"+id+"</a>",'<a>test-line-'+id+'</a>','<span class="table-trunc-copy-cell__text tooltip" title="fake-line-password">hidden</span>','owner',active?'<i title="Active"></i>':'<i title="Expired"></i>','','',String(used),String(max),'','','2099-01-01'];
+assert.equal(parseLines({data:[row(1),row(2,0,3,false)]}).length,1);
+assert.equal(parseLines({data:[row(1)]})[0].password,'fake-line-password');
+let loginCalls=0;globalThis.fetch=async(url,opts)=>{const u=new URL(url);assert.equal(u.origin,'http://ccf.center:8444');if(u.pathname.endsWith('/login')){if(opts.method==='POST'){loginCalls++;assert.ok(opts.body.includes('username=owner'));assert.ok(opts.headers.Cookie);return new Response('<a href="dashboard">Welcome</a>')}return new Response('<input name="password">',{headers:{'set-cookie':'PHPSESSID=fake-cookie; path=/'}})}if(u.pathname.endsWith('/table')){assert.equal(u.searchParams.get('id'),'lines');return Response.json({recordsFiltered:2,data:[row(1,1),row(2)]})}throw Error('unexpected_request')};
+const loaded=await readPanel('owner','fake-password');assert.equal(loaded.length,2);assert.equal(loginCalls,1);
+class Store{constructor(){this.data=new Map();this.queue=Promise.resolve()}async get(k){return structuredClone(this.data.get(k))}async put(k,v){this.data.set(k,structuredClone(v))}async delete(k){this.data.delete(k)}transaction(fn){const r=this.queue.then(()=>fn(this));this.queue=r.catch(()=>{});return r}}
+const storage=new Store(),state={storage};const call=async(path,b={})=>{const r=await accountsFetch(state,{},new Request('https://internal/accounts'+path,{method:'POST',body:JSON.stringify(b)}));return {status:r.status,data:await r.json()}};
+await call('/provider-save',{mode:'panel',encrypted:'fake-encrypted-reseller',username:'owner'});
+await call('/pool-sync',{lines:loaded.map(l=>({id:l.id,external:l.external,maxConnections:l.maxConnections,encrypted:'fake-encrypted-line-'+l.id}))});
+for(let i=0;i<6;i++)await storage.put('user:customer'+i,{id:'u'+i,username:'customer'+i,version:1,status:'active'});
+const acquire=i=>call('/acquire',{sid:'sid'+i,username:'customer'+i,uid:'u'+i,version:1});
+const allocations=await Promise.all(Array.from({length:6},(_,i)=>acquire(i)));assert.equal(allocations.filter(a=>a.status===200).length,5);assert.equal(allocations.filter(a=>a.status===409).length,1);
+assert.ok(allocations.filter(a=>a.status===200).every(a=>a.data.maxConnections<=3));
+assert.equal((await call('/release',{sid:'wrong',lease_id:allocations[0].data.lease_id})).status,410);
+await call('/release-session',{sid:'sid0'});assert.equal((await acquire(5)).status,200);
+await call('/pool-sync',{lines:[{id:'2',external:0,maxConnections:3,encrypted:'fake-encrypted-line-2'}]});
+const leases=await storage.get('leases');assert.ok(Object.values(leases).every(l=>l.provider_id==='2'));
+const overview=await call('/overview');assert.equal(overview.data.provider.activeAccounts,1);assert.ok(!JSON.stringify(overview).includes('encrypted'));
+console.log('PASS: reseller login/read-only pagination, active-line parsing, capacity with existing external connections, concurrent pool allocation, ownership, release, removed-line revocation and public credential isolation.');
