@@ -1,1 +1,23 @@
-{"name":"snapmovienow-edge","main":"src/index.js","compatibility_date":"2026-10-03","workers_dev":true,"preview_urls":true}
+{
+  "name": "snapmovienow-edge",
+  "main": "src/index.js",
+  "compatibility_date": "2026-10-03",
+  "workers_dev": true,
+  "preview_urls": true,
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "PLAYBACK_SESSIONS",
+        "class_name": "PlaybackSession"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "playback-sessions-v1",
+      "new_sqlite_classes": [
+        "PlaybackSession"
+      ]
+    }
+  ]
+}
