@@ -44,13 +44,21 @@ export async function accountsFetch(state,env,req){
   return store.transaction(async tx=>{const latest=await tx.get('user:'+username);if((latest?.version||0)!==(old?.version||0))return answer({error:'edit_conflict'},409);await tx.put('user:'+username,u);await removeLeases(tx,l=>l.uid===u.id);return answer(publicUser(u))});
  }
  if(p==='/delete')return store.transaction(async tx=>{const key='user:'+normal(b.username),u=await tx.get(key);if(!u)return answer({error:'not_found'},404);await tx.delete(key);await removeLeases(tx,l=>l.uid===u.id);return answer({ok:true})});
- if(p==='/provider-save'){await store.put('provider',{encrypted:b.encrypted,username:b.username,maxConnections:Math.min(3,Math.max(1,Number(b.maxConnections)||3))});await store.delete('leases');return answer({ok:true})}
+ if(p==='/provider-save'){await store.put('provider',{encrypted:b.encrypted,username:b.username,mode:b.mode||"single",maxConnections:Math.min(3,Math.max(1,Number(b.maxConnections)||3))});await store.delete('leases');await store.delete('pool');return answer({ok:true})}
  if(p==='/provider')return answer(await store.get('provider')||{});
- if(p==='/overview'){const provider=await store.get('provider'),leases=Object.values(await store.get('leases')||{}).filter(x=>x.until>Date.now());return answer({provider:provider?{username:provider.username,maxConnections:provider.maxConnections}:null,connections:leases.length})}
+ if(p==='/pool')return answer(await store.get('pool')||{lines:[],syncedAt:0});
+ if(p==='/pool-sync')return store.transaction(async tx=>{const lines=b.lines;if(!Array.isArray(lines)||!lines.length)return answer({error:'panel_no_active_lines'},503);await tx.put('pool',{lines,syncedAt:Date.now()});await removeLeases(tx,l=>l.provider_id&&!lines.some(p=>p.id===l.provider_id));return answer({ok:true})});
+ if(p==='/overview'){const provider=await store.get('provider'),pool=await store.get('pool'),leases=Object.values(await store.get('leases')||{}).filter(x=>x.until>Date.now());return answer({provider:provider?{username:provider.username,mode:provider.mode||'single',maxConnections:provider.mode==='panel'?(pool?.lines||[]).reduce((n,l)=>n+l.maxConnections,0):provider.maxConnections,activeAccounts:pool?.lines?.length||0}:null,connections:leases.length})}
  if(p==='/acquire')return store.transaction(async tx=>{
   const provider=await tx.get('provider');if(!provider)return answer({error:'provider_not_configured'},503);
   const u=await tx.get('user:'+normal(b.username));if(!alive(u)||u.id!==b.uid||u.version!==b.version)return answer({error:'account_inactive'},401);
   const leases=await tx.get('leases')||{};for(const [id,l]of Object.entries(leases))if(l.until<=Date.now()||l.sid===b.sid)delete leases[id];
+  if(provider.mode==='panel'){
+   const pool=await tx.get('pool');if(!pool||pool.syncedAt<Date.now()-60000)return answer({error:'panel_unavailable'},503);
+   const candidates=pool.lines.filter(p=>!(b.exclude||[]).includes(p.id)).map(p=>({...p,occupied:p.external+Object.values(leases).filter(l=>l.provider_id===p.id).length})).filter(p=>p.occupied<p.maxConnections).sort((a,b)=>a.occupied/a.maxConnections-b.occupied/b.maxConnections);
+   const selected=candidates[0];if(!selected)return answer({error:'ccf_capacity'},409);
+   const id=crypto.randomUUID();leases[id]={sid:b.sid,uid:b.uid,username:b.username,version:b.version,provider_id:selected.id,until:Date.now()+90000};await tx.put('leases',leases);return answer({lease_id:id,provider_id:selected.id,encrypted:selected.encrypted,maxConnections:selected.maxConnections});
+  }
   const max=Math.min(provider.maxConnections,Math.max(1,Number(b.upstreamMax)||3));
   if(Object.keys(leases).length>=max)return answer({error:'ccf_capacity',maxConnections:max},409);
   const id=crypto.randomUUID();leases[id]={sid:b.sid,uid:b.uid,username:b.username,version:b.version,until:Date.now()+90000};await tx.put('leases',leases);return answer({lease_id:id});
@@ -66,3 +74,4 @@ export async function accountsFetch(state,env,req){
  }catch(e){return answer({error:['password_length','invalid_expiry'].includes(e.message)?e.message:'account_operation_failed'},400)}
 }
 async function removeLeases(tx,predicate){const leases=await tx.get('leases')||{};for(const [id,l]of Object.entries(leases))if(predicate(l)||l.until<=Date.now())delete leases[id];await tx.put('leases',leases)}
+
