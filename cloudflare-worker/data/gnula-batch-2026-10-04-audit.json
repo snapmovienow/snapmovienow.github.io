@@ -1107,5 +1107,120 @@
       "episodesDiscovered": 10,
       "episodesPlaybackVerified": 0
     }
-  ]
+  ],
+  "productionVerification": {
+    "checkedAt": "2026-10-04T17:21:21.283Z",
+    "loginPassed": true,
+    "registeredGnulaMovies": 18,
+    "hlsMasterAndVariantPassed": 18,
+    "protectedVideoAndAudioSamples": 2,
+    "protectedSampleDecodeExitCodes": [
+      0,
+      0
+    ],
+    "logoutPassed": true,
+    "revokedCatalogStatus": 401,
+    "revokedGnulaMediaStatus": 401,
+    "ccf": {
+      "movieCount": 14514,
+      "seriesCount": 1349,
+      "movieDecodeExit": 0,
+      "seriesDecodeExit": 0,
+      "logoutPassed": true,
+      "revokedMovieStatus": 410,
+      "revokedEpisodeStatus": 410
+    },
+    "titles": [
+      {
+        "id": "gnula-batman-v-superman",
+        "name": "Batman vs Superman: El Origen de la Justicia (2016)",
+        "ok": true
+      },
+      {
+        "id": "gnula-cover-up-un-periodista-en-las-trincheras",
+        "name": "Cover-Up: Un periodista en las trincheras (2025)",
+        "ok": true
+      },
+      {
+        "id": "gnula-heroe-en-dos-mundos",
+        "name": "Héroe en dos mundos (2021)",
+        "ok": true
+      },
+      {
+        "id": "gnula-zootropolis-2",
+        "name": "Zootrópolis 2 (2025)",
+        "ok": true
+      },
+      {
+        "id": "gnula-popeye-the-slayer-man",
+        "name": "Popeye the Slayer Man (2025)",
+        "ok": true
+      },
+      {
+        "id": "gnula-adios-june",
+        "name": "Adiós, June (2025)",
+        "ok": true
+      },
+      {
+        "id": "gnula-santastein",
+        "name": "Santastein (2024)",
+        "ok": true
+      },
+      {
+        "id": "gnula-noche-de-paz-noche-de-muerte",
+        "name": "Noche de Paz, Noche de Muerte (2025)",
+        "ok": true
+      },
+      {
+        "id": "gnula-a-biltmore-christmas",
+        "name": "A Biltmore Christmas (2023)",
+        "ok": true
+      },
+      {
+        "id": "gnula-springsteen-deliver-me-from-nowhere",
+        "name": "Springsteen: Deliver Me from Nowhere (2025)",
+        "ok": true
+      },
+      {
+        "id": "gnula-blue-sun-palace",
+        "name": "Blue Sun Palace (2025)",
+        "ok": true
+      },
+      {
+        "id": "gnula-el-gran-diluvio",
+        "name": "El gran diluvio (2025)",
+        "ok": true
+      },
+      {
+        "id": "gnula-die-my-love",
+        "name": "Die My Love (2025)",
+        "ok": true
+      },
+      {
+        "id": "gnula-la-sospecha-de-sofia",
+        "name": "La sospecha de Sofía (2025)",
+        "ok": true
+      },
+      {
+        "id": "gnula-carinena-vino-del-mar",
+        "name": "Cariñena, vino del mar (2025)",
+        "ok": true
+      },
+      {
+        "id": "gnula-jay-kelly",
+        "name": "Jay Kelly (2025)",
+        "ok": true
+      },
+      {
+        "id": "gnula-selena-y-los-dinos",
+        "name": "Selena y Los Dinos (2025)",
+        "ok": true
+      },
+      {
+        "id": "gnula-una-navidad-muy-jonas-brothers",
+        "name": "Una Navidad muy Jonas Brothers (2025)",
+        "ok": true
+      }
+    ]
+  }
 }
