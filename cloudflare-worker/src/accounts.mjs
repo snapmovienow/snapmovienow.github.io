@@ -2,7 +2,7 @@
 const answer=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:{'content-type':'application/json'}});
 const normal=x=>String(x||'').trim().toLowerCase();
 const validName=x=>/^[a-z0-9_.@-]{3,80}$/.test(x);
-const publicUser=u=>({id:u.id,username:u.username,name:u.name,status:u.status,expiresAt:u.expiresAt,createdAt:u.createdAt,updatedAt:u.updatedAt});
+const publicUser=u=>({id:u.id,username:u.username,name:u.name,status:u.status,expiresAt:u.expiresAt,createdAt:u.createdAt,updatedAt:u.updatedAt,permissions:u.permissions||{movies:true,series:true,tv:true}});
 const alive=u=>u&&u.status==='active'&&(!u.expiresAt||u.expiresAt>Date.now());
 const enc=new TextEncoder();
 async function digest(x){return new Uint8Array(await crypto.subtle.digest('SHA-256',enc.encode(String(x))))}
@@ -28,7 +28,7 @@ export async function accountsFetch(state,env,req){
   const u=await store.get(p==='/admin-login'?'admin':'user:'+username);
   const hash=await passwordHash(String(b.password||'').slice(0,256),u?.salt||'missing-account-salt');
   if(!u||!await same(hash,u.hash)||(p==='/login'&&!alive(u)))return answer({error:'invalid_credentials'},401);
-  await store.delete(bucket);return answer({id:u.id,username:u.username,version:u.version,expiresAt:u.expiresAt});
+  await store.delete(bucket);return answer({id:u.id,username:u.username,version:u.version,expiresAt:u.expiresAt,permissions:u.permissions||{movies:true,series:true,tv:true}});
  }
  if(p==='/check'){
   const u=await store.get(b.admin?'admin':'user:'+normal(b.username));return answer({ok:!!(u&&u.id===b.uid&&u.version===b.version&&(b.admin||alive(u)))},u&&u.id===b.uid&&u.version===b.version&&(b.admin||alive(u))?200:401);
@@ -39,7 +39,8 @@ export async function accountsFetch(state,env,req){
   const username=normal(b.username);if(!validName(username))return answer({error:'invalid_username'},400);
   const old=await store.get('user:'+username);if(b.create&&old)return answer({error:'username_exists'},409);if(!b.create&&!old)return answer({error:'not_found'},404);
   if(!['active','suspended'].includes(b.status))return answer({error:'invalid_status'},400);
-  let u={...old,id:old?.id||crypto.randomUUID(),username,name:String(b.name||'').slice(0,120),status:b.status,expiresAt:expiry(b.expiresAt),createdAt:old?.createdAt||Date.now(),updatedAt:Date.now(),version:(old?.version||0)+1};
+  const permissions=b.permissions===undefined?(old?.permissions||{movies:true,series:true,tv:true}):{movies:b.permissions?.movies===true,series:b.permissions?.series===true,tv:b.permissions?.tv===true};
+  let u={...old,permissions,id:old?.id||crypto.randomUUID(),username,name:String(b.name||'').slice(0,120),status:b.status,expiresAt:expiry(b.expiresAt),createdAt:old?.createdAt||Date.now(),updatedAt:Date.now(),version:(old?.version||0)+1};
   if(b.password)u=await withPassword(u,b.password);else if(!old)return answer({error:'password_required'},400);
   return store.transaction(async tx=>{const latest=await tx.get('user:'+username);if((latest?.version||0)!==(old?.version||0))return answer({error:'edit_conflict'},409);await tx.put('user:'+username,u);await removeLeases(tx,l=>l.uid===u.id);return answer(publicUser(u))});
  }
@@ -49,12 +50,14 @@ export async function accountsFetch(state,env,req){
  if(p==='/provider-add')return store.transaction(async tx=>{
   const old=await tx.get('provider');let providers=await tx.get('providers');
   if(!providers){providers=old?[{...old,source:old.mode==='panel'?'panel:'+normal(old.username):'single:'+normal(old.username)}]:[];const pool=await tx.get('pool');if(old)await tx.put('source-pools',{[providers[0].source]:pool||{lines:[{id:'single:'+normal(old.username),external:0,maxConnections:old.maxConnections,encrypted:old.encrypted}],syncedAt:0}})}
-  const source=b.source;const previous=providers.find(x=>x.source===source);providers=providers.filter(x=>x.source!==source);providers.push({source,encrypted:b.encrypted,username:b.username,mode:b.mode,maxConnections:b.maxConnections||3});
+  const source=b.source;const previous=providers.find(x=>x.source===source);providers=providers.filter(x=>x.source!==source);providers.push({source,encrypted:b.encrypted,username:b.username,name:b.name||b.username,url:b.url,origin:b.origin,mode:b.mode,maxConnections:b.maxConnections||3});
   const pools=await tx.get('source-pools')||{};pools[source]={lines:b.lines,syncedAt:Date.now()};await tx.put('source-pools',pools);await tx.put('providers',providers);await tx.put('provider',{...providers[0],mode:'panel'});await mergePools(tx,pools);return answer({ok:true,updated:!!previous,sourceCount:providers.length});
  });
+ if(p==='/provider-remove')return store.transaction(async tx=>{const providers=await tx.get('providers')||[],next=providers.filter(x=>x.source!==b.source);if(next.length===providers.length)return answer({error:'not_found'},404);const pools=await tx.get('source-pools')||{};delete pools[b.source];await tx.put('providers',next);await tx.put('source-pools',pools);if(next.length)await tx.put('provider',{...next[0],mode:'panel'});else await tx.delete('provider');await mergePools(tx,pools);return answer({ok:true})});
+ if(p==='/permissions'){const user=await store.get('user:'+normal(b.username));return answer(user?.permissions||{movies:true,series:true,tv:true})}
  if(p==='/provider')return answer(await store.get('provider')||{});
  if(p==='/pool')return answer(await store.get('pool')||{lines:[],syncedAt:0});
- if(p==='/pool-sync')return store.transaction(async tx=>{const lines=b.lines;if(!Array.isArray(lines)||!lines.length)return answer({error:'panel_no_active_lines'},503);if(b.source){const pools=await tx.get('source-pools')||{};pools[b.source]={lines,syncedAt:Date.now()};await tx.put('source-pools',pools);await mergePools(tx,pools);return answer({ok:true})}await tx.put('pool',{lines,syncedAt:Date.now()});await removeLeases(tx,l=>l.provider_id&&!lines.some(p=>p.id===l.provider_id));return answer({ok:true})});
+ if(p==='/pool-sync')return store.transaction(async tx=>{const lines=b.lines;if(!Array.isArray(lines))return answer({error:'panel_no_active_lines'},503);if(b.source){const pools=await tx.get('source-pools')||{};pools[b.source]={lines,syncedAt:Date.now()};await tx.put('source-pools',pools);await mergePools(tx,pools);return answer({ok:true})}await tx.put('pool',{lines,syncedAt:Date.now()});await removeLeases(tx,l=>l.provider_id&&!lines.some(p=>p.id===l.provider_id));return answer({ok:true})});
  if(p==='/overview'){const provider=await store.get('provider'),pool=await store.get('pool'),leases=Object.values(await store.get('leases')||{}).filter(x=>x.until>Date.now());return answer({provider:provider?{username:provider.username,mode:provider.mode||'single',maxConnections:provider.mode==='panel'?(pool?.lines||[]).reduce((n,l)=>n+l.maxConnections,0):provider.maxConnections,activeAccounts:pool?.lines?.length||0,sourceCount:(await store.get('providers'))?.length||1}:null,connections:leases.length})}
  if(p==='/acquire')return store.transaction(async tx=>{
   const provider=await tx.get('provider');if(!provider)return answer({error:'provider_not_configured'},503);
@@ -62,7 +65,7 @@ export async function accountsFetch(state,env,req){
   const leases=await tx.get('leases')||{};for(const [id,l]of Object.entries(leases))if(l.until<=Date.now()||l.sid===b.sid)delete leases[id];
   if(provider.mode==='panel'){
    const pool=await tx.get('pool');if(!pool||pool.syncedAt<Date.now()-60000)return answer({error:'panel_unavailable'},503);
-   const candidates=pool.lines.filter(p=>!(b.exclude||[]).includes(p.id)).map(p=>({...p,occupied:p.external+Object.values(leases).filter(l=>l.provider_id===p.id).length})).filter(p=>p.occupied<p.maxConnections).sort((a,b)=>a.occupied/a.maxConnections-b.occupied/b.maxConnections);
+   const candidates=pool.lines.filter(p=>(!b.server||(p.server||'ccf')===b.server)&&!(b.exclude||[]).includes(p.id)).map(p=>({...p,occupied:p.external+Object.values(leases).filter(l=>l.provider_id===p.id).length})).filter(p=>p.occupied<p.maxConnections).sort((a,b)=>a.occupied/a.maxConnections-b.occupied/b.maxConnections);
    const selected=candidates[0];if(!selected)return answer({error:'ccf_capacity'},409);
    const id=crypto.randomUUID();leases[id]={sid:b.sid,uid:b.uid,username:b.username,version:b.version,provider_id:selected.id,until:Date.now()+90000};await tx.put('leases',leases);return answer({lease_id:id,provider_id:selected.id,encrypted:selected.encrypted,maxConnections:selected.maxConnections});
   }
@@ -85,5 +88,5 @@ async function removeLeases(tx,predicate){const leases=await tx.get('leases')||{
 
 async function mergePools(tx,pools){
  const unique=new Map(),keys=new Map();for(const pool of Object.values(pools))for(const line of pool.lines){const id=keys.get(line.key)||line.id,previous=unique.get(id);const next=previous?{...line,id:previous.id,maxConnections:Math.min(previous.maxConnections,line.maxConnections),external:Math.max(previous.external,line.external)}:line;unique.set(id,next);if(line.key)keys.set(line.key,id)}
- const lines=[...unique.values()];await tx.put('pool',{lines,syncedAt:Math.min(...Object.values(pools).map(p=>p.syncedAt))});await removeLeases(tx,l=>l.provider_id&&!unique.has(l.provider_id));
+ const lines=[...unique.values()];await tx.put('pool',{lines,syncedAt:Object.keys(pools).length?Math.min(...Object.values(pools).map(p=>p.syncedAt)):Date.now()});await removeLeases(tx,l=>l.provider_id&&!unique.has(l.provider_id));
 }
