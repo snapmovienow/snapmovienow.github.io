@@ -45,10 +45,17 @@ export async function accountsFetch(state,env,req){
  }
  if(p==='/delete')return store.transaction(async tx=>{const key='user:'+normal(b.username),u=await tx.get(key);if(!u)return answer({error:'not_found'},404);await tx.delete(key);await removeLeases(tx,l=>l.uid===u.id);return answer({ok:true})});
  if(p==='/provider-save'){await store.put('provider',{encrypted:b.encrypted,username:b.username,mode:b.mode||"single",maxConnections:Math.min(3,Math.max(1,Number(b.maxConnections)||3))});await store.delete('leases');await store.delete('pool');return answer({ok:true})}
+ if(p==='/providers'){const list=await store.get('providers');const old=await store.get('provider');return answer(list|| (old?[{...old,source:old.mode==='panel'?'panel:'+normal(old.username):'single:'+normal(old.username)}]:[]))}
+ if(p==='/provider-add')return store.transaction(async tx=>{
+  const old=await tx.get('provider');let providers=await tx.get('providers');
+  if(!providers){providers=old?[{...old,source:old.mode==='panel'?'panel:'+normal(old.username):'single:'+normal(old.username)}]:[];const pool=await tx.get('pool');if(old)await tx.put('source-pools',{[providers[0].source]:pool||{lines:[{id:'single:'+normal(old.username),external:0,maxConnections:old.maxConnections,encrypted:old.encrypted}],syncedAt:0}})}
+  const source=b.source;const previous=providers.find(x=>x.source===source);providers=providers.filter(x=>x.source!==source);providers.push({source,encrypted:b.encrypted,username:b.username,mode:b.mode,maxConnections:b.maxConnections||3});
+  const pools=await tx.get('source-pools')||{};pools[source]={lines:b.lines,syncedAt:Date.now()};await tx.put('source-pools',pools);await tx.put('providers',providers);await tx.put('provider',{...providers[0],mode:'panel'});await mergePools(tx,pools);return answer({ok:true,updated:!!previous,sourceCount:providers.length});
+ });
  if(p==='/provider')return answer(await store.get('provider')||{});
  if(p==='/pool')return answer(await store.get('pool')||{lines:[],syncedAt:0});
- if(p==='/pool-sync')return store.transaction(async tx=>{const lines=b.lines;if(!Array.isArray(lines)||!lines.length)return answer({error:'panel_no_active_lines'},503);await tx.put('pool',{lines,syncedAt:Date.now()});await removeLeases(tx,l=>l.provider_id&&!lines.some(p=>p.id===l.provider_id));return answer({ok:true})});
- if(p==='/overview'){const provider=await store.get('provider'),pool=await store.get('pool'),leases=Object.values(await store.get('leases')||{}).filter(x=>x.until>Date.now());return answer({provider:provider?{username:provider.username,mode:provider.mode||'single',maxConnections:provider.mode==='panel'?(pool?.lines||[]).reduce((n,l)=>n+l.maxConnections,0):provider.maxConnections,activeAccounts:pool?.lines?.length||0}:null,connections:leases.length})}
+ if(p==='/pool-sync')return store.transaction(async tx=>{const lines=b.lines;if(!Array.isArray(lines)||!lines.length)return answer({error:'panel_no_active_lines'},503);if(b.source){const pools=await tx.get('source-pools')||{};pools[b.source]={lines,syncedAt:Date.now()};await tx.put('source-pools',pools);await mergePools(tx,pools);return answer({ok:true})}await tx.put('pool',{lines,syncedAt:Date.now()});await removeLeases(tx,l=>l.provider_id&&!lines.some(p=>p.id===l.provider_id));return answer({ok:true})});
+ if(p==='/overview'){const provider=await store.get('provider'),pool=await store.get('pool'),leases=Object.values(await store.get('leases')||{}).filter(x=>x.until>Date.now());return answer({provider:provider?{username:provider.username,mode:provider.mode||'single',maxConnections:provider.mode==='panel'?(pool?.lines||[]).reduce((n,l)=>n+l.maxConnections,0):provider.maxConnections,activeAccounts:pool?.lines?.length||0,sourceCount:(await store.get('providers'))?.length||1}:null,connections:leases.length})}
  if(p==='/acquire')return store.transaction(async tx=>{
   const provider=await tx.get('provider');if(!provider)return answer({error:'provider_not_configured'},503);
   const u=await tx.get('user:'+normal(b.username));if(!alive(u)||u.id!==b.uid||u.version!==b.version)return answer({error:'account_inactive'},401);
@@ -75,3 +82,8 @@ export async function accountsFetch(state,env,req){
 }
 async function removeLeases(tx,predicate){const leases=await tx.get('leases')||{};for(const [id,l]of Object.entries(leases))if(predicate(l)||l.until<=Date.now())delete leases[id];await tx.put('leases',leases)}
 
+
+async function mergePools(tx,pools){
+ const unique=new Map(),keys=new Map();for(const pool of Object.values(pools))for(const line of pool.lines){const id=keys.get(line.key)||line.id,previous=unique.get(id);const next=previous?{...line,id:previous.id,maxConnections:Math.min(previous.maxConnections,line.maxConnections),external:Math.max(previous.external,line.external)}:line;unique.set(id,next);if(line.key)keys.set(line.key,id)}
+ const lines=[...unique.values()];await tx.put('pool',{lines,syncedAt:Math.min(...Object.values(pools).map(p=>p.syncedAt))});await removeLeases(tx,l=>l.provider_id&&!unique.has(l.provider_id));
+}
