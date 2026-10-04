@@ -19,7 +19,7 @@ assert.equal((await act('save',{create:true,username:'customer0',password:'custo
 const list=await act('users');assert.equal(list.data.length,4);assert.ok(!JSON.stringify(list.data).includes('hash'));assert.ok(!JSON.stringify(list.data).includes('password'));
 const sessions=[];for(let i=0;i<4;i++){const a=await req({op:'auth',username:'customer'+i,password:'customer-password-test'});assert.equal(a.status,200);assert.equal(a.data.user_info.auth,1);assert.ok(!JSON.stringify(a.data).includes('service-password'));sessions.push(a.data.access_token)}
 assert.equal((await req({op:'vod',access_token:sessions[0]})).data[0].name,'Test movie');assert.equal((await req({op:'series',access_token:sessions[0]})).data[0].name,'Test series');assert.equal((await admin('users',{access_token:sessions[0]})).status,401);
-const plays=await Promise.all(sessions.map(access_token=>req({op:'stream_token',access_token,type:'movie',id:123})));assert.equal(plays.filter(x=>x.status===200).length,3);assert.equal(plays.filter(x=>x.status===409).length,1);assert.equal(plays[3].data.error,'ccf_capacity');
+const plays=await Promise.all(sessions.map(access_token=>req({op:'stream_token',access_token,type:'movie',id:123})));assert.equal(plays.filter(x=>x.status===200).length,3);assert.equal(plays.filter(x=>x.status===409).length,1);assert.equal(plays.find(x=>x.status===409).data.error,'ccf_capacity');
 assert.equal((await worker.fetch(new Request(plays[0].data.url,{method:'HEAD'}),env)).status,200);
 assert.equal((await req({op:'playback_heartbeat',access_token:sessions[0],lease_id:plays[0].data.lease_id})).status,200);
 assert.equal((await req({op:'playback_release',access_token:sessions[1],lease_id:plays[0].data.lease_id})).status,410);
