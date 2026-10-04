@@ -9,9 +9,10 @@ export function parseLines(data){
  if(!active||!username||!password||!Number.isFinite(used)||!Number.isInteger(max)||max<1||(date&&Date.parse(date+'T23:59:59Z')<Date.now()))return [];
  return [{id:plain(r[0]),username,password,maxConnections:max,external:used}];});
 }
-export async function readPanel(username,password){
- let cookie='';async function request(path,body){let url=new URL(path,BASE),method=body?'POST':'GET';for(let i=0;i<5;i++){
-  if(url.origin!==new URL(BASE).origin||!url.pathname.startsWith('/NYzkggyG/'))throw Error('panel_redirect_denied');
+export async function readPanel(username,password,base=BASE){
+ base=validateServerUrl(base,true);
+ let cookie='';async function request(path,body){let url=new URL(path,base),method=body?'POST':'GET';for(let i=0;i<5;i++){
+  if(url.origin!==new URL(base).origin||!url.pathname.startsWith(new URL(base).pathname))throw Error('panel_redirect_denied');
   const r=await fetch(url,{method,redirect:'manual',headers:{'User-Agent':'SnapMovieNow/1.0',...(cookie?{Cookie:cookie}:{}),...(body?{'content-type':'application/x-www-form-urlencoded'}:{})},...(body?{body}:{}),signal:AbortSignal.timeout(20000)});
   const sc=r.headers.get('set-cookie');if(sc){const m=sc.match(/(?:^|,\s*)PHPSESSID=([^;]+)/);if(m)cookie='PHPSESSID='+m[1]}
   if([301,302,303,307,308].includes(r.status)){url=new URL(r.headers.get('location'),url);if([301,302,303].includes(r.status)){method='GET';body=undefined}continue}
@@ -21,4 +22,10 @@ export async function readPanel(username,password){
  const lines=[];let total=0;for(let start=0;start<10000;start+=1000){const query=new URLSearchParams({id:'lines',filter:'1',reseller:'',draw:'1',start:String(start),length:'1000','search[value]':'','order[0][column]':'0','order[0][dir]':'asc'});let d;try{d=JSON.parse(await request('table?'+query))}catch(e){if(e.message.startsWith('panel_'))throw e;throw Error('panel_format_changed')}
   total=Number(d.recordsFiltered);lines.push(...parseLines(d));if(!d.data?.length||start+1000>=total)break;if(start===9000)throw Error('panel_too_many_lines');}
  if(!lines.length)throw Error('panel_no_active_lines');return lines;
+}
+
+export function validateServerUrl(value,panel=false){
+ let u;try{u=new URL(String(value))}catch{throw Error('invalid_server_url')}
+ const h=u.hostname.toLowerCase();if(!['http:','https:'].includes(u.protocol)||u.username||u.password||u.search||u.hash||!h.includes('.')||h==='localhost'||h.endsWith('.local')||h.endsWith('.internal')||h.startsWith('[')||/^(?:\d{1,3}\.){3}\d{1,3}$/.test(h)||/^(?:0|10|127|169\.254|192\.168)\./.test(h)||/^172\.(?:1[6-9]|2\d|3[01])\./.test(h))throw Error('invalid_server_url');
+ if(!panel&&u.pathname!=='/')throw Error('invalid_server_url');if(panel){u.pathname=u.pathname.replace(/\/?$/,'/');return u.href}return u.origin;
 }
