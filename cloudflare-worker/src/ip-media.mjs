@@ -1,7 +1,7 @@
 // Dedicated transport for the explicitly authorized CCF live origin.
 // Never accepts arbitrary IP destinations or user supplied resource URLs.
 export function isApprovedMediaIP(u){
- return u.protocol==='http:'&&u.hostname==='192.101.68.144'&&(!u.port||u.port==='80')&&!u.username&&!u.password;
+ return u.protocol==='http:'&&['192.101.68.144','23.153.217.88','194.147.150.141'].includes(u.hostname)&&(!u.port||u.port==='80')&&!u.username&&!u.password;
 }
 export async function fetchApprovedMediaIP(value,headers,connectSocket){
  const url=new URL(value);if(!isApprovedMediaIP(url))throw Error('invalid_media_origin');
@@ -47,3 +47,4 @@ export async function fetchApprovedMediaIP(value,headers,connectSocket){
  return new Response(body,{status,headers:responseHeaders});
  }catch(e){socket.close().catch(()=>{});throw e}
 }
+
