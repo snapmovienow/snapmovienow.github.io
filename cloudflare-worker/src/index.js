@@ -1,6 +1,8 @@
 import {isApprovedMediaIP,fetchApprovedMediaIP} from './ip-media.mjs';
 import {readPanel,validateServerUrl} from "./reseller.mjs";
 import {accountsFetch} from "./accounts.mjs";
+const liveStarts=new Map();
+function rememberLiveStart(url,body){const now=Date.now();for(const [key,value] of liveStarts)if(value.until<now)liveStarts.delete(key);if(liveStarts.size>=128)liveStarts.delete(liveStarts.keys().next().value);liveStarts.set(url,{body,until:now+2000})}
 const ORIGIN="http://ccf.center:8444";
 const SITE="https://snapmovienow.github.io";
 const actions={live:"get_live_streams",live_categories:"get_live_categories",vod_categories:"get_vod_categories",vod:"get_vod_streams",series_categories:"get_series_categories",series:"get_series",series_info:"get_series_info",vod_info:"get_vod_info"};
@@ -99,9 +101,10 @@ async function gnulaMedia(req,env,u){const t=u.searchParams.get("t")||"",d=await
 async function serverStream(req,env,u){
  const d=await unticket(env,u.searchParams.get('t')||'');if(!d||!['movie','series','live'].includes(d.type)||!/^\d+$/.test(String(d.id))||!(await sessionCall(env,d.sid,'/check')).ok)return new Response('Expired',{status:410,headers:cors});
  if(d.lease_id&&!(await directory(env,'/lease-check',{lease_id:d.lease_id,sid:d.sid})).ok)return json({error:'playback_expired'},410);
+ const warm=liveStarts.get(u.href);if(warm){liveStarts.delete(u.href);if(warm.until>Date.now()&&req.method==='GET')return new Response(warm.body,{headers:{...cors,'content-type':'application/vnd.apple.mpegurl'}})}
  const folder=d.type==='series'?'series':d.type==='live'?'live':'movie';let next=d.resource||(d.origin||ORIGIN)+'/'+folder+'/'+encodeURIComponent(d.username)+'/'+encodeURIComponent(d.password)+'/'+d.id+'.'+cleanExt(d.ext);
  const headers=new Headers({'User-Agent':'SnapMovieNow/1.0'});for(const n of ['range','if-range'])if(req.headers.has(n))headers.set(n,req.headers.get(n));if(req.method==='HEAD')headers.set('range','bytes=0-0');let response;
- for(let redirects=0;redirects<6;redirects++){const target=new URL(next);if(target.hostname==='194.76.0.119'&&target.port==='8080'&&target.protocol==='http:')target.hostname='media.snaptvnow.com';if(!isApprovedMediaIP(target)){if(/^(?:\d{1,3}\.){3}\d{1,3}$/.test(target.hostname))throw Error('media_origin_unapproved');validateServerUrl(target.origin);}next=target.href;response=isApprovedMediaIP(target)?await fetchApprovedMediaIP(next,headers):await fetch(next,{headers,redirect:'manual'});if(![301,302,303,307,308].includes(response.status))break;const location=response.headers.get('location');await response.body?.cancel();if(!location||redirects===5)throw Error('invalid_redirect');next=new URL(location,next).href}
+ for(let redirects=0;redirects<6;redirects++){const target=new URL(next);if(target.hostname==='194.76.0.119'&&target.port==='8080'&&target.protocol==='http:')target.hostname='media.snaptvnow.com';if(!isApprovedMediaIP(target)){if(/^(?:\d{1,3}\.){3}\d{1,3}$/.test(target.hostname))throw Error('media_origin_unapproved');validateServerUrl(target.origin);}next=target.href;response=isApprovedMediaIP(target)?await fetchApprovedMediaIP(next,headers):await fetch(next,{headers,redirect:'manual',signal:AbortSignal.timeout(d.type==='live'?12000:25000)});if(![301,302,303,307,308].includes(response.status))break;const location=response.headers.get('location');await response.body?.cancel();if(!location||redirects===5)throw Error('invalid_redirect');next=new URL(location,next).href}
  const out=new Headers(cors);for(const n of ['content-type','content-length','content-range','accept-ranges','etag','last-modified'])if(response.headers.has(n))out.set(n,response.headers.get(n));
  if(req.method==='HEAD'){const total=response.headers.get('content-range')?.match(/\/(\d+)$/)?.[1];if(total)out.set('content-length',total);out.delete('content-range');await response.body?.cancel();return new Response(null,{status:response.status===206?200:response.status,headers:out})}
  const playlist=response.ok&&(/mpegurl/i.test(response.headers.get('content-type')||'')||new URL(next).pathname.endsWith('.m3u8'));
@@ -111,7 +114,7 @@ async function serverStream(req,env,u){
 }
 
 export default{async fetch(req,env){const u=new URL(req.url);if(req.method==="OPTIONS")return new Response(null,{status:204,headers:cors});
-if(u.pathname==="/health")return json({ok:true,service:"snapmovienow-edge",version:"15"});
+if(u.pathname==="/health")return json({ok:true,service:"snapmovienow-edge",version:"16"});
 if(u.pathname==="/admin"&&req.method==="POST"){try{return await adminRequest(req,env)}catch{return json({error:"admin_unavailable"},502)}}
 if(u.pathname==="/gnula-media"&&["GET","HEAD"].includes(req.method)){try{return await gnulaMedia(req,env,u)}catch{return json({error:"media_unavailable"},502)}}
 if(u.pathname==='/stream'&&['GET','HEAD'].includes(req.method)){try{return await serverStream(req,env,u)}catch(e){return json({error:e.message==='media_origin_unapproved'?'media_origin_unapproved':'stream_unavailable'},502)}}
@@ -143,7 +146,7 @@ if(op==="stream_token"){
  let credentials=session,lease_id;
  if(session.managed){try{const allocation=await managedPlayback(env,session,String(b.server||"ccf"));if(!allocation.r.ok)return json(await allocation.r.json(),allocation.r.status);credentials=allocation.credentials;lease_id=(await allocation.r.json()).lease_id}catch(e){return json({error:e.message.startsWith("panel_")?e.message:"provider_not_configured"},503)}}
  const t=await ticket(env,{sid:session.sid,username:credentials.username,password:credentials.password,origin:credentials.origin||ORIGIN,lease_id,type:String(b.type||"movie"),id:String(b.id||""),ext:cleanExt(b.ext),exp:session.exp});const url=u.origin+"/stream?t="+t;
- if(b.type==="live"){try{const check=await serverStream(new Request(url),env,new URL(url));if(!check.ok){await check.body?.cancel();throw Error("live_signal_unavailable")}const manifest=await check.text();if(!manifest.startsWith("#EXTM3U"))throw Error("live_signal_unavailable")}catch(e){if(lease_id)await directory(env,"/release",{sid:session.sid,lease_id});return json({error:e.message==="media_origin_unapproved"?e.message:"live_signal_unavailable"},502)}}
+ if(b.type==="live"){try{const check=await serverStream(new Request(url),env,new URL(url));if(!check.ok){await check.body?.cancel();throw Error("live_signal_unavailable")}const manifest=await check.text();if(!manifest.startsWith("#EXTM3U"))throw Error("live_signal_unavailable");rememberLiveStart(url,manifest)}catch(e){if(lease_id)await directory(env,"/release",{sid:session.sid,lease_id});return json({error:e.message==="media_origin_unapproved"?e.message:"live_signal_unavailable"},502)}}
  return json({url,lease_id});
 }
 if(session.managed){const credentials=await catalogCredentials(env,b.server);if(!credentials.length)return json({error:'server_unavailable'},503);const results=await Promise.all(credentials.map(async p=>{try{const x=new URL((p.origin||ORIGIN)+'/player_api.php');x.searchParams.set('username',p.username);x.searchParams.set('password',p.password);x.searchParams.set('action',actions[op]);if(b.series_id)x.searchParams.set('series_id',String(b.series_id));if(b.vod_id)x.searchParams.set('vod_id',String(b.vod_id));const response=await fetch(x,{headers:{'User-Agent':'SnapMovieNow/1.0'},signal:AbortSignal.timeout(20000)});if(!response.ok)throw Error('upstream_unavailable');const data=await response.json();return Array.isArray(data)?data.map(item=>({...item,_server:p.server})):data}catch{return null}}));const good=results.filter(x=>x!==null);if(!good.length)return json({error:'upstream_unavailable'},502);return json(good.every(Array.isArray)?good.flat():good[0])}
