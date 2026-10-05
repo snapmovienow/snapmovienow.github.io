@@ -2,7 +2,7 @@ import {isApprovedMediaIP,fetchApprovedMediaIP} from './ip-media.mjs';
 import {readPanel,validateServerUrl} from "./reseller.mjs";
 import {accountsFetch} from "./accounts.mjs";
 const liveStarts=new Map();
-function rememberLiveStart(url,body){const now=Date.now();for(const [key,value] of liveStarts)if(value.until<now)liveStarts.delete(key);if(liveStarts.size>=128)liveStarts.delete(liveStarts.keys().next().value);liveStarts.set(url,{body,until:now+2000})}
+function rememberLiveStart(url,body){const now=Date.now();for(const [key,value] of liveStarts)if(value.until<now)liveStarts.delete(key);if(liveStarts.size>=128)liveStarts.delete(liveStarts.keys().next().value);liveStarts.set(url,{body,until:now+10000})}
 const ORIGIN="http://ccf.center:8444";
 const SITE="https://snapmovienow.github.io";
 const actions={live:"get_live_streams",live_categories:"get_live_categories",vod_categories:"get_vod_categories",vod:"get_vod_streams",series_categories:"get_series_categories",series:"get_series",series_info:"get_series_info",vod_info:"get_vod_info"};
@@ -114,7 +114,7 @@ async function serverStream(req,env,u){
 }
 
 export default{async fetch(req,env){const u=new URL(req.url);if(req.method==="OPTIONS")return new Response(null,{status:204,headers:cors});
-if(u.pathname==="/health")return json({ok:true,service:"snapmovienow-edge",version:"16"});
+if(u.pathname==="/health")return json({ok:true,service:"snapmovienow-edge",version:"17"});
 if(u.pathname==="/admin"&&req.method==="POST"){try{return await adminRequest(req,env)}catch{return json({error:"admin_unavailable"},502)}}
 if(u.pathname==="/gnula-media"&&["GET","HEAD"].includes(req.method)){try{return await gnulaMedia(req,env,u)}catch{return json({error:"media_unavailable"},502)}}
 if(u.pathname==='/stream'&&['GET','HEAD'].includes(req.method)){try{return await serverStream(req,env,u)}catch(e){return json({error:e.message==='media_origin_unapproved'?'media_origin_unapproved':'stream_unavailable'},502)}}
