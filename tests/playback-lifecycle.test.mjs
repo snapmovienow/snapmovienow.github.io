@@ -1,0 +1,24 @@
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import vm from 'node:vm';
+const context=vm.createContext({AbortController,crypto,Date,Promise});
+vm.runInContext(readFileSync(new URL('../playback-lifecycle.js',import.meta.url),'utf8'),context);
+const releases=[];let id=0;
+const manager=context.createPlaybackLifecycle({uuid:()=>String(++id),now:()=>100,cancel:async(attempt,lease)=>releases.push({id:attempt.id,session:attempt.session,lease})});
+const first=manager.begin({session:'old-login'});
+assert.equal(manager.adopt(first,'lease-1'),true);
+const second=manager.begin({session:'new-login'});
+assert.equal(first.controller.signal.aborted,true);
+assert.equal(second.revision>first.revision,true,'same-clock retries remain ordered');
+assert.equal(manager.adopt(first,'late-lease'),false,'a late token cannot restart closed playback');
+assert.deepEqual(releases,[{id:'1',session:'old-login',lease:'lease-1'},{id:'1',session:'old-login',lease:'late-lease'}]);
+assert.equal(manager.valid(second),true,'late cleanup does not cancel the replacement');
+await manager.cancel();await manager.cancel();
+assert.equal(releases.filter(x=>x.id==='2').length,1,'closing pending playback is idempotent');
+assert.equal(manager.adopt(second,'late-2'),false);
+assert.equal(manager.current,null);
+const broken=context.createPlaybackLifecycle({cancel(){throw Error('offline')},uuid:()=>String(++id)});
+broken.begin({});assert.doesNotThrow(()=>broken.begin({}),'network cleanup failure cannot prevent local teardown');
+console.log('PASS: pending close, late token cleanup, captured login, retry ordering, replacement ownership and idempotent teardown.');
+
+const older=vm.createContext({crypto:{getRandomValues:b=>{b.fill(17);return b}},Uint8Array,AbortController,Date,Promise});vm.runInContext(readFileSync(new URL('../playback-lifecycle.js',import.meta.url),'utf8'),older);assert.equal(older.playbackRequestId().length,32,'older WebViews can generate request IDs without randomUUID');

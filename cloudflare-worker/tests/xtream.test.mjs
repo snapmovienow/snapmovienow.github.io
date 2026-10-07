@@ -232,13 +232,16 @@ const segmentUrl = manifest.split('\n').find(line => line.startsWith('https://')
 const keyUrl = manifest.match(/URI="([^"]+)"/)[1];
 assert.equal(new URL(segmentUrl).origin, origin);
 assert.equal((await worker.fetch(new Request(keyUrl),env)).status,200);
-const repeated = await media('live',channels[0].stream_id,'m3u8'); await repeated.text();
+const repeated = await media('live',channels[0].stream_id,'m3u8'); const repeatedMaster=await repeated.text();
 assert.equal((await leases()).length,1, 'playlist polling reuses the original provider reservation');
-await (await worker.fetch(new Request(signedPlaylist),env)).text();
-assert.equal((await leases()).length,1,'refreshing the signed playlist preserves its existing provider reservation');
+assert.equal((await worker.fetch(new Request(signedPlaylist),env)).status,410,'a replacement invalidates old HLS tickets so an old player cannot renew its reservation');
+const renewedPlaylist=repeatedMaster.split('\n').find(x=>x.startsWith('https://'));
+const renewedText=await(await worker.fetch(new Request(renewedPlaylist),env)).text();
+const renewedSegment=renewedText.split('\n').find(x=>x.startsWith('https://'));
+assert.equal((await leases()).length,1,'refreshing the new signed playlist preserves its one reservation');
 for (let i=0;i<2;i++) {
   offset+=80000;
-  const segment = await worker.fetch(new Request(segmentUrl),env);
+  const segment = await worker.fetch(new Request(renewedSegment),env);
   assert.equal(segment.status,200); assert.equal((await segment.arrayBuffer()).byteLength,4);
 }
 assert.equal((await leases()).length,1, 'HLS renews beyond 90 seconds without web-player heartbeats');
@@ -259,6 +262,17 @@ const first = await media('live',channels[0].stream_id,'ts');
 const replacement = await media('live',channels[0].stream_id,'ts');
 await first.body.cancel(); assert.equal((await leases()).length,1, 'a late canceled request cannot release its replacement');
 await replacement.body.cancel(); assert.equal((await leases()).length,0);
+// A failing earlier preparation must not allocate again after a channel switch.
+const upstreamFetch=globalThis.fetch;let oldEntered,finishOld;
+const entered=new Promise(resolve=>oldEntered=resolve),lateFailure=new Promise(resolve=>finishOld=resolve);
+let holdOld=true;
+globalThis.fetch=async(url,opts)=>{if(holdOld&&new URL(url).pathname.endsWith('.ts')){holdOld=false;oldEntered();await lateFailure;return new Response('late provider failure',{status:503})}return upstreamFetch(url,opts)};
+const pendingOld=media('live',channels[0].stream_id,'ts');await entered;
+const latest=await media('live',channels[0].stream_id,'ts');assert.equal(latest.status,200);
+finishOld();assert.equal((await pendingOld).status,410,'superseded retry cannot acquire another account');
+assert.equal((await leases()).length,1,'only the replacement owns a reservation');
+await latest.body.cancel();assert.equal((await leases()).length,0);globalThis.fetch=upstreamFetch;
+
 
 await admin('save',{create:false,...customer,status:'active',permissions:{movies:true,series:true,tv:false}});
 assert.deepEqual(await (await api('get_live_categories')).json(),[]);

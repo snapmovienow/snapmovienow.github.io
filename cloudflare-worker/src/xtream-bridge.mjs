@@ -116,9 +116,10 @@ export function createXtreamBridge(deps) {
     };
     const resolve = async id => (await deps.registry(env,'/xtream-resolve',{id})).json();
     const play = async (request, session, item) => {
+      const request_id=crypto.randomUUID();
+      const begun=await privateCall('/playback-begin',{sid:session.sid,request_id});if(!begun.ok)return deps.json(await begun.json(),begun.status);
       const excluded=[];let lastFailure=null;
       for(let attempt=0;attempt<3;attempt++){
-      const request_id=crypto.randomUUID();
       const mediaSession={...session,request_id,mediaKey:item.type+'|'+item.server+'|'+item.upstreamId+'|'+item.ext};
       const allocation=await deps.managedPlayback(env,mediaSession,item.server,ctx,excluded);
       if(!allocation.r.ok){if(lastFailure&&allocation.r.status===409)return deps.json({error:'upstream_unavailable'},lastFailure);return deps.json(await allocation.r.json(),allocation.r.status)}
@@ -154,7 +155,7 @@ export function guardXtreamResponse(response, check, release, ctx) {
   const body=new ReadableStream({
     start(c){controller=c;timer=setInterval(async()=>{
       if(closed||checking)return;checking=true;
-      try{if(!await check()){closed=true;controller.error(Error('access_revoked'));await reader.cancel();await cleanup()}}
+      try{if(!await check()){closed=true;controller.error(Error('access_revoked'));await reader.cancel().catch(()=>{});await cleanup()}}
       catch{if(!closed){closed=true;controller.error(Error('access_unavailable'));await reader.cancel().catch(()=>{});await cleanup()}}
       finally{checking=false}
     },25000)},

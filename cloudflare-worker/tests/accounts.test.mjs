@@ -23,6 +23,30 @@ const plays=await Promise.all(sessions.map(access_token=>req({op:'stream_token',
 assert.equal((await worker.fetch(new Request(plays[0].data.url,{method:'HEAD'}),env)).status,200);
 assert.equal((await req({op:'playback_heartbeat',access_token:sessions[0],lease_id:plays[0].data.lease_id})).status,200);
 assert.equal((await req({op:'playback_release',access_token:sessions[1],lease_id:plays[0].data.lease_id})).status,410);
+const playback=(request_id,revision)=>req({op:'stream_token',access_token:sessions[0],type:'movie',id:123,request_id,revision});
+const cancel=(request_id,revision)=>req({op:'playback_cancel',access_token:sessions[0],request_id,revision});
+await cancel('cancel-before-arrival',100);
+const beforeCancelled=upstreamCalls;
+assert.equal((await playback('cancel-before-arrival',100)).status,410,'closing before allocation rejects a late request');
+assert.equal(upstreamCalls,beforeCancelled,'cancelled preparation does not connect to the provider');
+const newer=await playback('newer',101);assert.equal(newer.status,200);
+await cancel(plays[0].data.request_id);
+assert.equal((await req({op:'playback_heartbeat',access_token:sessions[0],lease_id:newer.data.lease_id,request_id:'newer'})).status,200,'old cleanup cannot release the replacement');
+assert.equal((await playback('older',100)).status,410,'out-of-order token preparation cannot supersede a newer revision');
+const originalFetch=globalThis.fetch;let signalPrepared,finishPrepared;
+const preparing=new Promise(resolve=>signalPrepared=resolve),finish=new Promise(resolve=>finishPrepared=resolve);
+globalThis.fetch=async(url,opts)=>{if(new URL(url).pathname.endsWith('/200.m3u8')){signalPrepared();await finish;return new Response('#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXTINF:4,\n/segment.ts\n',{headers:{'content-type':'application/vnd.apple.mpegurl'}})}return originalFetch(url,opts)};
+const delayed=req({op:'stream_token',access_token:sessions[0],type:'live',id:200,ext:'m3u8',request_id:'delayed',revision:102});
+await preparing;await cancel('delayed',102);finishPrepared();
+assert.equal((await delayed).status,410,'closing during manifest preparation cannot return a usable late token');
+globalThis.fetch=originalFetch;
+const leaseStore=objects.get('__smn_accounts_v1').state.storage;
+assert.equal(Object.values(await leaseStore.get('leases')).filter(x=>x.username==='customer0').length,0,'pending close frees the customer reservation');
+const finalPlay=await playback('final',103);assert.equal(finalPlay.status,200);
+await cancel('delayed',102);
+assert.equal((await worker.fetch(new Request(finalPlay.data.url,{method:'HEAD'}),env)).status,200,'late cancellation preserves new playback');
+await cancel('final',103);await cancel('final',103);
+assert.equal((await worker.fetch(new Request(finalPlay.data.url,{method:'HEAD'}),env)).status,410,'idempotent explicit close revokes signed resources');
 assert.equal((await act('save',{username:'customer0',status:'suspended',create:false})).status,200);
 assert.equal((await req({op:'vod',access_token:sessions[0]})).status,401);
 assert.equal((await worker.fetch(new Request(plays[0].data.url,{method:'HEAD'}),env)).status,410);
@@ -32,5 +56,6 @@ await act('save',{username:'customer1',password:'changed-password-test',status:'
 assert.equal((await act('delete',{username:'customer2'})).status,200);assert.equal((await req({op:'session_info',access_token:sessions[2]})).status,401);
 assert.equal((await req({op:'logout',access_token:sessions[3]})).status,200);assert.equal((await req({op:'vod',access_token:sessions[3]})).status,401);
 const s=await req({op:'auth',username:'customer1',password:'changed-password-test'});assert.equal(s.status,200);const state=objects.get('__smn_accounts_v1').state.storage;const user=await state.get('user:customer1');user.expiresAt=Date.now()-100;await state.put('user:customer1',user);assert.equal((await req({op:'session_info',access_token:s.data.access_token})).status,401);
+for(const object of objects.values()){const sid=await object.state.storage.get('sid');if(sid&&await object.state.storage.get('identity')){await object.alarm();assert.equal(await state.get('playback:'+sid),undefined,'expired sessions remove playback ownership state')}}
 await act('logout');assert.equal((await act('users')).status,401);
 console.log('PASS: protected admin setup/login, independent customer auth, provider-only credentials, movie/series catalogs, concurrent 3-slot capacity, stream protection, suspension, password reset, deletion, expiration and logout.');

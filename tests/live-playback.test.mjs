@@ -6,7 +6,8 @@ const source=html.slice(html.indexOf('function liveFamily'),html.indexOf('docume
 const original={stream_id:1,name:'DEPORTES - Espn 1 CHI (TV)(1080)',_server:'one'},low={stream_id:2,name:'DEPORTES - Espn 1 CHI (e)(720)',_server:'one'};
 const requested=[],played=[],status={textContent:''};let released=0;
 const context={allLive:[original,low,{stream_id:3,name:'DEPORTES - Espn 1 ARG (TV)(720)',_server:'one'},{stream_id:4,name:low.name,_server:'two'},{stream_id:5,name:'DEPORTES - Espn 2 CHI (720)',_server:'one'}],currentPlay:{type:'live',item:original},detail:{classList:{contains:()=>true}},document:{getElementById:()=>status},favKey:x=>x._server+':'+x.stream_id,sourceName:()=> 'CCF',releasePlayback:async()=>{released++},stopPlayback:()=>{},api:async(op,b)=>{requested.push(b.id);return{url:String(b.id),lease_id:String(b.id)}},startPlayback:async(url)=>{played.push(url);if(url==='1')throw Error('load_timeout')},Date,Error};
-vm.createContext(context);vm.runInContext(source,context);
+context.AbortController=AbortController;context.crypto=crypto;context.creds={access_token:'test-only'};
+vm.createContext(context);vm.runInContext(fs.readFileSync(new URL('../playback-lifecycle.js',import.meta.url),'utf8'),context);context.playbackLifecycle=context.createPlaybackLifecycle({cancel:async()=>{released++}});vm.runInContext(source,context);
 assert.deepEqual(Array.from(context.liveAlternatives(original),x=>x.stream_id),[1,2]);
 await context.playLiveSelection(original);
 assert.deepEqual(requested,[1,2]);assert.deepEqual(played,['1','2']);assert.equal(context.currentPlay.liveActual,low);assert.ok(released>=3);

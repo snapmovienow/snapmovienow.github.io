@@ -73,14 +73,32 @@ export async function accountsFetch(state,env,req){
  if(p==='/pool')return answer(await store.get('pool')||{lines:[],syncedAt:0});
  if(p==='/pool-sync')return store.transaction(async tx=>{const lines=b.lines;if(b.source){const pools=await tx.get('source-pools')||{};if(b.retain){const old=pools[b.source];pools[b.source]=old&&old.syncedAt>Date.now()-12*3600000?{...old,attemptedAt:Date.now()}:{lines:[],syncedAt:Date.now()}}else{if(!Array.isArray(lines))return answer({error:'panel_no_active_lines'},503);pools[b.source]={lines,syncedAt:Date.now()}}await tx.put('source-pools',pools);await mergePools(tx,pools);return answer({ok:true})}if(!Array.isArray(lines))return answer({error:'panel_no_active_lines'},503);await tx.put('pool',{lines,syncedAt:Date.now()});await removeLeases(tx,l=>l.provider_id&&!lines.some(p=>p.id===l.provider_id));return answer({ok:true})});
  if(p==='/overview'){const provider=await store.get('provider'),pool=await store.get('pool'),leases=Object.values(await store.get('leases')||{}).filter(x=>x.until>Date.now());return answer({provider:provider?{username:provider.username,mode:provider.mode||'single',maxConnections:provider.mode==='panel'?(pool?.lines||[]).reduce((n,l)=>n+l.maxConnections,0):provider.maxConnections,activeAccounts:pool?.lines?.length||0,sourceCount:(await store.get('providers'))?.length||1}:null,connections:leases.length})}
+ if(p==='/playback-begin'||p==='/playback-cancel')return store.transaction(async tx=>{
+  if(typeof b.request_id!=='string'||!/^[a-zA-Z0-9_-]{1,100}$/.test(b.request_id))return answer({error:'invalid_playback_request'},400);
+  const key='playback:'+b.sid,old=await tx.get(key)||{revision:0,cancelled:{}};
+  for(const [id,until]of Object.entries(old.cancelled||{}))if(until<=Date.now())delete old.cancelled[id];
+  old.cancelled??={};
+  if(p==='/playback-cancel'){
+   const previous=old.request_id,supersedes=Number.isSafeInteger(b.revision)&&b.revision>old.revision;
+   old.cancelled[b.request_id]=Date.now()+120000;
+   if(old.request_id===b.request_id)old.request_id=null;
+   if(supersedes){old.revision=b.revision;old.request_id=null}
+   await tx.put(key,old);await removeLeases(tx,l=>l.sid===b.sid&&(l.request_id===b.request_id||(supersedes&&l.request_id===previous)));return answer({ok:true});
+  }
+  if(old.cancelled[b.request_id]||(Number.isSafeInteger(b.revision)&&b.revision<=old.revision&&old.request_id!==b.request_id))return answer({error:'playback_superseded'},410);
+  old.request_id=b.request_id;old.revision=Number.isSafeInteger(b.revision)?b.revision:old.revision+1;
+  await tx.put(key,old);return answer({ok:true});
+ });
  if(p==='/acquire')return store.transaction(async tx=>{
+  if(b.request_id&&(await tx.get('playback:'+b.sid))?.request_id!==b.request_id)return answer({error:'playback_superseded'},410);
   const provider=await tx.get('provider');if(!provider)return answer({error:'provider_not_configured'},503);
   const u=await tx.get('user:'+normal(b.username));if(!alive(u)||u.id!==b.uid||u.version!==b.version)return answer({error:'account_inactive'},401);
   const leases=await tx.get('leases')||{};for(const [id,l]of Object.entries(leases))if(l.until<=Date.now())delete leases[id];
-  if(b.xtream){const previous=Object.entries(leases).find(([,l])=>l.sid===b.sid&&l.mediaKey===b.mediaKey&&!(b.exclude||[]).includes(l.provider_id));if(previous){const [id,l]=previous;l.until=Date.now()+90000;l.request_id=b.request_id;await tx.put('leases',leases);const pool=await tx.get('pool'),line=pool?.lines?.find(x=>x.id===l.provider_id);return answer({lease_id:id,provider_id:l.provider_id,encrypted:line?.encrypted,maxConnections:line?.maxConnections,reused:true,request_id:b.request_id})}}
+  if(b.request_id){const previous=Object.entries(leases).find(([,l])=>l.sid===b.sid&&l.mediaKey===b.mediaKey&&!(b.exclude||[]).includes(l.provider_id));if(previous){const [id,l]=previous;l.until=Date.now()+90000;l.request_id=b.request_id;await tx.put('leases',leases);const pool=await tx.get('pool'),line=pool?.lines?.find(x=>x.id===l.provider_id);return answer({lease_id:id,provider_id:l.provider_id,encrypted:line?.encrypted,maxConnections:line?.maxConnections,reused:true,request_id:b.request_id})}}
   for(const [id,l]of Object.entries(leases))if(l.sid===b.sid)delete leases[id];
+  await tx.put('leases',leases);
   if(b.xtream&&Object.values(leases).filter(l=>l.uid===b.uid).length>=3)return answer({error:'user_connection_limit'},409);
-  const extra=b.xtream?{xtream:true,mediaKey:b.mediaKey,request_id:b.request_id}:{};
+  const extra={...(b.xtream?{xtream:true}:{}),...(b.request_id?{mediaKey:b.mediaKey,request_id:b.request_id}:{})};
   if(provider.mode==='panel'){
    const pool=await tx.get('pool');if(!pool||pool.syncedAt<Date.now()-(b.xtream?12*3600000:60000))return answer({error:'panel_unavailable'},503);
    const candidates=pool.lines.filter(p=>(!b.server||(p.server||'ccf')===b.server)&&!(b.exclude||[]).includes(p.id)).map(p=>({...p,occupied:p.external+Object.values(leases).filter(l=>l.provider_id===p.id).length})).filter(p=>p.occupied<p.maxConnections).sort((a,b)=>a.occupied/a.maxConnections-b.occupied/b.maxConnections);
@@ -94,10 +112,12 @@ export async function accountsFetch(state,env,req){
  if(p==='/lease-check'||p==='/heartbeat'||p==='/release')return store.transaction(async tx=>{
   const leases=await tx.get('leases')||{},l=leases[b.lease_id];if(!l||l.sid!==b.sid)return answer({error:'playback_expired'},410);
   if(p==='/release'){if(b.request_id&&l.request_id!==b.request_id)return answer({ok:true,reused:true});delete leases[b.lease_id];await tx.put('leases',leases);return answer({ok:true})}
+  if(b.request_id&&l.request_id!==b.request_id)return answer({error:'playback_superseded'},410);
+  if(b.request_id&&(await tx.get('playback:'+b.sid))?.request_id!==b.request_id)return answer({error:'playback_superseded'},410);
   const u=await tx.get('user:'+normal(l.username));if(l.until<=Date.now()||!alive(u)||u.id!==l.uid||u.version!==l.version){delete leases[b.lease_id];await tx.put('leases',leases);return answer({error:'playback_expired'},410)}
   if(p==='/heartbeat'){l.until=Date.now()+90000;await tx.put('leases',leases)}return answer({ok:true});
  });
- if(p==='/release-session'){await store.transaction(tx=>removeLeases(tx,l=>l.sid===b.sid));return answer({ok:true})}
+ if(p==='/release-session'){await store.transaction(async tx=>{await removeLeases(tx,l=>l.sid===b.sid);await tx.delete('playback:'+b.sid)});return answer({ok:true})}
  return answer({error:'not_found'},404);
  }catch(e){return answer({error:['password_length','invalid_expiry'].includes(e.message)?e.message:'account_operation_failed'},400)}
 }

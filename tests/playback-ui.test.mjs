@@ -1,0 +1,26 @@
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import vm from 'node:vm';
+const html=readFileSync(new URL('../index.html',import.meta.url),'utf8');
+const stop=html.slice(html.indexOf('function stopPlayback('),html.indexOf('let hlsLoading;'));
+const calls=[];
+const movie={style:{},pause(){calls.push('movie-pause');throw Error('player failure')}};
+const live={style:{},pause(){calls.push('live-pause');throw Error('player failure')},removeAttribute(){calls.push('remove-source')},load(){calls.push('stop-loading')}};
+const ctx=vm.createContext({liveRequest:0,releasePlayback(){calls.push('release')},stopLiveWatchdog(){calls.push('watchdog')},hlsEngine:{destroy(){calls.push('destroy');throw Error('engine failure')}},moviePlayer:movie,gnulaPlayer:live});
+vm.runInContext(stop,ctx);ctx.stopPlayback();
+assert.deepEqual(calls,['release','watchdog','destroy','movie-pause','live-pause','remove-source','stop-loading']);
+assert.equal(movie.src,null);assert.equal(ctx.hlsEngine,null);assert.equal(ctx.stopLiveWatchdog,null);
+assert.equal(movie.style.display,'none');assert.equal(live.style.display,'none');
+
+// Run the actual async setup while the HLS script is delayed, then close it.
+let finishLibrary,valid=true,played=0,engines=0;
+const library=new Promise(resolve=>finishLibrary=resolve);
+const attempt={controller:new AbortController()};
+const video={style:{},canPlayType(){return ''},play(){played++;return Promise.resolve()}};
+const setup=vm.createContext({assertPlaybackAttempt(){if(!valid)throw Error('playback_superseded')},authenticated:true,authGeneration:1,currentPlay:{type:'live',item:{}},stopPlayback(){},gnulaPlayer:video,player:null,ensureHls:()=>library,Hls:class{static isSupported(){return true}constructor(){engines++}},setTimeout,clearTimeout});
+vm.runInContext(html.slice(html.indexOf('async function startPlayback('),html.indexOf('for(const event of ["loadedmetadata"')),setup);
+const pending=setup.startPlayback('https://example.test/live.m3u8',0,'lease',attempt);
+valid=false;attempt.controller.abort();finishLibrary();
+await assert.rejects(pending,/playback_superseded/);
+assert.equal(played,0);assert.equal(engines,0,'a late library load must not recreate the closed player');
+console.log('PASS: teardown survives player errors and late HLS setup cannot resume closed playback.');
