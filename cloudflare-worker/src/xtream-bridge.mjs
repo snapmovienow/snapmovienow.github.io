@@ -126,8 +126,16 @@ export function createXtreamBridge(deps) {
       const encrypted=await deps.ticket(env,{sid:session.sid,username:credentials.username,password:credentials.password,origin:credentials.origin,lease_id,request_id,xtream:true,type:item.type,id:item.upstreamId,ext:item.ext,exp:session.exp});
       const target=new URL('/stream',request.url);target.searchParams.set('t',encrypted);
       try{
-        const response=await deps.serverStream(request,env,target,ctx);
+        const prepared=new Request(request);if(item.type==='live'&&item.ext==='m3u8')prepared.headers.set('X-SMN-Prepare','1');
+        const response=await deps.serverStream(prepared,env,target,ctx);
         if(!response.ok){await response.body?.cancel();await privateCall('/release',{sid:session.sid,lease_id,request_id});if([401,403,404,408,429,502,503,504].includes(response.status)&&allocation.provider_id&&attempt<2){excluded.push(allocation.provider_id);continue}return deps.json({error:'upstream_unavailable'},response.status)}
+        // Native clients load this master once, then refresh the signed media
+        // playlist directly. Refreshing /live on every segment used to repeat
+        // account allocation and retry logic, interrupting a healthy session.
+        if(item.type==='live'&&item.ext==='m3u8'){
+          await response.body?.cancel();
+          return new Response('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=8000000\n'+target.href+'\n',{headers:{'content-type':'application/vnd.apple.mpegurl','cache-control':'no-store'}});
+        }
         return response;
       }catch(error){await privateCall('/release',{sid:session.sid,lease_id,request_id});if(error.message!=='media_origin_unapproved'&&allocation.provider_id&&attempt<2){excluded.push(allocation.provider_id);continue}throw error}
       }

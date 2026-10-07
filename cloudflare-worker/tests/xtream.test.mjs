@@ -213,13 +213,21 @@ failValidation=false;
 const recoveredPlayback=await media('movie',movies[0].stream_id,'mp4');assert.equal(recoveredPlayback.status,200);await recoveredPlayback.text();
 
 const hls = await media('live',channels[0].stream_id,'m3u8');
-assert.equal(hls.status,200); const manifest = await hls.text(); noProviderSecrets(manifest);
+assert.equal(hls.status,200);const master=await hls.text();noProviderSecrets(master);
+assert.ok(master.includes('#EXT-X-STREAM-INF:'),'a native player loads a master and polls its signed media playlist');
+const signedPlaylist=master.split('\n').find(line=>line.startsWith('https://'));
+const callsBeforePrepared=providerCalls.length;
+const preparedPlaylist=await worker.fetch(new Request(signedPlaylist),env);assert.equal(preparedPlaylist.status,200);
+assert.equal(providerCalls.length,callsBeforePrepared,'the prepared first playlist is reused without another provider connection');
+const manifest=await preparedPlaylist.text();noProviderSecrets(manifest);
 const segmentUrl = manifest.split('\n').find(line => line.startsWith('https://'));
 const keyUrl = manifest.match(/URI="([^"]+)"/)[1];
 assert.equal(new URL(segmentUrl).origin, origin);
 assert.equal((await worker.fetch(new Request(keyUrl),env)).status,200);
 const repeated = await media('live',channels[0].stream_id,'m3u8'); await repeated.text();
 assert.equal((await leases()).length,1, 'playlist polling reuses the original provider reservation');
+await (await worker.fetch(new Request(signedPlaylist),env)).text();
+assert.equal((await leases()).length,1,'refreshing the signed playlist preserves its existing provider reservation');
 for (let i=0;i<2;i++) {
   offset+=80000;
   const segment = await worker.fetch(new Request(segmentUrl),env);
