@@ -1,4 +1,5 @@
 // Private Durable Object routes. This module is never served as an HTTP endpoint.
+import {catalogCacheRoute} from './catalog-cache.mjs';
 const answer=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:{'content-type':'application/json'}});
 const normal=x=>String(x||'').trim().toLowerCase();
 const validName=x=>/^[a-z0-9_.@-]{3,80}$/.test(x);
@@ -13,6 +14,7 @@ function expiry(value){if(value===null||value===''||value===undefined)return nul
 export async function accountsFetch(state,env,req){
  const p=new URL(req.url).pathname.replace('/accounts','');const b=await req.json();const store=state.storage;
  try{
+ if(p==='/xtream-cache-get'||p==='/xtream-cache-put')return await catalogCacheRoute(store,p,b);
  if(p==='/xtream-config')return answer(await store.get('xtream-config')||{enabled:true,version:1});
  if(p==='/xtream-save')return store.transaction(async tx=>{if(typeof b.enabled!=='boolean')return answer({error:'invalid_setting'},400);const old=await tx.get('xtream-config')||{enabled:true,version:1};const next={enabled:b.enabled,version:old.version+(old.enabled===b.enabled?0:1)};await tx.put('xtream-config',next);if(!next.enabled)await removeLeases(tx,l=>l.xtream);return answer(next)});
  if(p==='/xtream-register')return registerXtream(store,b.entries);
@@ -69,7 +71,7 @@ export async function accountsFetch(state,env,req){
  if(p==='/permissions'){const user=await store.get('user:'+normal(b.username));return answer(user?.permissions||{movies:true,series:true,tv:true})}
  if(p==='/provider')return answer(await store.get('provider')||{});
  if(p==='/pool')return answer(await store.get('pool')||{lines:[],syncedAt:0});
- if(p==='/pool-sync')return store.transaction(async tx=>{const lines=b.lines;if(b.source){const pools=await tx.get('source-pools')||{};if(b.retain){const old=pools[b.source];pools[b.source]=old&&old.syncedAt>Date.now()-300000?{...old,attemptedAt:Date.now()}:{lines:[],syncedAt:Date.now()}}else{if(!Array.isArray(lines))return answer({error:'panel_no_active_lines'},503);pools[b.source]={lines,syncedAt:Date.now()}}await tx.put('source-pools',pools);await mergePools(tx,pools);return answer({ok:true})}if(!Array.isArray(lines))return answer({error:'panel_no_active_lines'},503);await tx.put('pool',{lines,syncedAt:Date.now()});await removeLeases(tx,l=>l.provider_id&&!lines.some(p=>p.id===l.provider_id));return answer({ok:true})});
+ if(p==='/pool-sync')return store.transaction(async tx=>{const lines=b.lines;if(b.source){const pools=await tx.get('source-pools')||{};if(b.retain){const old=pools[b.source];pools[b.source]=old&&old.syncedAt>Date.now()-12*3600000?{...old,attemptedAt:Date.now()}:{lines:[],syncedAt:Date.now()}}else{if(!Array.isArray(lines))return answer({error:'panel_no_active_lines'},503);pools[b.source]={lines,syncedAt:Date.now()}}await tx.put('source-pools',pools);await mergePools(tx,pools);return answer({ok:true})}if(!Array.isArray(lines))return answer({error:'panel_no_active_lines'},503);await tx.put('pool',{lines,syncedAt:Date.now()});await removeLeases(tx,l=>l.provider_id&&!lines.some(p=>p.id===l.provider_id));return answer({ok:true})});
  if(p==='/overview'){const provider=await store.get('provider'),pool=await store.get('pool'),leases=Object.values(await store.get('leases')||{}).filter(x=>x.until>Date.now());return answer({provider:provider?{username:provider.username,mode:provider.mode||'single',maxConnections:provider.mode==='panel'?(pool?.lines||[]).reduce((n,l)=>n+l.maxConnections,0):provider.maxConnections,activeAccounts:pool?.lines?.length||0,sourceCount:(await store.get('providers'))?.length||1}:null,connections:leases.length})}
  if(p==='/acquire')return store.transaction(async tx=>{
   const provider=await tx.get('provider');if(!provider)return answer({error:'provider_not_configured'},503);
@@ -80,7 +82,7 @@ export async function accountsFetch(state,env,req){
   if(b.xtream&&Object.values(leases).filter(l=>l.uid===b.uid).length>=3)return answer({error:'user_connection_limit'},409);
   const extra=b.xtream?{xtream:true,mediaKey:b.mediaKey,request_id:b.request_id}:{};
   if(provider.mode==='panel'){
-   const pool=await tx.get('pool');if(!pool||pool.syncedAt<Date.now()-(b.xtream?300000:60000))return answer({error:'panel_unavailable'},503);
+   const pool=await tx.get('pool');if(!pool||pool.syncedAt<Date.now()-(b.xtream?12*3600000:60000))return answer({error:'panel_unavailable'},503);
    const candidates=pool.lines.filter(p=>(!b.server||(p.server||'ccf')===b.server)&&!(b.exclude||[]).includes(p.id)).map(p=>({...p,occupied:p.external+Object.values(leases).filter(l=>l.provider_id===p.id).length})).filter(p=>p.occupied<p.maxConnections).sort((a,b)=>a.occupied/a.maxConnections-b.occupied/b.maxConnections);
    const selected=candidates[0];if(!selected)return answer({error:'ccf_capacity'},409);
    const id=crypto.randomUUID();leases[id]={sid:b.sid,uid:b.uid,username:b.username,version:b.version,provider_id:selected.id,until:Date.now()+90000,...extra};await tx.put('leases',leases);return answer({lease_id:id,provider_id:selected.id,encrypted:selected.encrypted,maxConnections:selected.maxConnections});

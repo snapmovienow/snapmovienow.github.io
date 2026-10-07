@@ -183,9 +183,9 @@ assert.equal((await leases()).length, 0, 'failed and finished alternative stream
 failMedia = false;
 
 // A slow reseller refresh must not block a new native playback with a recent
-// inventory. Individual playback credentials still receive a fresh check.
+// inventory, including an hour-old retained pool. Individual playback credentials still receive a fresh check.
 const accountsStore = objects.get('__smn_accounts_v1').state.storage;
-const stale = await accountsStore.get('pool'); stale.syncedAt = Date.now()-40000; await accountsStore.put('pool', stale);
+const stale = await accountsStore.get('pool'); stale.syncedAt = Date.now()-3600000; await accountsStore.put('pool', stale);
 const savedFetch = globalThis.fetch;
 let unblockRefresh; const refreshGate = new Promise(resolve => {unblockRefresh=resolve});
 let checkingRefresh = true;

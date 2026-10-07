@@ -35,7 +35,11 @@ Los IDs públicos son persistentes y distintos por servidor y tipo de contenido.
 
 ## Continuidad de la reproducción
 
-La reproducción nativa utiliza el inventario reciente mientras actualiza las conexiones en segundo plano. Cada nueva reserva valida la cuenta seleccionada. Una interrupción temporal al consultar el panel conserva el último inventario durante un máximo de cinco minutos; una respuesta que confirma cuentas inactivas las retira y revoca sus reservas.
+La reproducción nativa utiliza el inventario reciente mientras actualiza las conexiones en segundo plano. Cada nueva reserva valida la cuenta seleccionada. Una interrupción temporal al consultar el panel conserva el último inventario durante un máximo de doce horas; una respuesta que confirma cuentas inactivas las retira y revoca sus reservas. Una consulta fallida no equivale a una confirmación de cuentas inactivas.
+
+Los catálogos y categorías Xtream se guardan como instantáneas comprimidas en el Durable Object, divididas en bloques inferiores al límite de almacenamiento. Tienen cinco minutos de vigencia para actualización y un máximo de doce horas para recuperación durante fallos. Las instantáneas sirven inmediatamente mientras se actualizan en segundo plano, sobreviven a cambios de instancia del Worker y se invalidan al editar o retirar conexiones. La autenticación, suspensión y permisos se comprueban antes de acceder a cualquier instantánea. Por servidor, la carga puede probar hasta tres cuentas autorizadas sin duplicar el catálogo. Una avería no renueva la fecha de una instantánea antigua.
+
+La primera carga necesita una consulta correcta al proveedor: no se inventan categorías ni se puede reconstruir una instantánea que nunca se guardó. Un catálogo en caché tampoco garantiza que una señal externa esté disponible.
 
 El transporte separa el plazo para obtener las cabeceras del tiempo sin recibir datos. Una señal que continúa entregando datos puede permanecer abierta. Los archivos y segmentos de tamaño conocido pueden recuperar los bytes pendientes mediante Range, con hasta dos intentos, comprobando el rango y los validadores disponibles. Cada recuperación comprueba otra vez el acceso. Si la preparación de una señal falla, el acceso nativo puede probar hasta tres cuentas autorizadas del mismo servidor, liberando cada reserva fallida y respetando los límites de conexión.
 

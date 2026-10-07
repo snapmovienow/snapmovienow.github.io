@@ -28,7 +28,9 @@ assert.equal(Object.keys(await storage.get('leases')).length,6,'a transient sour
 await directory({source:sources[0],lines:[]});
 assert.deepEqual((await storage.get('pool')).lines.map(l=>l.id),['2','3']);
 assert.ok(Object.values(await storage.get('leases')).every(l=>l.provider_id!=='1'),'a confirmed inactive source revokes its accounts immediately');
-const expiredPools=await storage.get('source-pools');expiredPools[sources[1]].syncedAt=Date.now()-300001;await storage.put('source-pools',expiredPools);
+const retainedPools=await storage.get('source-pools');retainedPools[sources[1]].syncedAt=Date.now()-3600000;await storage.put('source-pools',retainedPools);
+await directory({source:sources[1],retain:true});assert.equal((await storage.get('pool')).lines.length,2,'a one-hour panel outage does not erase authorised accounts');
+const expiredPools=await storage.get('source-pools');expiredPools[sources[1]].syncedAt=Date.now()-12*3600000-1;await storage.put('source-pools',expiredPools);
 await directory({source:sources[1],retain:true});
-assert.equal((await storage.get('pool')).lines.length,0); assert.equal(Object.keys(await storage.get('leases')).length,0,'inventory retention expires after five minutes');
-console.log('PASS: transient inventory failure preserves leases; confirmed inactivity revokes them; stale inventory expires after five minutes.');
+assert.equal((await storage.get('pool')).lines.length,0); assert.equal(Object.keys(await storage.get('leases')).length,0,'inventory retention expires after twelve hours');
+console.log('PASS: transient inventory failure preserves leases; confirmed inactivity revokes them; stale inventory expires after twelve hours.');

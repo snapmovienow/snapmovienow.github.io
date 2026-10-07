@@ -1,4 +1,5 @@
 import {handleXtream} from './xtream.mjs';
+import {encodeCatalog,decodeCatalog} from './catalog-cache.mjs';
 
 const catalogs = new WeakMap();
 const MAX_CACHE_BYTES = 16 * 1024 * 1024;
@@ -48,33 +49,61 @@ export function createXtreamBridge(deps) {
       return {user,session,username:user.username,connections:count.connections};
     };
     const catalog = async (action, server, params={}) => {
-      const credentials = await deps.catalogCredentials(env,server,ctx);
-      if (!credentials.length) throw Error('server_unavailable');
+      const providers = await (await privateCall('/providers')).json();
+      if (!providers.length) throw Error('provider_not_configured');
+      // Changing or removing a connection changes this scope. A cached catalog
+      // never survives removal of its authorised provider configuration.
+      const scope = await fingerprint(env.TICKET_SECRET, JSON.stringify(providers.map(p=>[p.source,p.origin,p.url,p.encrypted])));
+      const key = await fingerprint(env.TICKET_SECRET, JSON.stringify([scope,action,server||'',params]));
+      const persist = ['get_live_categories','get_live_streams','get_vod_categories','get_vod_streams','get_series_categories','get_series'].includes(action);
       let cache = catalogs.get(env.PLAYBACK_SESSIONS);
-      if (!cache) catalogs.set(env.PLAYBACK_SESSIONS,cache={entries:new Map(),bytes:0});
-      for(const [key,saved] of cache.entries)if(saved.until<=Date.now()){cache.entries.delete(key);cache.bytes-=saved.bytes}
-      const replies = await Promise.all(credentials.map(async account=>{
-        const cacheKey=JSON.stringify([account.server,action,params]);
-        const saved=cache.entries.get(cacheKey);if(saved&&saved.until>Date.now())return saved.data;
-        const url=new URL(account.origin+'/player_api.php');
-        url.searchParams.set('username',account.username);url.searchParams.set('password',account.password);url.searchParams.set('action',action);
-        for(const [key,value]of Object.entries(params))url.searchParams.set(key,String(value));
-        try{
-          const response=await fetch(url,{headers:{'User-Agent':'SnapMovieNow/1.0'},signal:AbortSignal.timeout(20000)});
-          if(!response.ok)throw Error('upstream_unavailable');
-          const raw=await response.json(),safe=publicMetadata(raw,account);
-          const data=Array.isArray(safe)?safe.map(item=>({...item,_server:account.server})):safe;
-          const bytes=JSON.stringify(data).length*2;
-          if(bytes<=MAX_CACHE_BYTES){
-            const old=cache.entries.get(cacheKey);if(old){cache.entries.delete(cacheKey);cache.bytes-=old.bytes}
-            while(cache.entries.size&&(cache.entries.size>=64||cache.bytes+bytes>MAX_CACHE_BYTES)){const key=cache.entries.keys().next().value;cache.bytes-=cache.entries.get(key).bytes;cache.entries.delete(key)}
-            cache.entries.set(cacheKey,{data,bytes,until:Date.now()+30000});cache.bytes+=bytes;
+      if (!cache) catalogs.set(env.PLAYBACK_SESSIONS,cache={entries:new Map(),pending:new Map(),bytes:0});
+      const remember = (data,savedAt) => {
+        const bytes=JSON.stringify(data).length*2;if(bytes>MAX_CACHE_BYTES)return;
+        const old=cache.entries.get(key);if(old){cache.entries.delete(key);cache.bytes-=old.bytes}
+        while(cache.entries.size&&(cache.entries.size>=64||cache.bytes+bytes>MAX_CACHE_BYTES)){const k=cache.entries.keys().next().value;cache.bytes-=cache.entries.get(k).bytes;cache.entries.delete(k)}
+        cache.entries.set(key,{data,bytes,savedAt,until:savedAt+12*3600000});cache.bytes+=bytes;
+      };
+      let saved=cache.entries.get(key);
+      if(saved?.until<=Date.now()){cache.entries.delete(key);cache.bytes-=saved.bytes;saved=null}
+      if(!saved&&persist){
+        try{const response=await deps.registry(env,'/xtream-cache-get',{key});if(response.ok){const savedAt=Number(response.headers.get('x-catalog-saved-at'));const data=await decodeCatalog(response);remember(data,savedAt);saved={data,savedAt,until:savedAt+12*3600000}}}catch{}
+      }
+      const freshFor=persist?300000:30000;
+      if(saved&&saved.savedAt>Date.now()-freshFor)return saved.data;
+      const refresh=async()=>{
+        const credentials=await deps.catalogCredentials(env,server,ctx);
+        if(!credentials.length)throw Error('server_unavailable');
+        const groups=new Map();for(const account of credentials){if(!groups.has(account.server))groups.set(account.server,[]);groups.get(account.server).push(account)}
+        let fresh=0;const replies=await Promise.all([...groups].map(async([id,accounts])=>{
+          for(const account of accounts){
+            const url=new URL(account.origin+'/player_api.php');
+            url.searchParams.set('username',account.username);url.searchParams.set('password',account.password);url.searchParams.set('action',action);
+            for(const [name,value]of Object.entries(params))url.searchParams.set(name,String(value));
+            try{
+              const response=await fetch(url,{headers:{'User-Agent':'SnapMovieNow/1.0'},signal:AbortSignal.timeout(12000)});
+              if(!response.ok){await response.body?.cancel();continue}
+              const raw=await response.json();
+              // Authentication/error objects are never mistaken for lists.
+              if(persist&&!Array.isArray(raw))continue;
+              const safe=publicMetadata(raw,account);fresh++;
+              return Array.isArray(safe)?safe.map(item=>({...item,_server:id})):safe;
+            }catch{}
           }
-          return data;
-        }catch{return null}
-      }));
-      const good=replies.filter(x=>x!==null);if(!good.length)throw Error('upstream_unavailable');
-      return good.every(Array.isArray)?good.flat():good[0];
+          const retained=Array.isArray(saved?.data)?saved.data.filter(row=>row._server===id):null;
+          return retained?.length?retained:null;
+        }));
+        const good=replies.filter(x=>x!==null);if(!good.length||!fresh)throw Error('upstream_unavailable');
+        const data=good.every(Array.isArray)?good.flat():good[0];
+        remember(data,fresh===groups.size?Date.now():saved?.savedAt||Date.now());
+        if(persist&&fresh===groups.size){try{const bytes=await encodeCatalog(data);let content='';for(let i=0;i<bytes.length;i+=24000)content+=String.fromCharCode(...bytes.slice(i,i+24000));await deps.registry(env,'/xtream-cache-put',{key,content:btoa(content)})}catch{}}
+        return data;
+      };
+      const run=()=>{if(!cache.pending.has(key)){const work=refresh().finally(()=>cache.pending.delete(key));cache.pending.set(key,work)}return cache.pending.get(key)};
+      // Old-but-valid snapshots are immediate while refresh runs in the
+      // background. Local user permissions were already checked by handleXtream.
+      if(saved&&ctx?.waitUntil){ctx.waitUntil(run().catch(()=>{}));return saved.data}
+      try{return await run()}catch(error){if(saved&&persist)return saved.data;throw error}
     };
     const register = async entries => {
       const ids=[];
