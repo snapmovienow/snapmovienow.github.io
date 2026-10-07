@@ -24,3 +24,14 @@ valid=false;attempt.controller.abort();finishLibrary();
 await assert.rejects(pending,/playback_superseded/);
 assert.equal(played,0);assert.equal(engines,0,'a late library load must not recreate the closed player');
 console.log('PASS: teardown survives player errors and late HLS setup cannot resume closed playback.');
+
+// A heartbeat belonging to an older channel must not close its replacement.
+let tick,rejectHeartbeat,stops=0,logouts=0;
+const oldAttempt={},nextAttempt={};
+const heartbeat=vm.createContext({authenticated:true,heartbeatBusy:false,playbackLease:'old-lease',creds:{},playbackLifecycle:{current:oldAttempt},setInterval(fn){tick=fn},api:()=>new Promise((_,reject)=>rejectHeartbeat=reject),stopPlayback(){stops++},logout(){logouts++},document:{getElementById:()=>({textContent:''})}});
+vm.runInContext(html.slice(html.indexOf('setInterval(async()=>{if(!authenticated||heartbeatBusy)'),html.indexOf('window.addEventListener("pagehide"')),heartbeat);
+const checking=tick();heartbeat.playbackLifecycle.current=nextAttempt;heartbeat.playbackLease='new-lease';rejectHeartbeat({status:410});await checking;
+assert.equal(stops,0);assert.equal(logouts,0);
+heartbeat.playbackLifecycle.current=null;heartbeat.playbackLease=null;heartbeat.api=async()=>{throw {status:401}};
+await tick();assert.equal(stops,1);assert.equal(logouts,1,'idle authenticated users still receive access revocation');
+console.log('PASS: old heartbeat cannot close a new channel; idle access revocation is preserved.');

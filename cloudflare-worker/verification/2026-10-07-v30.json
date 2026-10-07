@@ -1,0 +1,46 @@
+{
+  "version": "30",
+  "backend_commit": "8bfbad0eb4a054475b3607e96391cc69cf6b4436",
+  "regression_test_files_passed": 12,
+  "dry_run_passed": true,
+  "backend_deploy_checks_passed": true,
+  "online_web_checks_passed": 17,
+  "online_web_checks_total": 17,
+  "online_cancellation_acknowledgement_seconds": 4.794,
+  "online_scenarios": [
+    "Cancellation arriving before preparation prevents allocation (410).",
+    "Closing revokes the original playlist and its segment (410).",
+    "A late cancellation does not revoke replacement playback (200 heartbeat and valid replacement playlist).",
+    "Closing during preparation prevents the returned request from resuming playback (410).",
+    "The own diagnostic session logged out successfully."
+  ],
+  "race_regressions": [
+    "Superseded native retry cannot acquire a replacement provider account.",
+    "Old HLS tickets cannot renew a reservation owned by a newer playback.",
+    "Player teardown continues after individual player errors.",
+    "Delayed HLS library setup cannot resurrect closed playback.",
+    "Old heartbeat cannot close a replacement; idle access revocation is preserved.",
+    "Session expiration deletes its playback ownership state.",
+    "Cancellation delivery is idempotent, validates acknowledgement, retries at most twice and never creates a playback."
+  ],
+  "first_online_run": {
+    "completed": false,
+    "error_type": "JSONDecodeError",
+    "cause_verified": false
+  },
+  "repeated_online_run": {
+    "completed": true,
+    "unexpected_control_responses": 0
+  },
+  "native_disconnect_probe": {
+    "stream_status": 200,
+    "received_bytes": 65536,
+    "reservation_release_observed": false,
+    "verification_error": "Post-disconnect control reply did not contain user_info; count could not be verified."
+  },
+  "limitations": [
+    "Server-side playback reservations are released upon receiving cancellation; network delivery cannot be assumed instantaneous.",
+    "Third-party HLS clients that provide no stop notification retain their idle-expiry safety window.",
+    "The Android APK and physical TVs were not modified or tested in this change."
+  ]
+}

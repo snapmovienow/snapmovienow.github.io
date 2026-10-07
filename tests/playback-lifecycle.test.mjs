@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
-const context=vm.createContext({AbortController,crypto,Date,Promise});
+const context=vm.createContext({AbortController,crypto,Date,Promise,setTimeout,clearTimeout});
 vm.runInContext(readFileSync(new URL('../playback-lifecycle.js',import.meta.url),'utf8'),context);
 const releases=[];let id=0;
 const manager=context.createPlaybackLifecycle({uuid:()=>String(++id),now:()=>100,cancel:async(attempt,lease)=>releases.push({id:attempt.id,session:attempt.session,lease})});
@@ -22,3 +22,11 @@ broken.begin({});assert.doesNotThrow(()=>broken.begin({}),'network cleanup failu
 console.log('PASS: pending close, late token cleanup, captured login, retry ordering, replacement ownership and idempotent teardown.');
 
 const older=vm.createContext({crypto:{getRandomValues:b=>{b.fill(17);return b}},Uint8Array,AbortController,Date,Promise});vm.runInContext(readFileSync(new URL('../playback-lifecycle.js',import.meta.url),'utf8'),older);assert.equal(older.playbackRequestId().length,32,'older WebViews can generate request IDs without randomUUID');
+
+const delivery={id:'delivery',revision:123,session:{access_token:'private-test-token'}};let sent=0;
+await context.sendPlaybackCancellation('https://example.test',delivery,'lease',async(url,options)=>{sent++;const body=JSON.parse(options.body);assert.equal(body.request_id,'delivery');assert.equal(body.lease_id,'lease');assert.equal(options.keepalive,true);return sent===1?{status:502,ok:false}:{status:200,ok:true,json:async()=>({ok:true})}});
+assert.equal(sent,2,'a temporary control failure retries cancellation rather than starting playback');
+sent=0;await context.sendPlaybackCancellation('https://example.test',delivery,'lease',async()=>{sent++;return sent===1?{status:200,ok:true,json:async()=>{throw Error('invalid response')}}:{status:200,ok:true,json:async()=>({ok:true})}});assert.equal(sent,2);
+sent=0;await context.sendPlaybackCancellation('https://example.test',delivery,'lease',async()=>{sent++;return {status:401}});assert.equal(sent,1,'expired authentication does not retry');
+sent=0;await assert.rejects(context.sendPlaybackCancellation('https://example.test',delivery,'lease',async()=>{sent++;throw Error('offline')}),/playback_cancel_unavailable/);assert.equal(sent,2,'offline cleanup is bounded');
+console.log('PASS: idempotent cancellation retry, acknowledgement validation, expired auth and bounded offline cleanup.');
