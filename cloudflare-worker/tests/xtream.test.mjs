@@ -31,7 +31,7 @@ env.PLAYBACK_SESSIONS = {
 const origin = 'https://snapmovienow-edge.juancanta89.workers.dev';
 const providerOrigins = ['http://ccf.center:8444', 'https://beta.example.test'];
 const providerCalls = [], cancellations = [];
-let failProvider = false, failMedia = false, failValidation = false, offset = 0;
+let failProvider = false, failMedia = false, failValidation = false, renewEpisode = false, signedEpisodes = 0, offset = 0;
 const now = Date.now; Date.now = () => now() + offset;
 globalThis.fetch = async (url, opts = {}) => {
   const u = new URL(url), provider = providerOrigins.indexOf(u.origin);
@@ -68,6 +68,7 @@ globalThis.fetch = async (url, opts = {}) => {
   }
   if (/^\/(live|movie|series)\//.test(u.pathname)) {
     assert.ok(u.pathname.includes('/'+username+'/'+password+'/'));
+    if (renewEpisode && u.pathname.startsWith('/series/')) return new Response(null,{status:302,headers:{location:'/episode-signed-'+(++signedEpisodes)+'.mkv'}});
     if (failMedia && username === 'upstream-0') return new Response('provider-private-error', {status:503});
     if (u.pathname.endsWith('.m3u8')) return new Response('#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:1\n#EXT-X-KEY:METHOD=AES-128,URI="/key.bin"\n#EXTINF:4,\n/segment.ts\n', {headers:{'content-type':'application/vnd.apple.mpegurl'}});
     if (u.pathname.startsWith('/live/')) {
@@ -78,6 +79,11 @@ globalThis.fetch = async (url, opts = {}) => {
   }
   if (u.pathname === '/segment.ts') return new Response(new Uint8Array([0x47,1,2,3]), {headers:{'content-type':'video/mp2t'}});
   if (u.pathname === '/key.bin') return new Response(new Uint8Array(16), {headers:{'content-type':'application/octet-stream'}});
+  if (/^\/episode-signed-\d+\.mkv$/.test(u.pathname)) {
+    const range=new Headers(opts.headers).get('range');
+    if(u.pathname==='/episode-signed-1.mkv' && range==='bytes=2-3')return new Response('expired-link',{status:403});
+    return new Response(signedEpisodes===1?'ab':'cd',{status:206,headers:{'content-type':'video/x-matroska','content-range':signedEpisodes===1?'bytes 0-3/4':'bytes 2-3/4',etag:'"episode-v1"'}});
+  }
   throw Error('Unexpected upstream path '+u.pathname);
 };
 const headers = device => ({'CF-Connecting-IP':'198.51.100.'+device, 'User-Agent':'Smarters-test/'+device});
@@ -161,6 +167,10 @@ assert.equal(head.status,200); assert.equal(head.headers.get('content-length'),'
 const episodeResponse = await media('series',episodes[1].id,'mkv');
 assert.equal(episodeResponse.status,200); assert.equal(await episodeResponse.text(),'data');
 assert.ok(providerCalls.some(c => c.origin===providerOrigins[1] && /\/series\/.+\/88\.mkv$/.test(c.path)), 'episodes use their original provider and ID');
+renewEpisode=true;
+const renewed=await media('series',episodes[1].id,'mkv');assert.equal(renewed.status,206);assert.equal(await renewed.text(),'abcd');
+assert.equal(signedEpisodes,2,'recovery renews the original authorised entry point instead of reusing an expired signed URL');
+assert.equal((await leases()).length,0);renewEpisode=false;
 
 assert.equal((await admin('provider-save', {mode:'single',url:providerOrigins[0],username:'upstream-backup',password:'provider-password-test-backup'})).status, 200);
 failMedia = true;
