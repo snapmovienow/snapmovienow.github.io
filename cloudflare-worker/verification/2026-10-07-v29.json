@@ -1,0 +1,101 @@
+{
+  "checked_at": "2026-10-07T23:13:50.137431+00:00",
+  "version": "29",
+  "commit": "a216a9b3586b66f7c7df247ea434703b502eac5e",
+  "regression_test_files_passed": 10,
+  "dry_run_passed": true,
+  "all_deploy_checks_passed": true,
+  "website_update_confirmed": true,
+  "http_requests": 22,
+  "http_errors": 0,
+  "complete_binary_resources": 8,
+  "checked_binary_resources": 8,
+  "client_cancelled_binary_requests": 2,
+  "largest_complete_resource_bytes": 4908116,
+  "duration_completed_tests": 4,
+  "clean_tests": 2,
+  "playback_tests": [
+    {
+      "kind": "live720",
+      "requested_seconds": 10,
+      "seek_seconds": 0,
+      "returncode": 0,
+      "decoded_frames": 299,
+      "decoded_seconds": 9.984333,
+      "errors": "",
+      "complete": true,
+      "wall_seconds": 29.92
+    },
+    {
+      "kind": "liveCOL1080",
+      "requested_seconds": 20,
+      "seek_seconds": 0,
+      "returncode": 0,
+      "decoded_frames": 600,
+      "decoded_seconds": 19.986633,
+      "errors": "",
+      "complete": true,
+      "wall_seconds": 37.58
+    },
+    {
+      "kind": "liveCHI1080_continuity",
+      "requested_seconds": 30,
+      "seek_seconds": 0,
+      "returncode": 0,
+      "decoded_frames": 1790,
+      "decoded_seconds": 29.996633,
+      "errors": "[h264 @ [decoder]] mmco: unref short failure\n[h264 @ [decoder]] mmco: unref short failure\n",
+      "complete": false,
+      "wall_seconds": 41.85
+    },
+    {
+      "kind": "liveARG1080",
+      "requested_seconds": 20,
+      "seek_seconds": 0,
+      "returncode": 0,
+      "decoded_frames": 595,
+      "decoded_seconds": 19.992,
+      "errors": "[h264 @ [decoder]] mmco: unref short failure\n    Last message repeated 1 times\n[h264 @ [decoder]] number of reference frames (0+5) exceeds max (4; probably corrupt input), discarding one\n[h264 @ [decoder]] mmco: unref short failure\n    Last message repeated 1 times\n[h264 @ [decoder]] mmco: unref short failure\n    Last message repeated 1 times\n[h264 @ [decoder]] number of reference frames (0+5) exceeds max (4; probably corrupt input), discarding one\n[h264 @ [decoder]] mmco: unref short failure\n    Last message repeated 1 times\n",
+      "complete": false,
+      "wall_seconds": 34.41
+    }
+  ],
+  "original_provider_samples": [
+    {
+      "region": "CHI",
+      "source": "direct_provider_segment",
+      "returncode": 0,
+      "decoded_frames": 594,
+      "decoded_seconds": 10.043367,
+      "errors": "",
+      "sample_bytes": 5298404
+    },
+    {
+      "region": "ARG",
+      "source": "direct_provider_segment",
+      "returncode": 0,
+      "decoded_frames": 332,
+      "decoded_seconds": 11.2112,
+      "errors": "[h264 @ [decoder]] mmco: unref short failure\n    Last message repeated 1 times\n[h264 @ [decoder]] number of reference frames (0+5) exceeds max (4; probably corrupt input), discarding one\n[h264 @ [decoder]] mmco: unref short failure\n    Last message repeated 1 times\n[h264 @ [decoder]] mmco: unref short failure\n    Last message repeated 1 times\n[h264 @ [decoder]] number of reference frames (0+5) exceeds max (4; probably corrupt input), discarding one\n[h264 @ [decoder]] mmco: unref short failure\n    Last message repeated 1 times\n",
+      "sample_bytes": 2199788
+    }
+  ],
+  "original_provider_invalid_manifest_observed": {
+    "region": "COL",
+    "status": 200,
+    "playlist": false,
+    "body_bytes": 1657
+  },
+  "fixes": [
+    "Reject an extensionless HTML response received instead of the requested live playlist.",
+    "Preserve upstream failure when retries exhaust available accounts instead of reporting capacity.",
+    "Align web playback recovery with a playlist segment boundary and increase live buffer allowance."
+  ],
+  "limitations": [
+    "Real playback checks used FFmpeg against the published bridge, not a physical Android app.",
+    "Chile and Argentina still produced H.264 decoder warnings during completed playback.",
+    "Argentina produced the same warnings in a segment downloaded directly from the provider.",
+    "Buffer settings and recovery cannot repair corrupt frames in the original provider encoding.",
+    "No concurrent-load benchmark or guarantee of all provider signals is implied."
+  ]
+}
