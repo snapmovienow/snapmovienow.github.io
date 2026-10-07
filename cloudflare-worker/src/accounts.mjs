@@ -13,6 +13,17 @@ function expiry(value){if(value===null||value===''||value===undefined)return nul
 export async function accountsFetch(state,env,req){
  const p=new URL(req.url).pathname.replace('/accounts','');const b=await req.json();const store=state.storage;
  try{
+ if(p==='/xtream-config')return answer(await store.get('xtream-config')||{enabled:true,version:1});
+ if(p==='/xtream-save')return store.transaction(async tx=>{if(typeof b.enabled!=='boolean')return answer({error:'invalid_setting'},400);const old=await tx.get('xtream-config')||{enabled:true,version:1};const next={enabled:b.enabled,version:old.version+(old.enabled===b.enabled?0:1)};await tx.put('xtream-config',next);if(!next.enabled)await removeLeases(tx,l=>l.xtream);return answer(next)});
+ if(p==='/xtream-register')return registerXtream(store,b.entries);
+ if(p==='/xtream-resolve')return answer(/^\d+$/.test(String(b.id))?await store.get('xtream-id:'+b.id)||null:null);
+ if(p==='/xtream-count')return answer({connections:Object.values(await store.get('leases')||{}).filter(l=>l.uid===b.uid&&l.until>Date.now()).length});
+ if(p==='/xtream-login'){
+  const username=normal(b.username),u=await store.get('user:'+username),key='xtream-auth:'+username+':'+b.authKey;
+  const cached=await store.get(key);if(cached&&cached.until>Date.now()&&alive(u)&&u.id===cached.uid&&u.version===cached.version)return answer({...publicUser(u),version:u.version});
+  const r=await accountsFetch(state,env,new Request('https://private/accounts/login',{method:'POST',body:JSON.stringify(b)}));if(!r.ok)return r;
+  const user=await r.json(),current=await store.get('user:'+username);if(!alive(current)||current.version!==user.version)return answer({error:'invalid_credentials'},401);await store.put(key,{uid:user.id,version:user.version,until:Date.now()+15*60000});return answer({...publicUser(current),version:user.version});
+ }
  if(p==='/status')return answer({configured:!!(await store.get('admin')),setupAvailable:!!env.ADMIN_SETUP_SECRET});
  if(p==='/setup'){
   if(!env.ADMIN_SETUP_SECRET||env.ADMIN_SETUP_SECRET.length<32||!await same(b.setupSecret,env.ADMIN_SETUP_SECRET))return answer({error:'setup_denied'},403);
@@ -31,6 +42,7 @@ export async function accountsFetch(state,env,req){
   await store.delete(bucket);return answer({id:u.id,username:u.username,version:u.version,expiresAt:u.expiresAt,permissions:u.permissions||{movies:true,series:true,tv:true}});
  }
  if(p==='/check'){
+  if(b.xtream){const config=await store.get('xtream-config')||{enabled:true,version:1};if(!config.enabled||config.version!==b.xtreamVersion)return answer({ok:false},401)}
   const u=await store.get(b.admin?'admin':'user:'+normal(b.username));return answer({ok:!!(u&&u.id===b.uid&&u.version===b.version&&(b.admin||alive(u)))},u&&u.id===b.uid&&u.version===b.version&&(b.admin||alive(u))?200:401);
  }
  if(p==='/has')return answer({exists:!!(await store.get('user:'+normal(b.username)))});
@@ -62,20 +74,24 @@ export async function accountsFetch(state,env,req){
  if(p==='/acquire')return store.transaction(async tx=>{
   const provider=await tx.get('provider');if(!provider)return answer({error:'provider_not_configured'},503);
   const u=await tx.get('user:'+normal(b.username));if(!alive(u)||u.id!==b.uid||u.version!==b.version)return answer({error:'account_inactive'},401);
-  const leases=await tx.get('leases')||{};for(const [id,l]of Object.entries(leases))if(l.until<=Date.now()||l.sid===b.sid)delete leases[id];
+  const leases=await tx.get('leases')||{};for(const [id,l]of Object.entries(leases))if(l.until<=Date.now())delete leases[id];
+  if(b.xtream){const previous=Object.entries(leases).find(([,l])=>l.sid===b.sid&&l.mediaKey===b.mediaKey);if(previous){const [id,l]=previous;l.until=Date.now()+90000;l.request_id=b.request_id;await tx.put('leases',leases);const pool=await tx.get('pool'),line=pool?.lines?.find(x=>x.id===l.provider_id);return answer({lease_id:id,provider_id:l.provider_id,encrypted:line?.encrypted,maxConnections:line?.maxConnections,reused:true,request_id:b.request_id})}}
+  for(const [id,l]of Object.entries(leases))if(l.sid===b.sid)delete leases[id];
+  if(b.xtream&&Object.values(leases).filter(l=>l.uid===b.uid).length>=3)return answer({error:'user_connection_limit'},409);
+  const extra=b.xtream?{xtream:true,mediaKey:b.mediaKey,request_id:b.request_id}:{};
   if(provider.mode==='panel'){
    const pool=await tx.get('pool');if(!pool||pool.syncedAt<Date.now()-60000)return answer({error:'panel_unavailable'},503);
    const candidates=pool.lines.filter(p=>(!b.server||(p.server||'ccf')===b.server)&&!(b.exclude||[]).includes(p.id)).map(p=>({...p,occupied:p.external+Object.values(leases).filter(l=>l.provider_id===p.id).length})).filter(p=>p.occupied<p.maxConnections).sort((a,b)=>a.occupied/a.maxConnections-b.occupied/b.maxConnections);
    const selected=candidates[0];if(!selected)return answer({error:'ccf_capacity'},409);
-   const id=crypto.randomUUID();leases[id]={sid:b.sid,uid:b.uid,username:b.username,version:b.version,provider_id:selected.id,until:Date.now()+90000};await tx.put('leases',leases);return answer({lease_id:id,provider_id:selected.id,encrypted:selected.encrypted,maxConnections:selected.maxConnections});
+   const id=crypto.randomUUID();leases[id]={sid:b.sid,uid:b.uid,username:b.username,version:b.version,provider_id:selected.id,until:Date.now()+90000,...extra};await tx.put('leases',leases);return answer({lease_id:id,provider_id:selected.id,encrypted:selected.encrypted,maxConnections:selected.maxConnections});
   }
   const max=Math.min(provider.maxConnections,Math.max(1,Number(b.upstreamMax)||3));
-  if(Object.keys(leases).length>=max)return answer({error:'ccf_capacity',maxConnections:max},409);
-  const id=crypto.randomUUID();leases[id]={sid:b.sid,uid:b.uid,username:b.username,version:b.version,until:Date.now()+90000};await tx.put('leases',leases);return answer({lease_id:id});
+  if(Math.max(Object.keys(leases).length,Number(b.upstreamExternal)||0)>=max)return answer({error:'ccf_capacity',maxConnections:max},409);
+  const id=crypto.randomUUID();leases[id]={sid:b.sid,uid:b.uid,username:b.username,version:b.version,until:Date.now()+90000,...extra};await tx.put('leases',leases);return answer({lease_id:id});
  });
  if(p==='/lease-check'||p==='/heartbeat'||p==='/release')return store.transaction(async tx=>{
   const leases=await tx.get('leases')||{},l=leases[b.lease_id];if(!l||l.sid!==b.sid)return answer({error:'playback_expired'},410);
-  if(p==='/release'){delete leases[b.lease_id];await tx.put('leases',leases);return answer({ok:true})}
+  if(p==='/release'){if(b.request_id&&l.request_id!==b.request_id)return answer({ok:true,reused:true});delete leases[b.lease_id];await tx.put('leases',leases);return answer({ok:true})}
   const u=await tx.get('user:'+normal(l.username));if(l.until<=Date.now()||!alive(u)||u.id!==l.uid||u.version!==l.version){delete leases[b.lease_id];await tx.put('leases',leases);return answer({error:'playback_expired'},410)}
   if(p==='/heartbeat'){l.until=Date.now()+90000;await tx.put('leases',leases)}return answer({ok:true});
  });
@@ -89,4 +105,18 @@ async function removeLeases(tx,predicate){const leases=await tx.get('leases')||{
 async function mergePools(tx,pools){
  const unique=new Map(),keys=new Map();for(const pool of Object.values(pools))for(const line of pool.lines){const id=keys.get(line.key)||line.id,previous=unique.get(id);const next=previous?{...line,id:previous.id,maxConnections:Math.min(previous.maxConnections,line.maxConnections),external:Math.max(previous.external,line.external)}:line;unique.set(id,next);if(line.key)keys.set(line.key,id)}
  const lines=[...unique.values()];await tx.put('pool',{lines,syncedAt:Object.keys(pools).length?Math.min(...Object.values(pools).map(p=>p.syncedAt)):Date.now()});await removeLeases(tx,l=>l.provider_id&&!unique.has(l.provider_id));
+}
+
+async function registerXtream(store,entries){
+ if(!Array.isArray(entries)||entries.length>50000)return answer({error:'invalid_catalog'},400);
+ const kinds=new Set(['live','movie','series_list','episode','live_category','movie_category','series_category']);
+ if(entries.some(e=>!kinds.has(e.kind)||typeof e.server!=='string'||e.server.length>100||!/^\d{1,16}$/.test(String(e.upstreamId))))return answer({error:'invalid_catalog'},400);
+ return store.transaction(async tx=>{
+  let next=await tx.get('xtream-next-id')||1;const result=[];
+  for(let offset=0;offset<entries.length;offset+=60){const chunk=entries.slice(offset,offset+60),keys=chunk.map(e=>'xtream-map:'+e.kind+':'+e.server+':'+e.upstreamId),existing=await tx.get(keys),writes={};
+   for(let i=0;i<chunk.length;i++){const key=keys[i],e=chunk[i];let id=existing.get(key)||writes[key];if(!id){if(next>2147483647)throw Error('catalog_id_limit');id=next++;writes[key]=id;writes['xtream-id:'+id]={...e,id};}result.push(id)}
+   if(Object.keys(writes).length)await tx.put(writes);
+  }
+  await tx.put('xtream-next-id',next);return answer(result);
+ });
 }
