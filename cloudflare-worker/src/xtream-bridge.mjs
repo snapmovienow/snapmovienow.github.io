@@ -148,19 +148,39 @@ export function createXtreamBridge(deps) {
 
 // Native players do not send the web player's heartbeat. Keep an open media
 // response authorised and release its reservation when the client disconnects.
-export function guardXtreamResponse(response, check, release, ctx) {
+export function guardXtreamResponse(response, check, release, ctx, signal) {
   if (!response.body) return response;
-  const reader=response.body.getReader();let closed=false,checking=false,controller,timer;
-  const cleanup=async()=>{clearInterval(timer);const task=Promise.resolve(release()).catch(()=>{});ctx?.waitUntil?.(task);await task};
+  const reader=response.body.getReader();let closed=false,checking=false,controller,timer,cleanupTask,lastDemand=Date.now();
+  const cleanup=()=>{
+    if(cleanupTask)return cleanupTask;
+    clearInterval(timer);signal?.removeEventListener('abort',onAbort);
+    cleanupTask=Promise.resolve().then(release).catch(()=>{});ctx?.waitUntil?.(cleanupTask);return cleanupTask;
+  };
+  const stop=async(reason)=>{
+    if(closed)return;closed=true;
+    try{controller.error(reason instanceof Error?reason:Error('client_disconnected'))}catch{}
+    // Release independently: upstream cancellation must not delay capacity cleanup.
+    await Promise.allSettled([reader.cancel(reason),cleanup()]);
+  };
+  const onAbort=()=>{const task=stop(Error('client_disconnected'));ctx?.waitUntil?.(task)};
   const body=new ReadableStream({
-    start(c){controller=c;timer=setInterval(async()=>{
-      if(closed||checking)return;checking=true;
-      try{if(!await check()){closed=true;controller.error(Error('access_revoked'));await reader.cancel().catch(()=>{});await cleanup()}}
-      catch{if(!closed){closed=true;controller.error(Error('access_unavailable'));await reader.cancel().catch(()=>{});await cleanup()}}
-      finally{checking=false}
-    },25000)},
-    async pull(c){if(closed)return;try{const next=await reader.read();if(closed)return;if(next.done){closed=true;await cleanup();c.close()}else c.enqueue(next.value)}catch(error){if(!closed){closed=true;await cleanup();c.error(error)}}},
-    async cancel(reason){if(closed)return;closed=true;await reader.cancel(reason).catch(()=>{});await cleanup()}
+    start(c){controller=c;
+      if(signal?.aborted){onAbort();return}
+      signal?.addEventListener('abort',onAbort,{once:true});
+      timer=setInterval(async()=>{
+        if(closed||checking)return;
+        if(Date.now()-lastDemand>45000){await stop(Error('stream_idle'));return}
+        checking=true;
+        try{if(!await check())await stop(Error('access_revoked'))}
+        catch{await stop(Error('access_unavailable'))}
+        finally{checking=false}
+      },25000);
+    },
+    async pull(c){if(closed)return;lastDemand=Date.now();try{
+      const next=await reader.read();if(closed)return;
+      if(next.done){closed=true;await cleanup();c.close()}else c.enqueue(next.value);
+    }catch(error){await stop(error)}},
+    async cancel(reason){if(closed)return;closed=true;await Promise.allSettled([reader.cancel(reason),cleanup()])}
   });
   return new Response(body,{status:response.status,statusText:response.statusText,headers:response.headers});
 }

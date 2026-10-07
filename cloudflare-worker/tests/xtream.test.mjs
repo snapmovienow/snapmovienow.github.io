@@ -313,4 +313,24 @@ try {
   const read=guarded.body.getReader().read(); const rejected=assert.rejects(read,/access_revoked/); await tick(); await rejected;
   assert.equal(released,1);assert.equal(canceled,1);
 } finally {globalThis.setInterval=interval;globalThis.clearInterval=clear;Date.now=now}
+// Backpressure without client consumption must not renew a reservation forever.
+{
+ const originalInterval=globalThis.setInterval,originalClear=globalThis.clearInterval,originalNow=Date.now;
+ let clock=1000,tick,renewals=0,releases=0;
+ Date.now=()=>clock;globalThis.setInterval=fn=>{tick=fn;return 1};globalThis.clearInterval=()=>{};
+ try {
+  const response=guardXtreamResponse(new Response(new ReadableStream({start(c){c.enqueue(new Uint8Array([1]))}})),async()=>{renewals++;return true},async()=>{releases++});
+  await new Promise(resolve=>setTimeout(resolve,0));clock+=50000;await tick();
+  assert.equal(renewals,0);assert.equal(releases,1);
+  await assert.rejects(response.body.getReader().read(),/stream_idle/);
+ } finally {Date.now=originalNow;globalThis.setInterval=originalInterval;globalThis.clearInterval=originalClear}
+}
+// Incoming HTTP abort cancels upstream and releases once, even after repeated aborts.
+{
+ const abort=new AbortController();let releaseCount=0,cancelCount=0;
+ const response=guardXtreamResponse(new Response(new ReadableStream({cancel(){cancelCount++}})),async()=>true,async()=>{releaseCount++},undefined,abort.signal);
+ const pending=response.body.getReader().read();const rejected=assert.rejects(pending,/client_disconnected/);
+ abort.abort();abort.abort();await rejected;await new Promise(resolve=>setTimeout(resolve,0));
+ assert.equal(releaseCount,1);assert.equal(cancelCount,1);
+}
 console.log('PASS: Xtream login; two-provider catalogs and stable IDs; movie Range and episodes; HLS heartbeat and private keys; capacity, cancellation, user permissions, suspension, password, expiry, deletion and admin revocation.');
