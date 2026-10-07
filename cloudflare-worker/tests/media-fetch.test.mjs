@@ -39,6 +39,14 @@ const partial = recoverMedia(new Response('abc', {status:206,headers:{'content-l
 }, async () => true);
 assert.equal(await partial.text(), 'abcdef');
 
+// Streaming origins often omit Content-Length even for a finite byte range.
+// The declared Content-Range still gives the exact number of bytes owed.
+const chunkedRange = recoverMedia(new Response('abc', {status:206,headers:{'content-range':'bytes 10-15/100'}}), async range => {
+  assert.equal(range, 'bytes=13-15');
+  return new Response('def', {status:206,headers:{'content-range':'bytes 13-15/100'}});
+}, async () => true);
+assert.equal(await chunkedRange.text(), 'abcdef');
+
 for (const bad of [new Response('def'), new Response('def', {status:206,headers:{'content-range':'bytes 0-2/6',etag:'"v1"'}}), new Response('def', {status:206,headers:{'content-range':'bytes 3-5/6',etag:'"v2"'}})]) {
   await assert.rejects(recoverMedia(truncated(), async () => bad, async () => true).text(), /invalid_media_resume/);
 }

@@ -30,8 +30,9 @@ export async function fetchMedia(url, options = {}, headerTimeout = 12000, idleT
 // Resume a truncated static segment/file at the exact missing byte. Never mix
 // a different resource or a server that ignores Range into the client's body.
 export function recoverMedia(response, fetchRange, authorized, attempts = 2) {
-  const length = Number(response.headers.get('content-length'));
   const range = response.headers.get('content-range')?.match(/^bytes (\d+)-(\d+)\/(\d+)$/);
+  const declared = response.headers.get('content-length');
+  const length = declared === null && range ? Number(range[2]) - Number(range[1]) + 1 : Number(declared);
   if (!response.ok || !response.body || !Number.isSafeInteger(length) || length <= 0 || (response.status === 206 && !range)) return response;
   const start = range ? Number(range[1]) : 0, total = range ? Number(range[3]) : length;
   if (!Number.isSafeInteger(start) || !Number.isSafeInteger(total) || start + length > total || (range && Number(range[2]) !== start + length - 1)) return response;
