@@ -69,18 +69,18 @@ export async function accountsFetch(state,env,req){
  if(p==='/permissions'){const user=await store.get('user:'+normal(b.username));return answer(user?.permissions||{movies:true,series:true,tv:true})}
  if(p==='/provider')return answer(await store.get('provider')||{});
  if(p==='/pool')return answer(await store.get('pool')||{lines:[],syncedAt:0});
- if(p==='/pool-sync')return store.transaction(async tx=>{const lines=b.lines;if(!Array.isArray(lines))return answer({error:'panel_no_active_lines'},503);if(b.source){const pools=await tx.get('source-pools')||{};pools[b.source]={lines,syncedAt:Date.now()};await tx.put('source-pools',pools);await mergePools(tx,pools);return answer({ok:true})}await tx.put('pool',{lines,syncedAt:Date.now()});await removeLeases(tx,l=>l.provider_id&&!lines.some(p=>p.id===l.provider_id));return answer({ok:true})});
+ if(p==='/pool-sync')return store.transaction(async tx=>{const lines=b.lines;if(b.source){const pools=await tx.get('source-pools')||{};if(b.retain){const old=pools[b.source];pools[b.source]=old&&old.syncedAt>Date.now()-300000?{...old,attemptedAt:Date.now()}:{lines:[],syncedAt:Date.now()}}else{if(!Array.isArray(lines))return answer({error:'panel_no_active_lines'},503);pools[b.source]={lines,syncedAt:Date.now()}}await tx.put('source-pools',pools);await mergePools(tx,pools);return answer({ok:true})}if(!Array.isArray(lines))return answer({error:'panel_no_active_lines'},503);await tx.put('pool',{lines,syncedAt:Date.now()});await removeLeases(tx,l=>l.provider_id&&!lines.some(p=>p.id===l.provider_id));return answer({ok:true})});
  if(p==='/overview'){const provider=await store.get('provider'),pool=await store.get('pool'),leases=Object.values(await store.get('leases')||{}).filter(x=>x.until>Date.now());return answer({provider:provider?{username:provider.username,mode:provider.mode||'single',maxConnections:provider.mode==='panel'?(pool?.lines||[]).reduce((n,l)=>n+l.maxConnections,0):provider.maxConnections,activeAccounts:pool?.lines?.length||0,sourceCount:(await store.get('providers'))?.length||1}:null,connections:leases.length})}
  if(p==='/acquire')return store.transaction(async tx=>{
   const provider=await tx.get('provider');if(!provider)return answer({error:'provider_not_configured'},503);
   const u=await tx.get('user:'+normal(b.username));if(!alive(u)||u.id!==b.uid||u.version!==b.version)return answer({error:'account_inactive'},401);
   const leases=await tx.get('leases')||{};for(const [id,l]of Object.entries(leases))if(l.until<=Date.now())delete leases[id];
-  if(b.xtream){const previous=Object.entries(leases).find(([,l])=>l.sid===b.sid&&l.mediaKey===b.mediaKey);if(previous){const [id,l]=previous;l.until=Date.now()+90000;l.request_id=b.request_id;await tx.put('leases',leases);const pool=await tx.get('pool'),line=pool?.lines?.find(x=>x.id===l.provider_id);return answer({lease_id:id,provider_id:l.provider_id,encrypted:line?.encrypted,maxConnections:line?.maxConnections,reused:true,request_id:b.request_id})}}
+  if(b.xtream){const previous=Object.entries(leases).find(([,l])=>l.sid===b.sid&&l.mediaKey===b.mediaKey&&!(b.exclude||[]).includes(l.provider_id));if(previous){const [id,l]=previous;l.until=Date.now()+90000;l.request_id=b.request_id;await tx.put('leases',leases);const pool=await tx.get('pool'),line=pool?.lines?.find(x=>x.id===l.provider_id);return answer({lease_id:id,provider_id:l.provider_id,encrypted:line?.encrypted,maxConnections:line?.maxConnections,reused:true,request_id:b.request_id})}}
   for(const [id,l]of Object.entries(leases))if(l.sid===b.sid)delete leases[id];
   if(b.xtream&&Object.values(leases).filter(l=>l.uid===b.uid).length>=3)return answer({error:'user_connection_limit'},409);
   const extra=b.xtream?{xtream:true,mediaKey:b.mediaKey,request_id:b.request_id}:{};
   if(provider.mode==='panel'){
-   const pool=await tx.get('pool');if(!pool||pool.syncedAt<Date.now()-60000)return answer({error:'panel_unavailable'},503);
+   const pool=await tx.get('pool');if(!pool||pool.syncedAt<Date.now()-(b.xtream?300000:60000))return answer({error:'panel_unavailable'},503);
    const candidates=pool.lines.filter(p=>(!b.server||(p.server||'ccf')===b.server)&&!(b.exclude||[]).includes(p.id)).map(p=>({...p,occupied:p.external+Object.values(leases).filter(l=>l.provider_id===p.id).length})).filter(p=>p.occupied<p.maxConnections).sort((a,b)=>a.occupied/a.maxConnections-b.occupied/b.maxConnections);
    const selected=candidates[0];if(!selected)return answer({error:'ccf_capacity'},409);
    const id=crypto.randomUUID();leases[id]={sid:b.sid,uid:b.uid,username:b.username,version:b.version,provider_id:selected.id,until:Date.now()+90000,...extra};await tx.put('leases',leases);return answer({lease_id:id,provider_id:selected.id,encrypted:selected.encrypted,maxConnections:selected.maxConnections});
@@ -104,7 +104,7 @@ async function removeLeases(tx,predicate){const leases=await tx.get('leases')||{
 
 async function mergePools(tx,pools){
  const unique=new Map(),keys=new Map();for(const pool of Object.values(pools))for(const line of pool.lines){const id=keys.get(line.key)||line.id,previous=unique.get(id);const next=previous?{...line,id:previous.id,maxConnections:Math.min(previous.maxConnections,line.maxConnections),external:Math.max(previous.external,line.external)}:line;unique.set(id,next);if(line.key)keys.set(line.key,id)}
- const lines=[...unique.values()];await tx.put('pool',{lines,syncedAt:Object.keys(pools).length?Math.min(...Object.values(pools).map(p=>p.syncedAt)):Date.now()});await removeLeases(tx,l=>l.provider_id&&!unique.has(l.provider_id));
+ const lines=[...unique.values()];await tx.put('pool',{lines,syncedAt:Object.keys(pools).length?Math.min(...Object.values(pools).map(p=>p.attemptedAt||p.syncedAt)):Date.now()});await removeLeases(tx,l=>l.provider_id&&!unique.has(l.provider_id));
 }
 
 async function registerXtream(store,entries){

@@ -31,12 +31,13 @@ env.PLAYBACK_SESSIONS = {
 const origin = 'https://snapmovienow-edge.juancanta89.workers.dev';
 const providerOrigins = ['http://ccf.center:8444', 'https://beta.example.test'];
 const providerCalls = [], cancellations = [];
-let failProvider = false, offset = 0;
+let failProvider = false, failMedia = false, offset = 0;
 const now = Date.now; Date.now = () => now() + offset;
 globalThis.fetch = async (url, opts = {}) => {
   const u = new URL(url), provider = providerOrigins.indexOf(u.origin);
   assert.ok(provider >= 0, 'every upstream request stays with a configured test provider');
-  const username = 'upstream-'+provider, password = 'provider-password-test-'+provider;
+  const backup = u.searchParams.get('username') === 'upstream-backup' || u.pathname.includes('/upstream-backup/');
+  const username = backup ? 'upstream-backup' : 'upstream-'+provider, password = backup ? 'provider-password-test-backup' : 'provider-password-test-'+provider;
   providerCalls.push({origin:u.origin, path:u.pathname, action:u.searchParams.get('action'), id:u.searchParams.get('vod_id') || u.searchParams.get('series_id') || u.searchParams.get('stream_id')});
   if (u.pathname === '/player_api.php') {
     assert.equal(u.searchParams.get('username'), username);
@@ -66,6 +67,7 @@ globalThis.fetch = async (url, opts = {}) => {
   }
   if (/^\/(live|movie|series)\//.test(u.pathname)) {
     assert.ok(u.pathname.includes('/'+username+'/'+password+'/'));
+    if (failMedia && username === 'upstream-0') return new Response('provider-private-error', {status:503});
     if (u.pathname.endsWith('.m3u8')) return new Response('#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:1\n#EXT-X-KEY:METHOD=AES-128,URI="/key.bin"\n#EXTINF:4,\n/segment.ts\n', {headers:{'content-type':'application/vnd.apple.mpegurl'}});
     if (u.pathname.startsWith('/live/')) {
       return new Response(new ReadableStream({start(c) {c.enqueue(new Uint8Array([0x47,1,2,3]))}, cancel() {cancellations.push(u.pathname)}}), {headers:{'content-type':'video/mp2t'}});
@@ -158,6 +160,32 @@ assert.equal(head.status,200); assert.equal(head.headers.get('content-length'),'
 const episodeResponse = await media('series',episodes[1].id,'mkv');
 assert.equal(episodeResponse.status,200); assert.equal(await episodeResponse.text(),'data');
 assert.ok(providerCalls.some(c => c.origin===providerOrigins[1] && /\/series\/.+\/88\.mkv$/.test(c.path)), 'episodes use their original provider and ID');
+
+assert.equal((await admin('provider-save', {mode:'single',url:providerOrigins[0],username:'upstream-backup',password:'provider-password-test-backup'})).status, 200);
+failMedia = true;
+const failoverStart = providerCalls.length;
+const alternative = await media('movie', movies[0].stream_id, 'mp4');
+assert.equal(alternative.status, 200); assert.equal(await alternative.text(), 'data');
+const failoverCalls = providerCalls.slice(failoverStart).filter(c => c.path.startsWith('/movie/'));
+assert.equal(failoverCalls.length, 2); assert.ok(failoverCalls[0].path.includes('/upstream-0/')); assert.ok(failoverCalls[1].path.includes('/upstream-backup/'));
+assert.equal((await leases()).length, 0, 'failed and finished alternative streams release their reservations');
+failMedia = false;
+
+// A slow reseller refresh must not block a new native playback with a recent
+// inventory. Individual playback credentials still receive a fresh check.
+const accountsStore = objects.get('__smn_accounts_v1').state.storage;
+const stale = await accountsStore.get('pool'); stale.syncedAt = Date.now()-40000; await accountsStore.put('pool', stale);
+const savedFetch = globalThis.fetch;
+let unblockRefresh; const refreshGate = new Promise(resolve => {unblockRefresh=resolve});
+let checkingRefresh = true;
+globalThis.fetch = async (url, opts) => {if(checkingRefresh && new URL(url).pathname==='/player_api.php' && new URL(url).searchParams.get('username')==='upstream-backup' && !new URL(url).searchParams.has('action')) {checkingRefresh=false; await refreshGate} return savedFetch(url, opts)};
+const background = [], context = {waitUntil:task => background.push(task)};
+const nativeRequest = new Request(`${origin}/movie/${customer.username}/${customer.password}/${movies[0].stream_id}.mp4`, {headers:headers(1)});
+let deadline;
+try {
+  const quick = await Promise.race([worker.fetch(nativeRequest, env, context), new Promise((_,reject) => {deadline=setTimeout(()=>reject(Error('playback_waited_for_pool_refresh')),2000)})]);
+  assert.equal(quick.status,200); assert.equal(background.length,1); assert.equal(await quick.text(),'data');
+} finally {clearTimeout(deadline); unblockRefresh(); await Promise.all(background); globalThis.fetch=savedFetch}
 
 const hls = await media('live',channels[0].stream_id,'m3u8');
 assert.equal(hls.status,200); const manifest = await hls.text(); noProviderSecrets(manifest);

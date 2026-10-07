@@ -16,3 +16,19 @@ const storage=objects.get('__smn_accounts_v1').state.storage;const pool=await st
 assert.equal((await req({op:'vod',access_token:sessions[rejected]})).status,200);
 combined=await admin('overview');assert.equal(combined.data.provider.activeAccounts,3);assert.equal(combined.data.provider.maxConnections,9);assert.equal(combined.data.connections,6);
 console.log('PASS: second reseller adds capacity, overlapping line deduplicated, refresh retains both sources and active playback leases.');
+
+const directory = async body => {
+ const result = await env.PLAYBACK_SESSIONS.get('__smn_accounts_v1').fetch('https://private/accounts/pool-sync', {method:'POST',body:JSON.stringify(body)});
+ assert.equal(result.status,200);
+};
+const sources=Object.keys(await storage.get('source-pools'));
+await directory({source:sources[0],retain:true});
+assert.equal((await storage.get('pool')).lines.length,3);
+assert.equal(Object.keys(await storage.get('leases')).length,6,'a transient source outage preserves authorised running streams');
+await directory({source:sources[0],lines:[]});
+assert.deepEqual((await storage.get('pool')).lines.map(l=>l.id),['2','3']);
+assert.ok(Object.values(await storage.get('leases')).every(l=>l.provider_id!=='1'),'a confirmed inactive source revokes its accounts immediately');
+const expiredPools=await storage.get('source-pools');expiredPools[sources[1]].syncedAt=Date.now()-300001;await storage.put('source-pools',expiredPools);
+await directory({source:sources[1],retain:true});
+assert.equal((await storage.get('pool')).lines.length,0); assert.equal(Object.keys(await storage.get('leases')).length,0,'inventory retention expires after five minutes');
+console.log('PASS: transient inventory failure preserves leases; confirmed inactivity revokes them; stale inventory expires after five minutes.');

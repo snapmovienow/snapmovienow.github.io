@@ -3,6 +3,7 @@ import {readPanel,validateServerUrl} from "./reseller.mjs";
 import {accountsFetch} from "./accounts.mjs";
 import {matchesXtream} from './xtream.mjs';
 import {createXtreamBridge,guardXtreamResponse} from './xtream-bridge.mjs';
+import {fetchMedia,recoverMedia} from './media-fetch.mjs';
 const liveStarts=new Map();
 function rememberLiveStart(url,body){const now=Date.now();for(const [key,value] of liveStarts)if(value.until<now)liveStarts.delete(key);if(liveStarts.size>=128)liveStarts.delete(liveStarts.keys().next().value);liveStarts.set(url,{body,until:now+10000})}
 const ORIGIN="http://ccf.center:8444";
@@ -27,7 +28,7 @@ export class PlaybackSession {
 }
 async function sessionCall(env,sid,path,body){if(!env.PLAYBACK_SESSIONS||!sid)return new Response("Unauthorized",{status:401});return env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName(sid)).fetch("https://session"+path,{method:body?"POST":"GET",...(body?{body:JSON.stringify(body)}:{})})}
 async function createSession(env,username,password){const sid=crypto.randomUUID(),exp=Date.now()+12*60*60*1000;const r=await sessionCall(env,sid,"/create",{exp});if(!r.ok)throw Error("session_unavailable");return {sid,username,password,exp,kind:"session"}}
-async function validateAccount(username,password,origin=ORIGIN){const x=new URL(origin+"/player_api.php");x.searchParams.set("username",username);x.searchParams.set("password",password);const r=await fetch(x,{headers:{"User-Agent":"SnapMovieNow/1.0"}});const a=await r.json();return r.ok&&String(a?.user_info?.auth)==="1"&&(!a.user_info.status||a.user_info.status==="Active")?a:null}
+async function validateAccount(username,password,origin=ORIGIN){const x=new URL(origin+"/player_api.php");x.searchParams.set("username",username);x.searchParams.set("password",password);const r=await fetch(x,{headers:{"User-Agent":"SnapMovieNow/1.0"},signal:AbortSignal.timeout(6000)});const a=await r.json();return r.ok&&String(a?.user_info?.auth)==="1"&&(!a.user_info.status||a.user_info.status==="Active")?a:null}
 async function directory(env,path,body={}){return env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName("__smn_accounts_v1")).fetch("https://private/accounts"+path,{method:"POST",body:JSON.stringify(body)})}
 async function registry(env,path,body={}){return env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_xtream_catalog_v1')).fetch('https://private/accounts'+path,{method:'POST',body:JSON.stringify(body)})}
 async function ownSession(env,user,admin=false){const sid=crypto.randomUUID(),exp=Math.min(Date.now()+(admin?2:12)*3600000,user.expiresAt||Infinity),identity={uid:user.id,username:user.username,version:user.version,admin};const r=await sessionCall(env,sid,"/create",{exp,identity});if(!r.ok)throw Error("session_unavailable");return {kind:admin?"admin":"session",managed:!admin,sid,exp,permissions:user.permissions,...identity}}
@@ -35,22 +36,30 @@ const hashId=async value=>b64(await crypto.subtle.digest('SHA-256',new TextEncod
 const serverId=async origin=>origin===ORIGIN?'ccf':await hashId(origin);
 async function encryptedLines(env,raw,origin=ORIGIN){const server=await serverId(origin);return Promise.all(raw.map(async l=>({id:server==='ccf'?l.id:server+':'+l.id,server,key:await hashId(origin+'|'+l.username.toLowerCase()),maxConnections:l.maxConnections,external:l.external,encrypted:await ticket(env,{kind:'provider',origin,username:l.username,password:l.password,exp:Date.now()+86400000})})))}
 const poolRefreshes=new WeakMap();
-async function providerPool(env){const key=env.PLAYBACK_SESSIONS;if(poolRefreshes.has(key))return poolRefreshes.get(key);const work=refreshProviderPool(env);poolRefreshes.set(key,work);try{return await work}finally{poolRefreshes.delete(key)}}
+async function providerPool(env,ctx){
+ const key=env.PLAYBACK_SESSIONS;
+ if(ctx?.waitUntil){const snapshot=await (await directory(env,'/pool')).json();if(snapshot.lines?.length&&snapshot.syncedAt>Date.now()-300000){
+  if(snapshot.syncedAt<Date.now()-30000&&!poolRefreshes.has(key)){const work=refreshProviderPool(env);poolRefreshes.set(key,work);ctx.waitUntil(work.catch(()=>{}).finally(()=>poolRefreshes.delete(key)))}
+  return snapshot.lines;
+ }}
+ if(poolRefreshes.has(key))return poolRefreshes.get(key);const work=refreshProviderPool(env);poolRefreshes.set(key,work);try{return await work}finally{poolRefreshes.delete(key)}
+}
 async function refreshProviderPool(env){
  const providers=await (await directory(env,'/providers')).json();if(!providers.length)throw Error('provider_not_configured');
  const saved=await (await directory(env,'/provider')).json();if(providers.length===1&&saved.mode!=='panel')return null;
  let pool=await (await directory(env,'/pool')).json();if(pool.syncedAt>Date.now()-30000)return pool.lines;
- for(const p of providers){let raw=[];const origin=p.origin||ORIGIN;try{const d=await unticket(env,p.encrypted||'');if(!d)throw Error('provider_not_configured');
+ await Promise.all(providers.map(async p=>{let raw=[];const origin=p.origin||ORIGIN;try{const d=await unticket(env,p.encrypted||'');if(!d)throw Error('provider_not_configured');
  if(d.kind==='reseller')raw=await readPanel(d.username,d.password,p.url||'http://ccf.center:8444/NYzkggyG/');else{const a=await validateAccount(d.username,d.password,origin);if(!a)throw Error('provider_inactive');raw=[{id:'single:'+d.username.toLowerCase(),username:d.username,password:d.password,maxConnections:Math.min(3,Number(a.user_info.max_connections)||3),external:Number(a.user_info.active_cons)||0}]}
- }catch{}const response=await directory(env,'/pool-sync',{source:p.source,lines:await encryptedLines(env,raw,origin)});if(!response.ok)throw Error('panel_unavailable');}
+ }catch(error){if(!['panel_invalid','panel_no_active_lines','provider_inactive','provider_not_configured'].includes(error.message)){const retained=await directory(env,'/pool-sync',{source:p.source,retain:true});if(!retained.ok)throw Error('panel_unavailable');return}}
+ const response=await directory(env,'/pool-sync',{source:p.source,lines:await encryptedLines(env,raw,origin)});if(!response.ok)throw Error('panel_unavailable');}));
  pool=await (await directory(env,'/pool')).json();if(!pool.lines.length)throw Error('provider_inactive');return pool.lines;
 }
-async function catalogCredentials(env,server){const pool=await providerPool(env);if(!pool)return [{...await providerCredentials(env),server:'ccf'}];const groups=new Map();for(const l of pool){const id=l.server||'ccf';if(server&&server!==id)continue;if(!groups.has(id)){const d=await unticket(env,l.encrypted);if(d)groups.set(id,{...d,server:id})}}return [...groups.values()]}
+async function catalogCredentials(env,server,ctx){const pool=await providerPool(env,ctx);if(!pool)return [{...await providerCredentials(env),server:'ccf'}];const groups=new Map();for(const l of pool){const id=l.server||'ccf';if(server&&server!==id)continue;if(!groups.has(id)){const d=await unticket(env,l.encrypted);if(d)groups.set(id,{...d,server:id})}}return [...groups.values()]}
 async function providerCredentials(env){const pool=await providerPool(env);if(pool){const d=await unticket(env,pool[0].encrypted);if(!d)throw Error("panel_unavailable");return {...d,maxConnections:pool[0].maxConnections}}
  const p=await (await directory(env,"/provider")).json(),d=await unticket(env,p.encrypted||"");if(d?.kind!=="provider")throw Error("provider_not_configured");return {...d,maxConnections:p.maxConnections}}
-async function managedPlayback(env,session,server){const pool=await providerPool(env);if(!pool){const credentials=await providerCredentials(env),a=await validateAccount(credentials.username,credentials.password,credentials.origin||ORIGIN);if(!a)throw Error("provider_inactive");const r=await directory(env,"/acquire",{...session,upstreamMax:a.user_info.max_connections,upstreamExternal:session.xtream?a.user_info.active_cons:0});return {r,credentials}}
- const exclude=[];for(let i=0;i<Math.min(pool.filter(l=>!server||(l.server||"ccf")===server).length,8);i++){const r=await directory(env,"/acquire",{...session,exclude,server});if(!r.ok)return {r};const allocation=await r.json(),credentials=await unticket(env,allocation.encrypted);if(allocation.reused&&credentials)return {r:json({lease_id:allocation.lease_id}),credentials};let a;try{if(credentials)a=await validateAccount(credentials.username,credentials.password,credentials.origin||ORIGIN)}catch{}
- if(a&&Number(a.user_info.max_connections)>=allocation.maxConnections&&(allocation.reused||Number(a.user_info.active_cons||0)<allocation.maxConnections))return {r:json({lease_id:allocation.lease_id}),credentials};
+async function managedPlayback(env,session,server,ctx,excluded=[]){const pool=await providerPool(env,ctx);if(!pool){const credentials=await providerCredentials(env),a=await validateAccount(credentials.username,credentials.password,credentials.origin||ORIGIN);if(!a)throw Error("provider_inactive");const r=await directory(env,"/acquire",{...session,upstreamMax:a.user_info.max_connections,upstreamExternal:session.xtream?a.user_info.active_cons:0});return {r,credentials}}
+ const exclude=[...excluded];for(let i=0;i<Math.min(pool.filter(l=>!server||(l.server||"ccf")===server).length,session.xtream?3:8);i++){const r=await directory(env,"/acquire",{...session,exclude,server});if(!r.ok)return {r};const allocation=await r.json(),credentials=await unticket(env,allocation.encrypted);if(allocation.reused&&credentials&&!exclude.includes(allocation.provider_id))return {r:json({lease_id:allocation.lease_id}),credentials,provider_id:allocation.provider_id};let a;try{if(credentials)a=await validateAccount(credentials.username,credentials.password,credentials.origin||ORIGIN)}catch{}
+ if(a&&Number(a.user_info.max_connections)>=allocation.maxConnections&&(allocation.reused||Number(a.user_info.active_cons||0)<allocation.maxConnections))return {r:json({lease_id:allocation.lease_id}),credentials,provider_id:allocation.provider_id};
  await directory(env,"/release",{sid:session.sid,lease_id:allocation.lease_id});exclude.push(allocation.provider_id);}
  return {r:json({error:"provider_inactive"},503)};
 }
@@ -63,7 +72,7 @@ async function adminRequest(req,env){
  const s=await unticket(env,String(b.access_token||""));if(s?.kind!=="admin"||!(await sessionCall(env,s.sid,"/check")).ok)return json({error:"admin_required"},401);
  if(action==="logout"){await sessionCall(env,s.sid,"/logout");return json({ok:true})}
  if(action==='xtream-settings'||action==='xtream-save'){const r=await directory(env,action==='xtream-save'?'/xtream-save':'/xtream-config',b);return json({...await r.json(),url:new URL(req.url).origin,host:new URL(req.url).hostname,port:new URL(req.url).port||'443'},r.status)}
- if(action==='xtream-check'){const target=new URL('/player_api.php',req.url);const response=await xtreamRequest(new Request(target,{headers:{'User-Agent':'SnapMovieNow/1.0'}}),env);const body=await response.json();const config=await (await directory(env,'/xtream-config')).json();return json({compatible:response.status===401&&body.error==='credentials_required',enabled:config.enabled,url:new URL(req.url).origin,version:'18'})}
+ if(action==='xtream-check'){const target=new URL('/player_api.php',req.url);const response=await xtreamRequest(new Request(target,{headers:{'User-Agent':'SnapMovieNow/1.0'}}),env);const body=await response.json();const config=await (await directory(env,'/xtream-config')).json();return json({compatible:response.status===401&&body.error==='credentials_required',enabled:config.enabled,url:new URL(req.url).origin,version:'19'})}
  const paths={users:"/users",save:"/save",delete:"/delete",overview:"/overview"};
  if(action==='connections'){const list=await (await directory(env,'/providers')).json();return json(list.map(p=>({source:p.source,name:p.name||p.username,username:p.username,mode:p.mode,url:p.url||(p.mode==='panel'?'http://ccf.center:8444/NYzkggyG/':ORIGIN),origin:p.origin||ORIGIN})))}
  if(action==='provider-remove'){const r=await directory(env,'/provider-remove',{source:b.source});return json(await r.json(),r.status)}
@@ -109,8 +118,9 @@ async function serverStream(req,env,u,ctx){
  if(d.lease_id&&!(await directory(env,d.xtream?'/heartbeat':'/lease-check',{lease_id:d.lease_id,sid:d.sid})).ok)return json({error:'playback_expired'},410);
  const warm=liveStarts.get(u.href);if(warm){liveStarts.delete(u.href);if(warm.until>Date.now()&&req.method==='GET')return new Response(warm.body,{headers:{...cors,'content-type':'application/vnd.apple.mpegurl'}})}
  const folder=d.type==='series'?'series':d.type==='live'?'live':'movie';let next=d.resource||(d.origin||ORIGIN)+'/'+folder+'/'+encodeURIComponent(d.username)+'/'+encodeURIComponent(d.password)+'/'+d.id+'.'+cleanExt(d.ext);
- const headers=new Headers({'User-Agent':'SnapMovieNow/1.0'});for(const n of ['range','if-range'])if(req.headers.has(n))headers.set(n,req.headers.get(n));if(req.method==='HEAD')headers.set('range','bytes=0-0');let response;
- for(let redirects=0;redirects<6;redirects++){const target=new URL(next);if(target.hostname==='194.76.0.119'&&target.port==='8080'&&target.protocol==='http:')target.hostname='media.snaptvnow.com';if(!isApprovedMediaIP(target)){if(/^(?:\d{1,3}\.){3}\d{1,3}$/.test(target.hostname))throw Error('media_origin_unapproved');validateServerUrl(target.origin);}next=target.href;response=isApprovedMediaIP(target)?await fetchApprovedMediaIP(next,headers):await fetch(next,{headers,redirect:'manual',signal:AbortSignal.timeout(d.type==='live'?12000:25000)});if(![301,302,303,307,308].includes(response.status))break;const location=response.headers.get('location');await response.body?.cancel();if(!location||redirects===5)throw Error('invalid_redirect');next=new URL(location,next).href}
+ const headers=new Headers({'User-Agent':'SnapMovieNow/1.0','Accept-Encoding':'identity'});for(const n of ['range','if-range'])if(req.headers.has(n))headers.set(n,req.headers.get(n));if(req.method==='HEAD')headers.set('range','bytes=0-0');let response;
+ for(let redirects=0;redirects<6;redirects++){const target=new URL(next);if(target.hostname==='194.76.0.119'&&target.port==='8080'&&target.protocol==='http:')target.hostname='media.snaptvnow.com';if(!isApprovedMediaIP(target)){if(/^(?:\d{1,3}\.){3}\d{1,3}$/.test(target.hostname))throw Error('media_origin_unapproved');validateServerUrl(target.origin);}next=target.href;response=isApprovedMediaIP(target)?await fetchApprovedMediaIP(next,headers):await fetchMedia(next,{headers,redirect:'manual'},d.type==='live'?12000:25000);if(![301,302,303,307,308].includes(response.status))break;const location=response.headers.get('location');await response.body?.cancel();if(!location||redirects===5)throw Error('invalid_redirect');next=new URL(location,next).href}
+ if((d.resource&&/\.(?:ts|m4s|mp4)(?:\?|$)/i.test(next))||d.type!=='live')response=recoverMedia(response,async(range,validator)=>{const h=new Headers(headers);h.set('range',range);if(validator)h.set('if-range',validator);return isApprovedMediaIP(new URL(next))?fetchApprovedMediaIP(next,h):fetchMedia(next,{headers:h,redirect:'manual'},d.type==='live'?12000:25000)},async()=>(await sessionCall(env,d.sid,'/check')).ok&&(!d.lease_id||(await directory(env,d.xtream?'/heartbeat':'/lease-check',{sid:d.sid,lease_id:d.lease_id})).ok));
  const out=new Headers(cors);for(const n of ['content-type','content-length','content-range','accept-ranges','etag','last-modified'])if(response.headers.has(n))out.set(n,response.headers.get(n));
  if(req.method==='HEAD'){const total=response.headers.get('content-range')?.match(/\/(\d+)$/)?.[1];if(total)out.set('content-length',total);out.delete('content-range');await response.body?.cancel();return new Response(null,{status:response.status===206?200:response.status,headers:out})}
  const playlist=response.ok&&(/mpegurl/i.test(response.headers.get('content-type')||'')||new URL(next).pathname.endsWith('.m3u8'));
@@ -121,9 +131,9 @@ async function serverStream(req,env,u,ctx){
  return result;
 }
 
-const xtreamRequest=createXtreamBridge({directory,registry,sessionCall,ticket,managedPlayback,serverStream,json,catalogCredentials:async(env,server)=>(await catalogCredentials(env,server)).map(p=>({...p,origin:p.origin||ORIGIN}))});
+const xtreamRequest=createXtreamBridge({directory,registry,sessionCall,ticket,managedPlayback,serverStream,json,catalogCredentials:async(env,server,ctx)=>(await catalogCredentials(env,server,ctx)).map(p=>({...p,origin:p.origin||ORIGIN}))});
 export default{async fetch(req,env,ctx){const u=new URL(req.url);if(req.method==="OPTIONS")return new Response(null,{status:204,headers:cors});
-if(u.pathname==="/health")return json({ok:true,service:"snapmovienow-edge",version:"18",capabilities:['xtream']});
+if(u.pathname==="/health")return json({ok:true,service:"snapmovienow-edge",version:"19",capabilities:['xtream']});
 if(matchesXtream(u.pathname))return xtreamRequest(req,env,ctx);
 if(u.pathname==="/admin"&&req.method==="POST"){try{return await adminRequest(req,env)}catch{return json({error:"admin_unavailable"},502)}}
 if(u.pathname==="/gnula-media"&&["GET","HEAD"].includes(req.method)){try{return await gnulaMedia(req,env,u)}catch{return json({error:"media_unavailable"},502)}}
