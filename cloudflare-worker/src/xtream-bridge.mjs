@@ -116,19 +116,19 @@ export function createXtreamBridge(deps) {
     };
     const resolve = async id => (await deps.registry(env,'/xtream-resolve',{id})).json();
     const play = async (request, session, item) => {
-      const excluded=[];
+      const excluded=[];let lastFailure=null;
       for(let attempt=0;attempt<3;attempt++){
       const request_id=crypto.randomUUID();
       const mediaSession={...session,request_id,mediaKey:item.type+'|'+item.server+'|'+item.upstreamId+'|'+item.ext};
       const allocation=await deps.managedPlayback(env,mediaSession,item.server,ctx,excluded);
-      if(!allocation.r.ok)return deps.json(await allocation.r.json(),allocation.r.status);
+      if(!allocation.r.ok){if(lastFailure&&allocation.r.status===409)return deps.json({error:'upstream_unavailable'},lastFailure);return deps.json(await allocation.r.json(),allocation.r.status)}
       const {lease_id}=await allocation.r.json(),credentials=allocation.credentials;
       const encrypted=await deps.ticket(env,{sid:session.sid,username:credentials.username,password:credentials.password,origin:credentials.origin,lease_id,request_id,xtream:true,type:item.type,id:item.upstreamId,ext:item.ext,exp:session.exp});
       const target=new URL('/stream',request.url);target.searchParams.set('t',encrypted);
       try{
         const prepared=new Request(request);if(item.type==='live'&&item.ext==='m3u8')prepared.headers.set('X-SMN-Prepare','1');
         const response=await deps.serverStream(prepared,env,target,ctx);
-        if(!response.ok){await response.body?.cancel();await privateCall('/release',{sid:session.sid,lease_id,request_id});if([401,403,404,408,429,502,503,504].includes(response.status)&&allocation.provider_id&&attempt<2){excluded.push(allocation.provider_id);continue}return deps.json({error:'upstream_unavailable'},response.status)}
+        if(!response.ok){lastFailure=response.status;await response.body?.cancel();await privateCall('/release',{sid:session.sid,lease_id,request_id});if([401,403,404,408,429,502,503,504].includes(response.status)&&allocation.provider_id&&attempt<2){excluded.push(allocation.provider_id);continue}return deps.json({error:'upstream_unavailable'},response.status)}
         // Native clients load this master once, then refresh the signed media
         // playlist directly. Refreshing /live on every segment used to repeat
         // account allocation and retry logic, interrupting a healthy session.
@@ -137,7 +137,7 @@ export function createXtreamBridge(deps) {
           return new Response('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=8000000\n'+target.href+'\n',{headers:{'content-type':'application/vnd.apple.mpegurl','cache-control':'no-store'}});
         }
         return response;
-      }catch(error){await privateCall('/release',{sid:session.sid,lease_id,request_id});if(error.message!=='media_origin_unapproved'&&allocation.provider_id&&attempt<2){excluded.push(allocation.provider_id);continue}throw error}
+      }catch(error){lastFailure=502;await privateCall('/release',{sid:session.sid,lease_id,request_id});if(error.message!=='media_origin_unapproved'&&allocation.provider_id&&attempt<2){excluded.push(allocation.provider_id);continue}throw error}
       }
     };
     try { return await handleXtream(req,{authenticate,catalog,register,resolve,play,json:deps.json}); }

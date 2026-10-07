@@ -31,7 +31,7 @@ env.PLAYBACK_SESSIONS = {
 const origin = 'https://snapmovienow-edge.juancanta89.workers.dev';
 const providerOrigins = ['http://ccf.center:8444', 'https://beta.example.test'];
 const providerCalls = [], cancellations = [];
-let failProvider = false, failMedia = false, failMediaStatus = 503, failValidation = false, renewEpisode = false, signedEpisodes = 0, offset = 0;
+let failProvider = false, failMedia = false, failMediaStatus = 503, failValidation = false, renewEpisode = false, signedEpisodes = 0, offset = 0, invalidLive=false;
 const now = Date.now; Date.now = () => now() + offset;
 globalThis.fetch = async (url, opts = {}) => {
   const u = new URL(url), provider = providerOrigins.indexOf(u.origin);
@@ -70,6 +70,7 @@ globalThis.fetch = async (url, opts = {}) => {
     assert.ok(u.pathname.includes('/'+username+'/'+password+'/'));
     if (renewEpisode && u.pathname.startsWith('/series/')) return new Response(null,{status:302,headers:{location:'/episode-signed-'+(++signedEpisodes)+'.mkv'}});
     if (failMedia && username === 'upstream-0') return new Response('provider-private-error', {status:failMediaStatus});
+    if (invalidLive&&u.pathname.endsWith('.m3u8'))return new Response(null,{status:302,headers:{location:'/not-a-playlist'}});
     if (u.pathname.endsWith('.m3u8')) return new Response('#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:1\n#EXT-X-KEY:METHOD=AES-128,URI="/key.bin"\n#EXTINF:4,\n/segment.ts\n', {headers:{'content-type':'application/vnd.apple.mpegurl'}});
     if (u.pathname.startsWith('/live/')) {
       return new Response(new ReadableStream({start(c) {c.enqueue(new Uint8Array([0x47,1,2,3]))}, cancel() {cancellations.push(u.pathname)}}), {headers:{'content-type':'video/mp2t'}});
@@ -77,6 +78,7 @@ globalThis.fetch = async (url, opts = {}) => {
     const range = new Headers(opts.headers).get('range');
     return new Response('data', {status:range ? 206 : 200, headers:{'content-type':'video/mp4','content-length':'4','accept-ranges':'bytes',...(range ? {'content-range':'bytes 0-3/1000'} : {})}});
   }
+  if(u.pathname==='/not-a-playlist')return new Response('<html>temporarily unavailable</html>',{headers:{'content-type':'text/html'}});
   if (u.pathname === '/segment.ts') return new Response(new Uint8Array([0x47,1,2,3]), {headers:{'content-type':'video/mp2t'}});
   if (u.pathname === '/key.bin') return new Response(new Uint8Array(16), {headers:{'content-type':'application/octet-stream'}});
   if (/^\/episode-signed-\d+\.mkv$/.test(u.pathname)) {
@@ -212,6 +214,12 @@ assert.equal((await accountsStore.get('pool')).lines.length,3,'a provider HTTP 5
 failValidation=false;
 const recoveredPlayback=await media('movie',movies[0].stream_id,'mp4');assert.equal(recoveredPlayback.status,200);await recoveredPlayback.text();
 
+invalidLive=true;
+const invalidMaster=await media('live',channels[0].stream_id,'m3u8');
+assert.equal(invalidMaster.status,502,'HTTP 200 HTML after a redirect must not be advertised as a healthy HLS signal or as exhausted capacity');
+assert.ok(!(await invalidMaster.text()).startsWith('#EXTM3U'));
+assert.equal((await leases()).length,0,'invalid signals release all attempted reservations');
+invalidLive=false;
 const hls = await media('live',channels[0].stream_id,'m3u8');
 assert.equal(hls.status,200);const master=await hls.text();noProviderSecrets(master);
 assert.ok(master.includes('#EXT-X-STREAM-INF:'),'a native player loads a master and polls its signed media playlist');
