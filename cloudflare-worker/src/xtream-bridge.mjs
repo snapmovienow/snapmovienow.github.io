@@ -127,7 +127,7 @@ export function createXtreamBridge(deps) {
       const target=new URL('/stream',request.url);target.searchParams.set('t',encrypted);
       try{
         const response=await deps.serverStream(request,env,target,ctx);
-        if(!response.ok){await response.body?.cancel();await privateCall('/release',{sid:session.sid,lease_id,request_id});if([401,403,502,503,504].includes(response.status)&&allocation.provider_id&&attempt<2){excluded.push(allocation.provider_id);continue}return deps.json({error:'upstream_unavailable'},response.status)}
+        if(!response.ok){await response.body?.cancel();await privateCall('/release',{sid:session.sid,lease_id,request_id});if([401,403,404,408,429,502,503,504].includes(response.status)&&allocation.provider_id&&attempt<2){excluded.push(allocation.provider_id);continue}return deps.json({error:'upstream_unavailable'},response.status)}
         return response;
       }catch(error){await privateCall('/release',{sid:session.sid,lease_id,request_id});if(error.message!=='media_origin_unapproved'&&allocation.provider_id&&attempt<2){excluded.push(allocation.provider_id);continue}throw error}
       }

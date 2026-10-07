@@ -31,7 +31,7 @@ env.PLAYBACK_SESSIONS = {
 const origin = 'https://snapmovienow-edge.juancanta89.workers.dev';
 const providerOrigins = ['http://ccf.center:8444', 'https://beta.example.test'];
 const providerCalls = [], cancellations = [];
-let failProvider = false, failMedia = false, failValidation = false, renewEpisode = false, signedEpisodes = 0, offset = 0;
+let failProvider = false, failMedia = false, failMediaStatus = 503, failValidation = false, renewEpisode = false, signedEpisodes = 0, offset = 0;
 const now = Date.now; Date.now = () => now() + offset;
 globalThis.fetch = async (url, opts = {}) => {
   const u = new URL(url), provider = providerOrigins.indexOf(u.origin);
@@ -69,7 +69,7 @@ globalThis.fetch = async (url, opts = {}) => {
   if (/^\/(live|movie|series)\//.test(u.pathname)) {
     assert.ok(u.pathname.includes('/'+username+'/'+password+'/'));
     if (renewEpisode && u.pathname.startsWith('/series/')) return new Response(null,{status:302,headers:{location:'/episode-signed-'+(++signedEpisodes)+'.mkv'}});
-    if (failMedia && username === 'upstream-0') return new Response('provider-private-error', {status:503});
+    if (failMedia && username === 'upstream-0') return new Response('provider-private-error', {status:failMediaStatus});
     if (u.pathname.endsWith('.m3u8')) return new Response('#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:1\n#EXT-X-KEY:METHOD=AES-128,URI="/key.bin"\n#EXTINF:4,\n/segment.ts\n', {headers:{'content-type':'application/vnd.apple.mpegurl'}});
     if (u.pathname.startsWith('/live/')) {
       return new Response(new ReadableStream({start(c) {c.enqueue(new Uint8Array([0x47,1,2,3]))}, cancel() {cancellations.push(u.pathname)}}), {headers:{'content-type':'video/mp2t'}});
@@ -180,7 +180,11 @@ assert.equal(alternative.status, 200); assert.equal(await alternative.text(), 'd
 const failoverCalls = providerCalls.slice(failoverStart).filter(c => c.path.startsWith('/movie/'));
 assert.equal(failoverCalls.length, 2); assert.ok(failoverCalls[0].path.includes('/upstream-0/')); assert.ok(failoverCalls[1].path.includes('/upstream-backup/'));
 assert.equal((await leases()).length, 0, 'failed and finished alternative streams release their reservations');
-failMedia = false;
+failMediaStatus=404;
+const missingOnFirstAccount=await media('movie',movies[0].stream_id,'mp4');
+assert.equal(missingOnFirstAccount.status,200);assert.equal(await missingOnFirstAccount.text(),'data');
+assert.equal((await leases()).length,0,'a provider 404 retries another authorised account and releases failed reservations');
+failMedia = false;failMediaStatus=503;
 
 // A slow reseller refresh must not block a new native playback with a recent
 // inventory, including an hour-old retained pool. Individual playback credentials still receive a fresh check.
