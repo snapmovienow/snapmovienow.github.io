@@ -104,7 +104,7 @@ export function createXtreamBridge(deps) {
       }
     };
     try { return await handleXtream(req,{authenticate,catalog,register,resolve,play,json:deps.json}); }
-    catch(error) { return deps.json({error:error.message==='media_origin_unapproved'?error.message:'xtream_unavailable'},502); }
+    catch(error) { return deps.json({error:['media_origin_unapproved','provider_unavailable','provider_inactive','panel_unavailable'].includes(error.message)?error.message:'xtream_unavailable'},502); }
   };
 }
 

@@ -31,7 +31,7 @@ env.PLAYBACK_SESSIONS = {
 const origin = 'https://snapmovienow-edge.juancanta89.workers.dev';
 const providerOrigins = ['http://ccf.center:8444', 'https://beta.example.test'];
 const providerCalls = [], cancellations = [];
-let failProvider = false, failMedia = false, offset = 0;
+let failProvider = false, failMedia = false, failValidation = false, offset = 0;
 const now = Date.now; Date.now = () => now() + offset;
 globalThis.fetch = async (url, opts = {}) => {
   const u = new URL(url), provider = providerOrigins.indexOf(u.origin);
@@ -43,6 +43,7 @@ globalThis.fetch = async (url, opts = {}) => {
     assert.equal(u.searchParams.get('username'), username);
     assert.equal(u.searchParams.get('password'), password);
     const action = u.searchParams.get('action');
+    if (!action && failValidation) return Response.json({error:'service_temporarily_unavailable'}, {status:503});
     if (!action) return Response.json({user_info:{auth:1,status:'Active',max_connections:'3',active_cons:'0'}});
     if (failProvider) return new Response('Unavailable', {status:503});
     const leaked = u.origin+'/movie/'+username+'/'+password+'/123.mp4';
@@ -186,6 +187,16 @@ try {
   const quick = await Promise.race([worker.fetch(nativeRequest, env, context), new Promise((_,reject) => {deadline=setTimeout(()=>reject(Error('playback_waited_for_pool_refresh')),2000)})]);
   assert.equal(quick.status,200); assert.equal(background.length,1); assert.equal(await quick.text(),'data');
 } finally {clearTimeout(deadline); unblockRefresh(); await Promise.all(background); globalThis.fetch=savedFetch}
+
+failValidation=true;
+const unavailablePlayback=await media('movie',movies[0].stream_id,'mp4');
+assert.equal(unavailablePlayback.status,503);assert.equal((await unavailablePlayback.json()).error,'provider_unavailable');
+assert.equal((await leases()).length,0);
+const retainedInventory=await accountsStore.get('pool');retainedInventory.syncedAt=0;await accountsStore.put('pool',retainedInventory);
+const retainedCatalog=await api('get_vod_categories');assert.equal(retainedCatalog.status,200);
+assert.equal((await accountsStore.get('pool')).lines.length,3,'a provider HTTP 503 with a JSON body does not mark accounts inactive');
+failValidation=false;
+const recoveredPlayback=await media('movie',movies[0].stream_id,'mp4');assert.equal(recoveredPlayback.status,200);await recoveredPlayback.text();
 
 const hls = await media('live',channels[0].stream_id,'m3u8');
 assert.equal(hls.status,200); const manifest = await hls.text(); noProviderSecrets(manifest);
