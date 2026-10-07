@@ -1,0 +1,99 @@
+{
+  "checked_at": "2026-10-07T22:54:54.428504+00:00",
+  "version": "28",
+  "commit": "1b37d89b57216809388fbd6a54c561dc010f5b50",
+  "regression_test_files_passed": 10,
+  "dry_run_passed": true,
+  "all_deploy_checks_passed": true,
+  "http_requests": 49,
+  "http_errors": 0,
+  "complete_binary_resources": 18,
+  "checked_binary_resources": 18,
+  "largest_complete_resource_bytes": 6001148,
+  "duration_completed_tests": 7,
+  "clean_tests": 4,
+  "playback_tests": [
+    {
+      "kind": "live720",
+      "requested_seconds": 10,
+      "seek_seconds": 0,
+      "returncode": 0,
+      "decoded_frames": 298,
+      "decoded_seconds": 9.984333,
+      "errors": "",
+      "complete": true,
+      "wall_seconds": 40.61
+    },
+    {
+      "kind": "movie_continuity",
+      "requested_seconds": 40,
+      "seek_seconds": 0,
+      "returncode": 0,
+      "decoded_frames": 2158,
+      "decoded_seconds": 39.984762,
+      "errors": "",
+      "complete": true,
+      "wall_seconds": 65.49
+    },
+    {
+      "kind": "liveCOL1080",
+      "requested_seconds": 25,
+      "seek_seconds": 0,
+      "returncode": 0,
+      "decoded_frames": 750,
+      "decoded_seconds": 24.994671,
+      "errors": "[null @ 0x5648240923c0] Application provided invalid, non monotonically increasing dts to muxer in stream 1: 83878 >= 83878\n",
+      "complete": false,
+      "wall_seconds": 48.8
+    },
+    {
+      "kind": "movie_forward",
+      "requested_seconds": 8,
+      "seek_seconds": 600,
+      "returncode": 0,
+      "decoded_frames": 432,
+      "decoded_seconds": 7.991293,
+      "errors": "",
+      "complete": true,
+      "wall_seconds": 42.32
+    },
+    {
+      "kind": "movie_backward",
+      "requested_seconds": 8,
+      "seek_seconds": 30,
+      "returncode": 0,
+      "decoded_frames": 431,
+      "decoded_seconds": 7.989463,
+      "errors": "",
+      "complete": true,
+      "wall_seconds": 39.83
+    },
+    {
+      "kind": "liveCHI1080_continuity",
+      "requested_seconds": 120,
+      "seek_seconds": 0,
+      "returncode": 0,
+      "decoded_frames": 7190,
+      "decoded_seconds": 119.986533,
+      "errors": "[h264 @ 0x56287288f740] mmco: unref short failure\n[h264 @ 0x5628728adbc0] mmco: unref short failure\n",
+      "complete": false,
+      "wall_seconds": 149.21
+    },
+    {
+      "kind": "liveARG1080",
+      "requested_seconds": 20,
+      "seek_seconds": 0,
+      "returncode": 0,
+      "decoded_frames": 595,
+      "decoded_seconds": 19.992,
+      "errors": "[h264 @ 0x5555cdd0f740] mmco: unref short failure\n    Last message repeated 1 times\n[h264 @ 0x5555cdd0f740] number of reference frames (0+5) exceeds max (4; probably corrupt input), discarding one\n[h264 @ 0x5555cdd0f740] mmco: unref short failure\n    Last message repeated 1 times\n[h264 @ 0x5555cdd2ed40] mmco: unref short failure\n    Last message repeated 1 times\n[h264 @ 0x5555cdd2ed40] number of reference frames (0+5) exceeds max (4; probably corrupt input), discarding one\n[h264 @ 0x5555cde478c0] mmco: unref short failure\n    Last message repeated 1 times\n",
+      "complete": false,
+      "wall_seconds": 59.37
+    }
+  ],
+  "limitations": [
+    "Tests used FFmpeg against the published Xtream bridge, not a physical Android device.",
+    "Three live signals produced decoder or timestamp warnings even though all requested durations completed.",
+    "No simultaneous-load benchmark or guarantee of all provider channels is implied."
+  ]
+}
