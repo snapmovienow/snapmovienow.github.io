@@ -3,7 +3,7 @@
 export function isApprovedMediaIP(u){
  return u.protocol==='http:'&&['192.101.68.144','23.153.217.88','194.147.150.141'].includes(u.hostname)&&(!u.port||u.port==='80')&&!u.username&&!u.password;
 }
-export async function fetchApprovedMediaIP(value,headers,connectSocket){
+export async function fetchApprovedMediaIP(value,headers,connectSocket,nativeStreamFactory){
  const url=new URL(value);if(!isApprovedMediaIP(url))throw Error('invalid_media_origin');
  const connect=connectSocket||(await import('cloudflare:sockets')).connect;
  const socket=connect({hostname:url.hostname,port:80},{secureTransport:'off'});
@@ -13,7 +13,7 @@ export async function fetchApprovedMediaIP(value,headers,connectSocket){
  try{
  await timed(socket.opened);
  const writer=socket.writable.getWriter();
- const lines=['GET '+url.pathname+url.search+' HTTP/1.1','Host: '+url.hostname,'User-Agent: SnapMovieNow/1.0','Accept: */*','Accept-Encoding: identity','Connection: close'];
+ const lines=['GET '+url.pathname+url.search+' HTTP/1.0','Host: '+url.hostname,'User-Agent: SnapMovieNow/1.0','Accept: */*','Accept-Encoding: identity','Connection: close'];
  for(const name of ['range','if-range'])if(headers.has(name)){const value=headers.get(name);if(/[\r\n]/.test(value))throw Error('invalid_header');lines.push(name+': '+value)}
  await timed(writer.write(new TextEncoder().encode(lines.join('\r\n')+'\r\n\r\n')));writer.releaseLock();
  reader=socket.readable.getReader();let buffer=new Uint8Array(0),ended=false;
@@ -26,6 +26,19 @@ export async function fetchApprovedMediaIP(value,headers,connectSocket){
  const chunked=/\bchunked\b/i.test(responseHeaders.get('transfer-encoding')||'');let remaining=responseHeaders.has('content-length')?Number(responseHeaders.get('content-length')):null;
  if(remaining!==null&&(!Number.isSafeInteger(remaining)||remaining<0))throw Error('invalid_http_response');
  responseHeaders.delete('transfer-encoding');responseHeaders.delete('connection');
+ // HTTP/1.0 avoids chunk framing. Transfer the video in the runtime's native
+ // stream machinery instead of copying and scheduling every TCP packet in JS.
+ const factory=nativeStreamFactory||(typeof globalThis.FixedLengthStream==='function'&&typeof globalThis.IdentityTransformStream==='function'?length=>length===null?new IdentityTransformStream():new FixedLengthStream(length):null);
+ if(!chunked&&factory){
+  const range=responseHeaders.get('content-range')?.match(/^bytes (\d+)-(\d+)\/(\d+)$/);
+  const length=remaining??(range?Number(range[2])-Number(range[1])+1:null);
+  if(length!==null&&(!Number.isSafeInteger(length)||length<0||buffer.length>length))throw Error('invalid_http_response');
+  if([204,205,304].includes(status)||length===0){await reader.cancel();socket.close().catch(()=>{});return new Response(length===0&&![204,205,304].includes(status)?'':null,{status,headers:responseHeaders})}
+  const stream=factory(length),prefix=buffer;reader.releaseLock();
+  const writer=stream.writable.getWriter();
+  (async()=>{try{if(prefix.length)await writer.write(prefix);writer.releaseLock();await socket.readable.pipeTo(stream.writable)}catch(error){try{writer.releaseLock()}catch{}await stream.writable.abort(error).catch(()=>{})}finally{socket.close().catch(()=>{})}})();
+  return new Response(stream.readable,{status,headers:responseHeaders});
+ }
  let chunkRemaining=0,chunkCRLF=false,finished=false;
  const close=()=>{finished=true;socket.close().catch(()=>{})};
  if([204,205,304].includes(status)){close();return new Response(null,{status,headers:responseHeaders})}

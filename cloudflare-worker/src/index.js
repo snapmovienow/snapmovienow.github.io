@@ -12,7 +12,8 @@ const actions={live:"get_live_streams",live_categories:"get_live_categories",vod
 const cors={"Access-Control-Allow-Origin":SITE,"Access-Control-Allow-Methods":"GET, HEAD, POST, OPTIONS","Access-Control-Allow-Headers":"content-type, range, if-range","Access-Control-Expose-Headers":"Content-Length, Content-Range, Accept-Ranges, ETag, Last-Modified","Cache-Control":"no-store"};
 const json=(x,s=200)=>new Response(JSON.stringify(x),{status:s,headers:{...cors,"content-type":"application/json"}});
 const cleanExt=x=>String(x||"mp4").replace(/[^a-zA-Z0-9]/g,"")||"mp4";
-async function aesKey(secret){const digest=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(secret));return crypto.subtle.importKey("raw",digest,{name:"AES-GCM"},false,["encrypt","decrypt"])}
+const aesKeys=new Map();
+async function aesKey(secret){if(!aesKeys.has(secret)){if(aesKeys.size>=2)aesKeys.delete(aesKeys.keys().next().value);aesKeys.set(secret,crypto.subtle.digest("SHA-256",new TextEncoder().encode(secret)).then(digest=>crypto.subtle.importKey("raw",digest,{name:"AES-GCM"},false,["encrypt","decrypt"])))}return aesKeys.get(secret)}
 const b64=b=>btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
 const unb64=s=>Uint8Array.from(atob(s.replace(/-/g,"+").replace(/_/g,"/")+"=".repeat((4-s.length%4)%4)),c=>c.charCodeAt(0));
 async function ticket(env,data){if(!env.TICKET_SECRET)throw new Error("TICKET_SECRET missing");const iv=crypto.getRandomValues(new Uint8Array(12));const ct=await crypto.subtle.encrypt({name:"AES-GCM",iv},await aesKey(env.TICKET_SECRET),new TextEncoder().encode(JSON.stringify(data)));const out=new Uint8Array(iv.length+ct.byteLength);out.set(iv);out.set(new Uint8Array(ct),iv.length);return b64(out)}
@@ -20,7 +21,9 @@ async function unticket(env,t){try{if(!env.TICKET_SECRET)return null;const raw=u
 
 export class PlaybackSession {
  constructor(state,env){this.state=state;this.env=env}
- async fetch(req){const path=new URL(req.url).pathname;if(path.startsWith("/accounts/"))return accountsFetch(this.state,this.env,req);if(path==="/create"){const {exp,identity}=await req.json();await this.state.storage.put("exp",exp);if(identity)await this.state.storage.put("identity",identity);await this.state.storage.setAlarm(exp);return new Response("ok")}
+ async fetch(req){const path=new URL(req.url).pathname;
+ if(path==='/refresh-pool'){if(!this.refreshing)this.refreshing=refreshProviderPool(this.env).finally(()=>{this.refreshing=null});try{const lines=await this.refreshing;return Response.json({ok:true,single:lines===null})}catch(e){return Response.json({error:e.message},{status:503})}}
+ if(path.startsWith("/accounts/"))return accountsFetch(this.state,this.env,req);if(path==="/create"){const {exp,identity}=await req.json();await this.state.storage.put("exp",exp);if(identity)await this.state.storage.put("identity",identity);await this.state.storage.setAlarm(exp);return new Response("ok")}
  if(path==="/logout"){await this.state.storage.deleteAll();return new Response("ok")}
  if(path==='/ensure'){const {exp,identity}=await req.json(),oldExp=await this.state.storage.get('exp'),old=await this.state.storage.get('identity');if(oldExp>Date.now()&&old?.uid===identity.uid&&old.version===identity.version&&old.xtreamVersion===identity.xtreamVersion)return Response.json({exp:oldExp});await this.state.storage.put('exp',exp);await this.state.storage.put('identity',identity);await this.state.storage.setAlarm(exp);return Response.json({exp})}
  const exp=await this.state.storage.get("exp");const identity=await this.state.storage.get("identity");if(identity&&!(await directory(this.env,"/check",identity)).ok)return new Response("Inactive",{status:401});return new Response(exp>Date.now()?"ok":"expired",{status:exp>Date.now()?200:401})}
@@ -36,13 +39,14 @@ const hashId=async value=>b64(await crypto.subtle.digest('SHA-256',new TextEncod
 const serverId=async origin=>origin===ORIGIN?'ccf':await hashId(origin);
 async function encryptedLines(env,raw,origin=ORIGIN){const server=await serverId(origin);return Promise.all(raw.map(async l=>({id:server==='ccf'?l.id:server+':'+l.id,server,key:await hashId(origin+'|'+l.username.toLowerCase()),maxConnections:l.maxConnections,external:l.external,encrypted:await ticket(env,{kind:'provider',origin,username:l.username,password:l.password,exp:Date.now()+86400000})})))}
 const poolRefreshes=new WeakMap();
+async function isolatedPoolRefresh(env){const response=await env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_provider_refresh_v1')).fetch('https://private/refresh-pool');const status=await response.json();if(!response.ok)throw Error(status.error||'provider_unavailable');return status.single?null:(await (await directory(env,'/pool')).json()).lines}
 async function providerPool(env,ctx){
  const key=env.PLAYBACK_SESSIONS;
  if(ctx?.waitUntil){const snapshot=await (await directory(env,'/pool')).json();if(snapshot.lines?.length&&snapshot.syncedAt>Date.now()-12*3600000){
-  if(snapshot.syncedAt<Date.now()-30000&&!poolRefreshes.has(key)){const work=refreshProviderPool(env);poolRefreshes.set(key,work);ctx.waitUntil(work.catch(()=>{}).finally(()=>poolRefreshes.delete(key)))}
+  if(snapshot.syncedAt<Date.now()-30000&&!poolRefreshes.has(key)){const work=isolatedPoolRefresh(env);poolRefreshes.set(key,work);ctx.waitUntil(work.catch(()=>{}).finally(()=>poolRefreshes.delete(key)))}
   return snapshot.lines;
  }}
- if(poolRefreshes.has(key))return poolRefreshes.get(key);const work=refreshProviderPool(env);poolRefreshes.set(key,work);try{return await work}finally{poolRefreshes.delete(key)}
+ if(poolRefreshes.has(key))return poolRefreshes.get(key);const work=isolatedPoolRefresh(env);poolRefreshes.set(key,work);try{return await work}finally{poolRefreshes.delete(key)}
 }
 async function refreshProviderPool(env){
  const providers=await (await directory(env,'/providers')).json();if(!providers.length)throw Error('provider_not_configured');
@@ -72,7 +76,7 @@ async function adminRequest(req,env){
  const s=await unticket(env,String(b.access_token||""));if(s?.kind!=="admin"||!(await sessionCall(env,s.sid,"/check")).ok)return json({error:"admin_required"},401);
  if(action==="logout"){await sessionCall(env,s.sid,"/logout");return json({ok:true})}
  if(action==='xtream-settings'||action==='xtream-save'){const r=await directory(env,action==='xtream-save'?'/xtream-save':'/xtream-config',b);return json({...await r.json(),url:new URL(req.url).origin,host:new URL(req.url).hostname,port:new URL(req.url).port||'443'},r.status)}
- if(action==='xtream-check'){const target=new URL('/player_api.php',req.url);const response=await xtreamRequest(new Request(target,{headers:{'User-Agent':'SnapMovieNow/1.0'}}),env);const body=await response.json();const config=await (await directory(env,'/xtream-config')).json();return json({compatible:response.status===401&&body.error==='credentials_required',enabled:config.enabled,url:new URL(req.url).origin,version:'25'})}
+ if(action==='xtream-check'){const target=new URL('/player_api.php',req.url);const response=await xtreamRequest(new Request(target,{headers:{'User-Agent':'SnapMovieNow/1.0'}}),env);const body=await response.json();const config=await (await directory(env,'/xtream-config')).json();return json({compatible:response.status===401&&body.error==='credentials_required',enabled:config.enabled,url:new URL(req.url).origin,version:'26'})}
  const paths={users:"/users",save:"/save",delete:"/delete",overview:"/overview"};
  if(action==='connections'){const list=await (await directory(env,'/providers')).json();return json(list.map(p=>({source:p.source,name:p.name||p.username,username:p.username,mode:p.mode,url:p.url||(p.mode==='panel'?'http://ccf.center:8444/NYzkggyG/':ORIGIN),origin:p.origin||ORIGIN})))}
  if(action==='provider-remove'){const r=await directory(env,'/provider-remove',{source:b.source});return json(await r.json(),r.status)}
@@ -138,7 +142,7 @@ async function serverStream(req,env,u,ctx){
 
 const xtreamRequest=createXtreamBridge({directory,registry,sessionCall,ticket,managedPlayback,serverStream,json,catalogCredentials:async(env,server,ctx)=>(await catalogCredentials(env,server,ctx,3)).map(p=>({...p,origin:p.origin||ORIGIN}))});
 export default{async fetch(req,env,ctx){const u=new URL(req.url);if(req.method==="OPTIONS")return new Response(null,{status:204,headers:cors});
-if(u.pathname==="/health")return json({ok:true,service:"snapmovienow-edge",version:"25",capabilities:['xtream']});
+if(u.pathname==="/health")return json({ok:true,service:"snapmovienow-edge",version:"26",capabilities:['xtream']});
 if(matchesXtream(u.pathname))return xtreamRequest(req,env,ctx);
 if(u.pathname==="/admin"&&req.method==="POST"){try{return await adminRequest(req,env)}catch{return json({error:"admin_unavailable"},502)}}
 if(u.pathname==="/gnula-media"&&["GET","HEAD"].includes(req.method)){try{return await gnulaMedia(req,env,u)}catch{return json({error:"media_unavailable"},502)}}

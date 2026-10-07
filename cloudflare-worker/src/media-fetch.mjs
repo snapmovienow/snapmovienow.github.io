@@ -29,7 +29,7 @@ export async function fetchMedia(url, options = {}, headerTimeout = 12000, idleT
 
 // Resume a truncated static segment/file at the exact missing byte. Never mix
 // a different resource or a server that ignores Range into the client's body.
-export function recoverMedia(response, fetchRange, authorized, attempts = 2) {
+export function recoverMedia(response, fetchRange, authorized, attempts = 2, idleTimeout = 20000) {
   const range = response.headers.get('content-range')?.match(/^bytes (\d+)-(\d+)\/(\d+)$/);
   const declared = response.headers.get('content-length');
   const length = declared === null && range ? Number(range[2]) - Number(range[1]) + 1 : Number(declared);
@@ -38,12 +38,18 @@ export function recoverMedia(response, fetchRange, authorized, attempts = 2) {
   if (!Number.isSafeInteger(start) || !Number.isSafeInteger(total) || start + length > total || (range && Number(range[2]) !== start + length - 1)) return response;
   const etag = response.headers.get('etag'), validatorName = etag && !etag.startsWith('W/') ? 'etag' : 'last-modified';
   const validator = response.headers.get(validatorName);
-  let reader = response.body.getReader(), received = 0, retries = 0, closed = false;
+  // Cloudflare native byte streams can coalesce packets without a JS callback
+  // per packet. Keep the ordinary reader for browsers and test runtimes.
+  const openReader=body=>{try{const r=body.getReader({mode:'byob'});if(typeof r.readAtLeast==='function')return {read:remaining=>r.readAtLeast(Math.min(65536,Math.max(1,remaining)),new Uint8Array(65536)),cancel:reason=>r.cancel(reason)};r.releaseLock()}catch{}return body.getReader()};
+  let reader = openReader(response.body), received = 0, retries = 0, closed = false;
   const body = new ReadableStream({
     async pull(controller) {
       while (!closed) {
         try {
-          const next = await reader.read();
+          if(received===length){closed=true;await reader.cancel().catch(()=>{});controller.close();return}
+          let idleTimer, next;
+          try {next=await Promise.race([reader.read(length-received),new Promise((_,reject)=>{idleTimer=setTimeout(()=>reject(Error('media_idle_timeout')),idleTimeout)})])}
+          finally {clearTimeout(idleTimer)}
           if (closed) return;
           if (next.done) {if (received !== length) throw Error('truncated_http_body'); closed = true; controller.close(); return}
           if (received + next.value.byteLength > length) {closed = true; await reader.cancel(); controller.error(Error('invalid_media_length')); return}
@@ -62,7 +68,7 @@ export function recoverMedia(response, fetchRange, authorized, attempts = 2) {
               await resumed.body?.cancel(); throw Error('invalid_media_resume');
             }
             if (closed) {await resumed.body?.cancel(); return}
-            reader = resumed.body.getReader();
+            reader = openReader(resumed.body);
           } catch (failure) {closed = true; controller.error(failure); return}
         }
       }

@@ -12,3 +12,19 @@ console.log('PASS: allowlisted destination, fragmented headers, range forwarding
 
 
 for(const host of ['23.153.217.88','194.147.150.141'])assert.ok(isApprovedMediaIP(new URL('http://'+host+'/live/test.m3u8')));
+
+const nativeLengths=[];
+const nativeFactory=length=>{nativeLengths.push(length);let count=0;return new TransformStream({transform(chunk,c){count+=chunk.length;if(length!==null&&count>length)throw Error('invalid_media_length');c.enqueue(chunk)},flush(){if(length!==null&&count!==length)throw Error('truncated_http_body')}})};
+const large='x'.repeat(3*1024*1024);
+t=transport('HTTP/1.0 206 OK\r\nContent-Length: '+large.length+'\r\nContent-Range: bytes 0-'+(large.length-1)+'/'+large.length+'\r\n\r\n'+large,1397);
+r=await fetchApprovedMediaIP(allowed,new Headers(),t.connect,nativeFactory);
+assert.equal((await r.arrayBuffer()).byteLength,large.length);
+assert.equal(nativeLengths.at(-1),large.length);
+assert.ok(t.state().written.includes('HTTP/1.0'),'request disables chunk framing for native byte transport');
+t=transport('HTTP/1.0 206 OK\r\nContent-Range: bytes 10-15/100\r\n\r\nabcdef',3);
+r=await fetchApprovedMediaIP(allowed,new Headers(),t.connect,nativeFactory);assert.equal(await r.text(),'abcdef');assert.equal(nativeLengths.at(-1),6);
+t=transport('HTTP/1.0 200 OK\r\nContent-Length: 10\r\n\r\nshort',4);
+r=await fetchApprovedMediaIP(allowed,new Headers(),t.connect,nativeFactory);await assert.rejects(r.text(),/truncated_http_body/);
+t=transport('HTTP/1.0 200 OK\r\nContent-Length: 10000\r\n\r\n'+'x'.repeat(10000),100);
+r=await fetchApprovedMediaIP(allowed,new Headers(),t.connect,nativeFactory);await r.body.cancel();await new Promise(resolve=>setTimeout(resolve,0));assert.ok(t.state().closed,'canceling native transport closes the provider socket');
+console.log('PASS: native multi-megabyte transfer, HTTP/1.0 framing, range-derived length, truncated EOF rejection and cancellation.');

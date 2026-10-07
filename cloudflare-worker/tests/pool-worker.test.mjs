@@ -16,6 +16,7 @@ const storage=objects.get('__smn_accounts_v1').state.storage;const pool=await st
 assert.equal((await req({op:'vod',access_token:sessions[rejected]})).status,200);
 combined=await admin('overview');assert.equal(combined.data.provider.activeAccounts,3);assert.equal(combined.data.provider.maxConnections,9);assert.equal(combined.data.connections,6);
 console.log('PASS: second reseller adds capacity, overlapping line deduplicated, refresh retains both sources and active playback leases.');
+assert.ok(objects.has('__smn_provider_refresh_v1'),'panel refresh executes in a dedicated Durable Object rather than in the video request');
 
 const directory = async body => {
  const result = await env.PLAYBACK_SESSIONS.get('__smn_accounts_v1').fetch('https://private/accounts/pool-sync', {method:'POST',body:JSON.stringify(body)});

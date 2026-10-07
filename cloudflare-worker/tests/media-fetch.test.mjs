@@ -39,6 +39,13 @@ const partial = recoverMedia(new Response('abc', {status:206,headers:{'content-l
 }, async () => true);
 assert.equal(await partial.text(), 'abcdef');
 
+let stalledCanceled=false;
+const stalled=new Response(new ReadableStream({start(c){c.enqueue(encoder.encode('abc'))},cancel(){stalledCanceled=true}}),{headers:{'content-length':'6'}});
+assert.equal(await recoverMedia(stalled,async range=>{
+  assert.equal(range,'bytes=3-5');return new Response('def',{status:206,headers:{'content-range':'bytes 3-5/6'}});
+},async()=>true,2,30).text(),'abcdef');
+assert.equal(stalledCanceled,true,'an idle native stream is closed before exact-byte recovery');
+
 // Streaming origins often omit Content-Length even for a finite byte range.
 // The declared Content-Range still gives the exact number of bytes owed.
 const chunkedRange = recoverMedia(new Response('abc', {status:206,headers:{'content-range':'bytes 10-15/100'}}), async range => {
