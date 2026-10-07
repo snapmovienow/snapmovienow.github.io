@@ -12,7 +12,22 @@ let token=(await req({op:'auth',username:'customer',password:'customer-password-
 const catalog=await req({op:'live',access_token:token});assert.equal(catalog.data.length,2);assert.notEqual(catalog.data[0]._server,catalog.data[1]._server);
 const play=await req({op:'stream_token',access_token:token,type:'live',server:catalog.data[1]._server,id:123,ext:'m3u8'});assert.equal(play.status,200);assert.ok(!play.data.url.includes('source-password-test'));
 const originRequests=mediaOrigins.length;const playlist=await worker.fetch(new Request(play.data.url),env);assert.equal(playlist.status,200);const text=await playlist.text();assert.equal(mediaOrigins.length,originRequests,"validated startup playlist is reused without another origin connection");assert.ok(!text.includes('beta.example.com'));assert.ok(!text.includes('source-password-test'));const segment=text.split('\n').find(l=>l.startsWith(origin));assert.equal((await worker.fetch(new Request(segment),env)).status,200);const key=text.match(/URI="([^"]+)"/)[1];assert.equal((await worker.fetch(new Request(key),env)).status,200);assert.ok(mediaOrigins.every(x=>x==='https://beta.example.com'));
-const normalFetch=globalThis.fetch;let leaked=false;globalThis.fetch=async(url,opts)=>{const u=new URL(url);if(u.hostname==='203.0.113.99'){leaked=true;throw Error('unexpected destination')}if(u.pathname.endsWith('.m3u8'))return new Response(null,{status:302,headers:{location:'http://203.0.113.99/live/test.m3u8'}});return normalFetch(url,opts)};
+const normalFetch=globalThis.fetch;
+let opaqueResumes=0;
+globalThis.fetch=async(url,opts={})=>{
+ const u=new URL(url);
+ if(u.pathname.endsWith('segment.ts'))return new Response(null,{status:302,headers:{location:u.origin+'/hls/signed-resource'}});
+ if(u.pathname==='/hls/signed-resource'){
+  const range=new Headers(opts.headers).get('range');
+  if(range){opaqueResumes++;assert.equal(range,'bytes=3-5');return new Response('def',{status:206,headers:{'content-type':'video/mp2t','content-range':'bytes 3-5/6'}})}
+  return new Response('abc',{status:206,headers:{'content-type':'video/mp2t','content-range':'bytes 0-5/6'}});
+ }
+ return normalFetch(url,opts);
+};
+assert.equal(await (await worker.fetch(new Request(segment),env)).text(),'abcdef');
+assert.equal(opaqueResumes,1,'a truncated HLS segment resumes after a redirect to an extensionless signed endpoint');
+globalThis.fetch=normalFetch;
+let leaked=false;globalThis.fetch=async(url,opts)=>{const u=new URL(url);if(u.hostname==='203.0.113.99'){leaked=true;throw Error('unexpected destination')}if(u.pathname.endsWith('.m3u8'))return new Response(null,{status:302,headers:{location:'http://203.0.113.99/live/test.m3u8'}});return normalFetch(url,opts)};
 const blocked=await req({op:'stream_token',access_token:token,type:'live',server:catalog.data[1]._server,id:123,ext:'m3u8'});
 assert.equal(blocked.status,502);assert.equal(blocked.data.error,'media_origin_unapproved');assert.equal(leaked,false);assert.equal((await admin('overview')).data.connections,0);globalThis.fetch=normalFetch;
 await req({op:'logout',access_token:token});assert.equal((await worker.fetch(new Request(segment),env)).status,410);
