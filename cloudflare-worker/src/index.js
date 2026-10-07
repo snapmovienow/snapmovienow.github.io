@@ -22,6 +22,7 @@ async function unticket(env,t){try{if(!env.TICKET_SECRET)return null;const raw=u
 export class PlaybackSession {
  constructor(state,env){this.state=state;this.env=env}
  async fetch(req){const path=new URL(req.url).pathname;
+ if(path==='/stream'&&['GET','HEAD'].includes(req.method))return serverStreamDirect(req,this.env,new URL(req.url),{waitUntil:promise=>this.state.waitUntil?.(promise)});
  if(path==='/refresh-pool'){if(!this.refreshing)this.refreshing=refreshProviderPool(this.env).finally(()=>{this.refreshing=null});try{const lines=await this.refreshing;return Response.json({ok:true,single:lines===null})}catch(e){return Response.json({error:e.message},{status:503})}}
  if(path.startsWith("/accounts/"))return accountsFetch(this.state,this.env,req);if(path==="/create"){const {exp,identity}=await req.json();await this.state.storage.put("exp",exp);if(identity)await this.state.storage.put("identity",identity);await this.state.storage.setAlarm(exp);return new Response("ok")}
  if(path==="/logout"){await this.state.storage.deleteAll();return new Response("ok")}
@@ -76,7 +77,7 @@ async function adminRequest(req,env){
  const s=await unticket(env,String(b.access_token||""));if(s?.kind!=="admin"||!(await sessionCall(env,s.sid,"/check")).ok)return json({error:"admin_required"},401);
  if(action==="logout"){await sessionCall(env,s.sid,"/logout");return json({ok:true})}
  if(action==='xtream-settings'||action==='xtream-save'){const r=await directory(env,action==='xtream-save'?'/xtream-save':'/xtream-config',b);return json({...await r.json(),url:new URL(req.url).origin,host:new URL(req.url).hostname,port:new URL(req.url).port||'443'},r.status)}
- if(action==='xtream-check'){const target=new URL('/player_api.php',req.url);const response=await xtreamRequest(new Request(target,{headers:{'User-Agent':'SnapMovieNow/1.0'}}),env);const body=await response.json();const config=await (await directory(env,'/xtream-config')).json();return json({compatible:response.status===401&&body.error==='credentials_required',enabled:config.enabled,url:new URL(req.url).origin,version:'26'})}
+ if(action==='xtream-check'){const target=new URL('/player_api.php',req.url);const response=await xtreamRequest(new Request(target,{headers:{'User-Agent':'SnapMovieNow/1.0'}}),env);const body=await response.json();const config=await (await directory(env,'/xtream-config')).json();return json({compatible:response.status===401&&body.error==='credentials_required',enabled:config.enabled,url:new URL(req.url).origin,version:'27'})}
  const paths={users:"/users",save:"/save",delete:"/delete",overview:"/overview"};
  if(action==='connections'){const list=await (await directory(env,'/providers')).json();return json(list.map(p=>({source:p.source,name:p.name||p.username,username:p.username,mode:p.mode,url:p.url||(p.mode==='panel'?'http://ccf.center:8444/NYzkggyG/':ORIGIN),origin:p.origin||ORIGIN})))}
  if(action==='provider-remove'){const r=await directory(env,'/provider-remove',{source:b.source});return json(await r.json(),r.status)}
@@ -122,6 +123,13 @@ async function fetchValidatedMedia(start,headers,type){
  for(let redirects=0;redirects<6;redirects++){const target=new URL(next);if(target.hostname==='194.76.0.119'&&target.port==='8080'&&target.protocol==='http:')target.hostname='media.snaptvnow.com';if(!isApprovedMediaIP(target)){if(/^(?:\d{1,3}\.){3}\d{1,3}$/.test(target.hostname))throw Error('media_origin_unapproved');validateServerUrl(target.origin);}next=target.href;response=isApprovedMediaIP(target)?await fetchApprovedMediaIP(next,headers):await fetchMedia(next,{headers,redirect:'manual'},type==='live'?12000:25000);if(![301,302,303,307,308].includes(response.status))return {response,url:next};const location=response.headers.get('location');await response.body?.cancel();if(!location||redirects===5)throw Error('invalid_redirect');next=new URL(location,next).href}
 }
 async function serverStream(req,env,u,ctx){
+ const d=await unticket(env,u.searchParams.get('t')||'');if(!d?.sid||!['movie','series','live'].includes(d.type))return new Response('Expired',{status:410,headers:cors});
+ // Keep video parsing, byte-range recovery and stream callbacks out of the
+ // front-door request's small CPU budget. One relay per session avoids a shared
+ // bottleneck; control-plane revocation and provider capacity remain separate.
+ return env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_media_v1:'+d.sid)).fetch(new Request(u.href,req));
+}
+async function serverStreamDirect(req,env,u,ctx){
  const d=await unticket(env,u.searchParams.get('t')||'');if(!d||!['movie','series','live'].includes(d.type)||!/^\d+$/.test(String(d.id))||!(await sessionCall(env,d.sid,'/check')).ok)return new Response('Expired',{status:410,headers:cors});
  if(d.lease_id&&!(await directory(env,d.xtream?'/heartbeat':'/lease-check',{lease_id:d.lease_id,sid:d.sid})).ok)return json({error:'playback_expired'},410);
  const warm=liveStarts.get(u.href);if(warm){liveStarts.delete(u.href);if(warm.until>Date.now()&&req.method==='GET')return new Response(warm.body,{headers:{...cors,'content-type':'application/vnd.apple.mpegurl'}})}
@@ -142,7 +150,7 @@ async function serverStream(req,env,u,ctx){
 
 const xtreamRequest=createXtreamBridge({directory,registry,sessionCall,ticket,managedPlayback,serverStream,json,catalogCredentials:async(env,server,ctx)=>(await catalogCredentials(env,server,ctx,3)).map(p=>({...p,origin:p.origin||ORIGIN}))});
 export default{async fetch(req,env,ctx){const u=new URL(req.url);if(req.method==="OPTIONS")return new Response(null,{status:204,headers:cors});
-if(u.pathname==="/health")return json({ok:true,service:"snapmovienow-edge",version:"26",capabilities:['xtream']});
+if(u.pathname==="/health")return json({ok:true,service:"snapmovienow-edge",version:"27",capabilities:['xtream']});
 if(matchesXtream(u.pathname))return xtreamRequest(req,env,ctx);
 if(u.pathname==="/admin"&&req.method==="POST"){try{return await adminRequest(req,env)}catch{return json({error:"admin_unavailable"},502)}}
 if(u.pathname==="/gnula-media"&&["GET","HEAD"].includes(req.method)){try{return await gnulaMedia(req,env,u)}catch{return json({error:"media_unavailable"},502)}}
