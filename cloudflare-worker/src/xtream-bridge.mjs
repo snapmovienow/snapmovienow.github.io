@@ -148,12 +148,12 @@ export function createXtreamBridge(deps) {
 
 // Native players do not send the web player's heartbeat. Keep an open media
 // response authorised and release its reservation when the client disconnects.
-export function guardXtreamResponse(response, check, release, ctx, signal) {
+export function guardXtreamResponse(response, check, release, ctx, signal, expiresAt) {
   if (!response.body) return response;
-  const reader=response.body.getReader();let closed=false,checking=false,controller,timer,cleanupTask,lastDemand=Date.now();
+  const reader=response.body.getReader();let closed=false,checking=false,controller,timer,expiryTimer,cleanupTask,lastDemand=Date.now();
   const cleanup=()=>{
     if(cleanupTask)return cleanupTask;
-    clearInterval(timer);signal?.removeEventListener('abort',onAbort);
+    clearInterval(timer);clearTimeout(expiryTimer);signal?.removeEventListener('abort',onAbort);
     cleanupTask=Promise.resolve().then(release).catch(()=>{});ctx?.waitUntil?.(cleanupTask);return cleanupTask;
   };
   const stop=async(reason)=>{
@@ -167,6 +167,7 @@ export function guardXtreamResponse(response, check, release, ctx, signal) {
     start(c){controller=c;
       if(signal?.aborted){onAbort();return}
       signal?.addEventListener('abort',onAbort,{once:true});
+      if(Number.isFinite(expiresAt)){const remaining=expiresAt-Date.now();if(remaining<=0){void stop(Error('access_expired'));return}expiryTimer=setTimeout(()=>{const task=stop(Error('access_expired'));ctx?.waitUntil?.(task)},Math.min(remaining,2147483647));expiryTimer?.unref?.()}
       timer=setInterval(async()=>{
         if(closed||checking)return;
         if(Date.now()-lastDemand>45000){await stop(Error('stream_idle'));return}
