@@ -1,0 +1,416 @@
+{
+  "verified_date": "2026-10-08",
+  "worker_version": "36",
+  "production_commit": "83b34d61faef1ad9d2e929802407414b358812ab",
+  "automated_test_files_passed": 15,
+  "wrangler_dry_run": "passed",
+  "production_health": {
+    "http": 200,
+    "version": "36"
+  },
+  "production_build_checks": "all four succeeded",
+  "results": {
+    "catalog-v36.json": [
+      {
+        "action": "auth",
+        "status": 200,
+        "seconds": 3.93,
+        "bytes": 474,
+        "authenticated": 1
+      },
+      {
+        "action": "get_live_categories",
+        "status": 200,
+        "seconds": 4.39,
+        "bytes": 4306,
+        "items": 64
+      },
+      {
+        "action": "get_live_streams",
+        "status": 200,
+        "seconds": 4.67,
+        "bytes": 1033011,
+        "items": 2395
+      },
+      {
+        "action": "get_vod_categories",
+        "status": 200,
+        "seconds": 4.4,
+        "bytes": 4231,
+        "items": 61
+      },
+      {
+        "action": "get_vod_streams",
+        "status": 200,
+        "seconds": 8.83,
+        "bytes": 13205292,
+        "items": 14540
+      },
+      {
+        "action": "get_series_categories",
+        "status": 200,
+        "seconds": 2.96,
+        "bytes": 2835,
+        "items": 40
+      },
+      {
+        "action": "get_series",
+        "status": 200,
+        "seconds": 3.12,
+        "bytes": 1230590,
+        "items": 1351
+      }
+    ],
+    "v36-continuity-results.json": [
+      {
+        "region": "COL",
+        "requested_seconds": 20,
+        "prepare_status": 502,
+        "prepare_seconds": 8.104,
+        "error": "live_signal_unavailable",
+        "cancel_status": 200,
+        "wall_seconds": 13.377,
+        "http": []
+      },
+      {
+        "region": "CHI",
+        "requested_seconds": 20,
+        "prepare_status": 200,
+        "prepare_seconds": 3.81,
+        "first_frame_seconds": 8.946,
+        "returncode": 0,
+        "decoded_frames": 1190,
+        "decoded_seconds": 19.992,
+        "width": 1280,
+        "height": 720,
+        "duration_completed": true,
+        "cancel_status": 200,
+        "wall_seconds": 39.799,
+        "http": [
+          {
+            "label": "/current.m3u8",
+            "method": "GET",
+            "range": "bytes=0-",
+            "bytes": 553,
+            "content_length": "4669",
+            "content_range": null,
+            "status": 200,
+            "headers_seconds": 4.44,
+            "total_seconds": 4.44
+          },
+          {
+            "label": "hls_resource",
+            "method": "GET",
+            "range": "bytes=0-",
+            "bytes": 3933524,
+            "content_length": "3933524",
+            "content_range": "bytes 0-3933523/3933524",
+            "status": 206,
+            "headers_seconds": 3.82,
+            "total_seconds": 3.93
+          },
+          {
+            "label": "/current.m3u8",
+            "method": "GET",
+            "range": "bytes=0-",
+            "bytes": 553,
+            "content_length": "4669",
+            "content_range": null,
+            "status": 200,
+            "headers_seconds": 3.5,
+            "total_seconds": 3.5
+          },
+          {
+            "label": "hls_resource",
+            "method": "GET",
+            "range": "bytes=0-",
+            "bytes": 3898180,
+            "content_length": "3898180",
+            "content_range": "bytes 0-3898179/3898180",
+            "status": 206,
+            "headers_seconds": 4.49,
+            "total_seconds": 4.59
+          },
+          {
+            "label": "hls_resource",
+            "method": "GET",
+            "range": "bytes=0-",
+            "bytes": 458752,
+            "content_length": "3268756",
+            "content_range": "bytes 0-3268755/3268756",
+            "status": 206,
+            "headers_seconds": 3.34,
+            "client_closed": true,
+            "total_seconds": 3.37
+          }
+        ]
+      },
+      {
+        "region": "ARG",
+        "requested_seconds": 20,
+        "prepare_status": 200,
+        "prepare_seconds": 6.629,
+        "first_frame_seconds": 8.498,
+        "returncode": 0,
+        "decoded_frames": 595,
+        "decoded_seconds": 19.992,
+        "width": 720,
+        "height": 480,
+        "duration_completed": true,
+        "cancel_status": 200,
+        "wall_seconds": 37.796,
+        "http": [
+          {
+            "label": "/current.m3u8",
+            "method": "GET",
+            "range": "bytes=0-",
+            "bytes": 551,
+            "content_length": "4649",
+            "content_range": null,
+            "status": 200,
+            "headers_seconds": 3.46,
+            "total_seconds": 3.46
+          },
+          {
+            "label": "hls_resource",
+            "method": "GET",
+            "range": "bytes=0-",
+            "bytes": 1831872,
+            "content_length": "1831872",
+            "content_range": "bytes 0-1831871/1831872",
+            "status": 206,
+            "headers_seconds": 4.34,
+            "total_seconds": 4.51
+          },
+          {
+            "label": "/current.m3u8",
+            "method": "GET",
+            "range": "bytes=0-",
+            "bytes": 551,
+            "content_length": "4649",
+            "content_range": null,
+            "status": 200,
+            "headers_seconds": 3.05,
+            "total_seconds": 3.06
+          },
+          {
+            "label": "hls_resource",
+            "method": "GET",
+            "range": "bytes=0-",
+            "bytes": 2316912,
+            "content_length": "2316912",
+            "content_range": "bytes 0-2316911/2316912",
+            "status": 206,
+            "headers_seconds": 4.43,
+            "total_seconds": 4.63
+          }
+        ]
+      }
+    ],
+    "v36-col-fallback-results.json": [
+      {
+        "region": "COL",
+        "requested_seconds": 20,
+        "prepare_status": 200,
+        "prepare_seconds": 4.118,
+        "first_frame_seconds": 8.011,
+        "returncode": 0,
+        "decoded_frames": 598,
+        "decoded_seconds": 19.989667,
+        "width": 1280,
+        "height": 720,
+        "duration_completed": true,
+        "cancel_status": 200,
+        "wall_seconds": 48.114,
+        "http": [
+          {
+            "label": "/current.m3u8",
+            "method": "GET",
+            "range": "bytes=0-",
+            "bytes": 556,
+            "content_length": "4672",
+            "content_range": null,
+            "status": 200,
+            "headers_seconds": 3.5,
+            "total_seconds": 3.51
+          },
+          {
+            "label": "hls_resource",
+            "method": "GET",
+            "range": "bytes=0-",
+            "bytes": 2186440,
+            "content_length": "2186440",
+            "content_range": "bytes 0-2186439/2186440",
+            "status": 206,
+            "headers_seconds": 3.91,
+            "total_seconds": 3.98
+          },
+          {
+            "label": "/current.m3u8",
+            "method": "GET",
+            "range": "bytes=0-",
+            "bytes": 556,
+            "content_length": "4672",
+            "content_range": null,
+            "status": 200,
+            "headers_seconds": 3.96,
+            "total_seconds": 3.96
+          },
+          {
+            "label": "hls_resource",
+            "method": "GET",
+            "range": "bytes=0-",
+            "bytes": 2514312,
+            "content_length": "2514312",
+            "content_range": "bytes 0-2514311/2514312",
+            "status": 206,
+            "headers_seconds": 3.0,
+            "total_seconds": 3.09
+          },
+          {
+            "label": "hls_resource",
+            "method": "GET",
+            "range": "bytes=0-",
+            "bytes": 589824,
+            "content_length": "2238892",
+            "content_range": "bytes 0-2238891/2238892",
+            "status": 206,
+            "headers_seconds": 11.22,
+            "client_closed": true,
+            "total_seconds": 11.26
+          }
+        ]
+      }
+    ],
+    "didier-signal-results.json": [
+      {
+        "didier_active": 12
+      },
+      {
+        "account_index": 0,
+        "quality": "1080",
+        "chain": [
+          {
+            "status": 302,
+            "type": "text/html; charset=UTF-8",
+            "approved_ip": false
+          },
+          {
+            "status": 200,
+            "type": "text/html; charset=UTF-8",
+            "approved_ip": true
+          }
+        ],
+        "playlist": false,
+        "bytes": 1664,
+        "segments": 1,
+        "seconds": 9.422
+      },
+      {
+        "account_index": 0,
+        "quality": "720",
+        "chain": [
+          {
+            "status": 302,
+            "type": "text/html; charset=UTF-8",
+            "approved_ip": false
+          },
+          {
+            "status": 200,
+            "type": "application/vnd.apple.mpegurl",
+            "approved_ip": true
+          }
+        ],
+        "playlist": true,
+        "bytes": 1168,
+        "segments": 6,
+        "seconds": 8.496
+      },
+      {
+        "account_index": 1,
+        "quality": "1080",
+        "chain": [
+          {
+            "status": 302,
+            "type": "text/html; charset=UTF-8",
+            "approved_ip": false
+          },
+          {
+            "status": 200,
+            "type": "text/html; charset=UTF-8",
+            "approved_ip": true
+          }
+        ],
+        "playlist": false,
+        "bytes": 1664,
+        "segments": 1,
+        "seconds": 6.07
+      },
+      {
+        "account_index": 1,
+        "quality": "720",
+        "chain": [
+          {
+            "status": 302,
+            "type": "text/html; charset=UTF-8",
+            "approved_ip": false
+          },
+          {
+            "status": 200,
+            "type": "text/html; charset=UTF-8",
+            "approved_ip": true
+          }
+        ],
+        "playlist": false,
+        "bytes": 1657,
+        "segments": 1,
+        "seconds": 8.488
+      }
+    ],
+    "v36-native-cleanup-results.json": {
+      "baseline_customer_reservations": 0,
+      "stream_status": 200,
+      "received_bytes": 65536,
+      "customer_reservations_after_close": [
+        0
+      ],
+      "release_observed_seconds": 4.176,
+      "returned_to_baseline": true
+    },
+    "v36-native-ts-continuity-results.json": [
+      {
+        "region": "CHI",
+        "requested_seconds": 20,
+        "native_xtream": true,
+        "first_frame_seconds": 6.7,
+        "returncode": 0,
+        "decoded_frames": 1190,
+        "decoded_seconds": 19.992,
+        "width": 1280,
+        "height": 720,
+        "duration_completed": true,
+        "cancel_status": 200,
+        "wall_seconds": 33.958,
+        "http": [
+          {
+            "label": "/current.m3u8",
+            "method": "GET",
+            "range": "bytes=0-",
+            "bytes": 17563648,
+            "content_length": null,
+            "content_range": null,
+            "status": 200,
+            "headers_seconds": 5.92,
+            "client_closed": true,
+            "total_seconds": 25.71
+          }
+        ]
+      }
+    ],
+    "v36-final-reservations.json": {
+      "http": 200,
+      "auth": 1,
+      "remaining_customer_reservations": "0"
+    }
+  }
+}
