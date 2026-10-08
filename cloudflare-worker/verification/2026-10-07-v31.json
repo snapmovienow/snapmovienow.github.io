@@ -1,0 +1,115 @@
+{
+  "version": "31",
+  "backend_commit": "bc244fb5ac01dac21af206322645564b7256a165",
+  "regression_test_files_passed": 12,
+  "dry_run_passed": true,
+  "backend_deploy_checks_passed": true,
+  "online_web_checks_passed": 17,
+  "online_web_checks_total": 17,
+  "online_scenarios": [
+    {
+      "test": "published_version",
+      "passed": true
+    },
+    {
+      "test": "own_customer_login",
+      "passed": true
+    },
+    {
+      "test": "web_live_catalog",
+      "passed": true,
+      "channels": 2379
+    },
+    {
+      "test": "cancel_before_allocation",
+      "passed": true
+    },
+    {
+      "test": "late_preparation_rejected",
+      "passed": true,
+      "status": 410
+    },
+    {
+      "test": "first_live_prepared",
+      "passed": true,
+      "status": 200
+    },
+    {
+      "test": "first_live_playlist",
+      "passed": true
+    },
+    {
+      "test": "explicit_close_acknowledged",
+      "passed": true,
+      "seconds": 9.186
+    },
+    {
+      "test": "closed_playlist_revoked",
+      "passed": true,
+      "status": 410
+    },
+    {
+      "test": "closed_segment_revoked",
+      "passed": true,
+      "status": 410
+    },
+    {
+      "test": "replacement_live_prepared",
+      "passed": true,
+      "status": 200
+    },
+    {
+      "test": "late_close_preserves_replacement",
+      "passed": true,
+      "status": 200
+    },
+    {
+      "test": "replacement_playlist_valid",
+      "passed": true
+    },
+    {
+      "test": "replacement_closed",
+      "passed": true
+    },
+    {
+      "test": "close_during_preparation_acknowledged",
+      "passed": true
+    },
+    {
+      "test": "pending_token_cannot_resume",
+      "passed": true,
+      "status": 410
+    },
+    {
+      "test": "own_test_session_logout",
+      "passed": true
+    }
+  ],
+  "native_disconnect_probe": {
+    "baseline_customer_reservations": 1,
+    "stream_status": 200,
+    "received_bytes": 65536,
+    "customer_reservations_after_close": [
+      1
+    ],
+    "release_observed_seconds": 4.917,
+    "returned_to_baseline": true
+  },
+  "fixed_native_disconnect_defect": {
+    "previous_probe_returned_to_baseline": false,
+    "cause": "Incoming request cancellation signal was not enabled, and timer renewed idle raw stream reservations.",
+    "changes": [
+      "Enable Cloudflare enable_request_signal compatibility flag.",
+      "Cancel upstream reader and release matching playback lease independently on HTTP abort.",
+      "Stop renewing raw streams with no downstream demand for more than 45 seconds; checked every 25 seconds.",
+      "Idempotent release removes abort listener and heartbeat timer."
+    ]
+  },
+  "unexpected_control_responses": 0,
+  "limitations": [
+    "The measured native release was observed in the first post-close control request after 4.917 seconds; this includes control request latency.",
+    "Third-party finite HLS clients without a stop notification retain their idle-expiry safety window.",
+    "Android APK and physical TVs were not modified or tested in this change.",
+    "Provider signal outages and source codec issues are separate from playback session cleanup."
+  ]
+}
