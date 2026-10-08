@@ -1,0 +1,24 @@
+{
+  "admin.html": {
+    "http": 200,
+    "matches_local": true
+  },
+  "admin-provider-view.js": {
+    "http": 200,
+    "matches_local": true
+  },
+  "admin-provider-view.css": {
+    "http": 200,
+    "matches_local": true
+  },
+  "worker": {
+    "http": 403,
+    "type": "text/plain; charset=UTF-8",
+    "non_json_excerpt": "error code: 1010\n"
+  },
+  "admin_protection": {
+    "http": 403,
+    "type": "text/plain; charset=UTF-8",
+    "non_json_excerpt": "error code: 1010\n"
+  }
+}
