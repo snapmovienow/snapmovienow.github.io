@@ -1,3 +1,4 @@
+// Pending: do not deploy until the hostname belongs to an active Cloudflare zone.
 {
   "name": "snapmovienow-edge",
   "main": "src/index.js",
@@ -29,5 +30,11 @@
     "logs": {
       "invocation_logs": false
     }
-  }
+  },
+  "routes": [
+    {
+      "pattern": "api.snaptvnow.com",
+      "custom_domain": true
+    }
+  ]
 }

@@ -1,0 +1,50 @@
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import vm from 'node:vm';
+const ctx = vm.createContext({URL, Response, performance, AbortSignal, fetch});
+vm.runInContext(readFileSync(new URL('../connection-diagnostics.js',import.meta.url),'utf8'),ctx);
+const api = ctx.SMNConnection;
+const trace = {'CF-Ray':'aabbccddeeff0011-MIA','X-SMN-Request-ID':'8b177017-0909-49d4-9599-b45b4b24e346','X-SMN-Version':'39'};
+let blocked;
+try {await api.readJSON(new Response('error code: 1010\n',{status:403,headers:trace}))} catch (error) {blocked=error}
+assert.equal(blocked.message,'edge_blocked');assert.equal(blocked.status,403);
+assert.ok(api.message(blocked,'fallback').includes('aabbccddeeff0011-MIA'));
+await assert.rejects(api.readJSON(Response.json({error:'content_disabled'},{status:403})), error=>error.message==='content_disabled');
+await assert.rejects(api.readJSON(new Response('<html>secret-password</html>',{status:403})), error=>error.message==='http_forbidden'&&!api.message(error,'').includes('secret-password'));
+await assert.rejects(api.readJSON(new Response('<html>Challenge</html>',{status:403,headers:{'cf-mitigated':'challenge'}})), error=>error.message==='edge_blocked');
+await assert.rejects(api.readJSON(new Response('<html>Unavailable</html>',{status:502})), error=>error.message==='server_unavailable'&&error.status===502);
+await assert.rejects(api.readJSON(new Response('<html>Wrong host</html>')), error=>error.message==='invalid_response');
+assert.equal(await api.readJSON(Response.json({ok:true})).then(x=>x.ok),true);
+ctx.fetch=async()=>{throw TypeError('secret-address')};
+await assert.rejects(api.requestJSON('https://example.test'), error=>error.message==='network_unreachable'&&!api.message(error,'').includes('secret-address'));
+const calls=[];
+ctx.fetch=async(url,options)=>{calls.push({url:String(url),options});return new URL(url).pathname==='/health'?Response.json({ok:true,service:'snapmovienow-edge',version:'39',capabilities:['xtream']},{headers:trace}):Response.json({error:'credentials_required'},{status:401,headers:trace})};
+const result=await api.check('https://example.test');assert.equal(result.protectedAPI,true);assert.equal(result.version,'39');
+assert.equal(calls.length,2);assert.ok(calls.every(x=>!x.options.body&&!new URL(x.url).search));
+assert.deepEqual(calls.map(x=>new URL(x.url).pathname),['/health','/player_api.php']);
+await assert.rejects(api.check('http://example.test'),/invalid_api_origin/);
+await assert.rejects(api.check('https://customer:password@example.test'),/invalid_api_origin/);
+ctx.fetch=async()=>Response.json({ok:true,service:'snapmovienow-edge',version:'39',capabilities:['xtream']});
+await assert.rejects(api.check('https://example.test'),error=>error.message==='invalid_response');
+for(const file of ['../index.html','../admin.html']) assert.ok(readFileSync(new URL(file,import.meta.url),'utf8').includes('connection-diagnostics.js?v=39'));
+console.log('PASS: Cloudflare text/challenges, application 403, HTML 502, transport errors and malformed replies are distinguished; checks send no credentials, reserve no playback and require unauthenticated rejection.');
+
+// Exercise the actual API functions embedded in both pages. A failed request
+// must not be retried, duplicate playback or clear an otherwise valid session.
+let requests=0;
+ctx.fetch=async()=>{requests++;return new Response('error code: 1010',{status:403,headers:trace})};
+const index=readFileSync(new URL('../index.html',import.meta.url),'utf8');
+const client=vm.createContext({SMNConnection:api,API:'https://example.test',creds:{access_token:'local-test-ticket'},authGeneration:1,performance});
+vm.runInContext(index.slice(index.indexOf('async function api('),index.indexOf('async function doLogin(')),client);
+await assert.rejects(client.api('stream_token',{request_id:'playback-test'}),error=>error.message==='edge_blocked');
+assert.equal(requests,1);assert.equal(client.creds.access_token,'local-test-ticket');
+const adminHTML=readFileSync(new URL('../admin.html',import.meta.url),'utf8');
+let removed=0,logins=0;
+const panel=vm.createContext({SMNConnection:api,API:'https://example.test/admin',token:'admin-test-ticket',errors:{},AbortSignal,sessionStorage:{removeItem(){removed++}},showLogin(){logins++}});
+vm.runInContext(adminHTML.slice(adminHTML.indexOf('async function api('),adminHTML.indexOf('\nfunction showLogin')),panel);
+await assert.rejects(panel.api('users'),error=>error.status===403&&error.message.includes('Cloudflare'));
+assert.equal(requests,2);assert.equal(removed,0);
+ctx.fetch=async()=>Response.json({error:'admin_required'},{status:401});
+await assert.rejects(panel.api('users'),error=>error.status===401);
+assert.equal(removed,1);assert.equal(logins,1);assert.equal(panel.token,null);
+console.log('PASS: both page API functions surface blocked access without retrying; confirmed administrator expiry still revokes its session.');

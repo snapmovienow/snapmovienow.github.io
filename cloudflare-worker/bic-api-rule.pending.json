@@ -1,0 +1,8 @@
+{
+  "description": "SNAP API: skip Browser Integrity Check only after a confirmed BIC false positive",
+  "enabled": false,
+  "action": "skip",
+  "action_parameters": {"products": ["bic"]},
+  "logging": {"enabled": true},
+  "expression": "(http.host eq \"api.snaptvnow.com\" and ((http.request.method eq \"POST\" and http.request.uri.path in {\"/\" \"/admin\"}) or (http.request.method in {\"GET\" \"HEAD\" \"POST\"} and http.request.uri.path eq \"/player_api.php\") or (http.request.method in {\"GET\" \"HEAD\"} and (http.request.uri.path in {\"/health\" \"/stream\" \"/gnula-media\"} or starts_with(http.request.uri.path, \"/live/\") or starts_with(http.request.uri.path, \"/movie/\") or starts_with(http.request.uri.path, \"/series/\")))))"
+}
