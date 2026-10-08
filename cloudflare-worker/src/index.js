@@ -4,6 +4,7 @@ import {accountsFetch} from "./accounts.mjs";
 import {matchesXtream} from './xtream.mjs';
 import {createXtreamBridge,guardXtreamResponse} from './xtream-bridge.mjs';
 import {fetchMedia,recoverMedia} from './media-fetch.mjs';
+import {guardPlaybackExpiry} from './playback-expiry.mjs';
 const liveStarts=new Map();
 function rememberLiveStart(url,body){const now=Date.now();for(const [key,value] of liveStarts)if(value.until<now)liveStarts.delete(key);if(liveStarts.size>=128)liveStarts.delete(liveStarts.keys().next().value);liveStarts.set(url,{body,until:now+10000})}
 const ORIGIN="http://ccf.center:8444";
@@ -31,11 +32,11 @@ export class PlaybackSession {
  async alarm(){const sid=await this.state.storage.get("sid");if(sid)await directory(this.env,"/release-session",{sid});await this.state.storage.deleteAll()}
 }
 async function sessionCall(env,sid,path,body){if(!env.PLAYBACK_SESSIONS||!sid)return new Response("Unauthorized",{status:401});return env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName(sid)).fetch("https://session"+path,{method:body?"POST":"GET",...(body?{body:JSON.stringify({...body,sid})}:{})})}
-async function createSession(env,username,password){const sid=crypto.randomUUID(),exp=Date.now()+12*60*60*1000;const r=await sessionCall(env,sid,"/create",{exp});if(!r.ok)throw Error("session_unavailable");return {sid,username,password,exp,kind:"session"}}
-async function validateAccount(username,password,origin=ORIGIN){const x=new URL(origin+"/player_api.php");x.searchParams.set("username",username);x.searchParams.set("password",password);const r=await fetch(x,{headers:{"User-Agent":"SnapMovieNow/1.0"},signal:AbortSignal.timeout(6000)});if(!r.ok){await r.body?.cancel();throw Error('provider_unavailable')}const a=await r.json();if(!['0','1'].includes(String(a?.user_info?.auth)))throw Error('provider_unavailable');return String(a.user_info.auth)==="1"&&(!a.user_info.status||a.user_info.status==="Active")?a:null}
+async function createSession(env,username,password,accountExpiresAt=null){const sid=crypto.randomUUID(),exp=Math.min(Date.now()+12*60*60*1000,accountExpiresAt||Infinity);const r=await sessionCall(env,sid,"/create",{exp});if(!r.ok)throw Error("session_unavailable");return {sid,username,password,exp,accountExpiresAt,kind:"session"}}
+async function validateAccount(username,password,origin=ORIGIN){const x=new URL(origin+"/player_api.php");x.searchParams.set("username",username);x.searchParams.set("password",password);const r=await fetch(x,{headers:{"User-Agent":"SnapMovieNow/1.0"},signal:AbortSignal.timeout(6000)});if(!r.ok){await r.body?.cancel();throw Error('provider_unavailable')}const a=await r.json();if(!['0','1'].includes(String(a?.user_info?.auth)))throw Error('provider_unavailable');return String(a.user_info.auth)==="1"&&(!a.user_info.status||a.user_info.status==="Active")&&(!(Number(a.user_info.exp_date)>0)||Number(a.user_info.exp_date)*1000>Date.now())?a:null}
 async function directory(env,path,body={}){return env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName("__smn_accounts_v1")).fetch("https://private/accounts"+path,{method:"POST",body:JSON.stringify(body)})}
 async function registry(env,path,body={}){return env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_xtream_catalog_v1')).fetch('https://private/accounts'+path,{method:'POST',body:JSON.stringify(body)})}
-async function ownSession(env,user,admin=false){const sid=crypto.randomUUID(),exp=Math.min(Date.now()+(admin?2:12)*3600000,user.expiresAt||Infinity),identity={uid:user.id,username:user.username,version:user.version,admin};const r=await sessionCall(env,sid,"/create",{exp,identity});if(!r.ok)throw Error("session_unavailable");return {kind:admin?"admin":"session",managed:!admin,sid,exp,permissions:user.permissions,...identity}}
+async function ownSession(env,user,admin=false){const sid=crypto.randomUUID(),exp=Math.min(Date.now()+(admin?2:12)*3600000,user.expiresAt||Infinity),identity={uid:user.id,username:user.username,version:user.version,admin};const r=await sessionCall(env,sid,"/create",{exp,identity});if(!r.ok)throw Error("session_unavailable");return {kind:admin?"admin":"session",managed:!admin,sid,exp,accountExpiresAt:user.expiresAt||null,permissions:user.permissions,...identity}}
 const hashId=async value=>b64(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value)));
 const serverId=async origin=>origin===ORIGIN?'ccf':await hashId(origin);
 async function encryptedLines(env,raw,origin=ORIGIN){const server=await serverId(origin);return Promise.all(raw.map(async l=>({id:server==='ccf'?l.id:server+':'+l.id,server,key:await hashId(origin+'|'+l.username.toLowerCase()),maxConnections:l.maxConnections,external:l.external,encrypted:await ticket(env,{kind:'provider',origin,username:l.username,password:l.password,exp:Date.now()+86400000})})))}
@@ -68,7 +69,7 @@ async function managedPlayback(env,session,server,ctx,excluded=[]){const pool=aw
  if(a)busy=true;await directory(env,"/release",{sid:session.sid,lease_id:allocation.lease_id,request_id:session.request_id});exclude.push(allocation.provider_id);}
  return {r:json({error:unavailable?'provider_unavailable':busy?'ccf_capacity':'provider_inactive'},unavailable||!busy?503:409)};
 }
-function accountInfo(s){return {user_info:{auth:1,status:"Active",username:s.username,exp_date:String(Math.floor(s.exp/1000))},access_token:null,permissions:s.permissions||{movies:true,series:true,tv:true}}}
+function accountInfo(s){return {user_info:{auth:1,status:"Active",username:s.username,exp_date:String(Math.floor(s.exp/1000))},access_token:null,server_time:Date.now(),session_expires_at:s.exp,account_expires_at:s.accountExpiresAt||null,permissions:s.permissions||{movies:true,series:true,tv:true}}}
 async function adminRequest(req,env){
  const b=await req.json(),action=String(b.action||""),client=req.headers.get("CF-Connecting-IP")||"unknown";
  if(action==="status")return json(await (await directory(env,"/status")).json());
@@ -77,7 +78,7 @@ async function adminRequest(req,env){
  const s=await unticket(env,String(b.access_token||""));if(s?.kind!=="admin"||!(await sessionCall(env,s.sid,"/check")).ok)return json({error:"admin_required"},401);
  if(action==="logout"){await sessionCall(env,s.sid,"/logout");return json({ok:true})}
  if(action==='xtream-settings'||action==='xtream-save'){const r=await directory(env,action==='xtream-save'?'/xtream-save':'/xtream-config',b);return json({...await r.json(),url:new URL(req.url).origin,host:new URL(req.url).hostname,port:new URL(req.url).port||'443'},r.status)}
- if(action==='xtream-check'){const target=new URL('/player_api.php',req.url);const response=await xtreamRequest(new Request(target,{headers:{'User-Agent':'SnapMovieNow/1.0'}}),env);const body=await response.json();const config=await (await directory(env,'/xtream-config')).json();return json({compatible:response.status===401&&body.error==='credentials_required',enabled:config.enabled,url:new URL(req.url).origin,version:'31'})}
+ if(action==='xtream-check'){const target=new URL('/player_api.php',req.url);const response=await xtreamRequest(new Request(target,{headers:{'User-Agent':'SnapMovieNow/1.0'}}),env);const body=await response.json();const config=await (await directory(env,'/xtream-config')).json();return json({compatible:response.status===401&&body.error==='credentials_required',enabled:config.enabled,url:new URL(req.url).origin,version:'32'})}
  const paths={users:"/users",save:"/save",delete:"/delete",overview:"/overview"};
  if(action==='connections'){const list=await (await directory(env,'/providers')).json();return json(list.map(p=>({source:p.source,name:p.name||p.username,username:p.username,mode:p.mode,url:p.url||(p.mode==='panel'?'http://ccf.center:8444/NYzkggyG/':ORIGIN),origin:p.origin||ORIGIN})))}
  if(action==='provider-remove'){const r=await directory(env,'/provider-remove',{source:b.source});return json(await r.json(),r.status)}
@@ -107,7 +108,7 @@ if(source&&allowedGnula(new URL(source))){const r=await fetch(source,{headers:{"
 const VOE_EMBED_HOSTS=new Set(["teresapoliticallearn.com"]);
 function allowedGnula(u){return u.protocol==="https:"&&(/^(?:strm\d+\.uqload\.vc|ugc-cdn-caching-[a-z0-9]+\.cloudwindow-route\.com)$/.test(u.hostname))&&!u.port&&!u.username&&!u.password}
 function proxiedMedia(origin,t,url){return origin+"/gnula-media?t="+encodeURIComponent(t)+"&path="+encodeURIComponent(url)}
-async function gnulaMedia(req,env,u){const t=u.searchParams.get("t")||"",d=await unticket(env,t);if(d?.kind!=="gnula"||!(await sessionCall(env,d.sid,"/check")).ok)return json({error:"session_expired"},401);
+async function gnulaMedia(req,env,u,ctx){const t=u.searchParams.get("t")||"",d=await unticket(env,t);if(d?.kind!=="gnula"||!(await sessionCall(env,d.sid,"/check")).ok)return json({error:"session_expired"},401);
  const base=new URL(d.source),target=new URL(u.searchParams.get("path")||d.source);const directory=base.pathname.slice(0,base.pathname.lastIndexOf("/")+1);
  if(!allowedGnula(target)||target.hostname!==base.hostname||!target.pathname.startsWith(directory))return json({error:"media_not_allowed"},403);
  const headers=new Headers({"User-Agent":"Mozilla/5.0"});if(req.headers.has("range"))headers.set("range",req.headers.get("range"));const r=await fetch(target.href,{headers,redirect:"manual"});if(r.status>=300&&r.status<400)return json({error:"media_redirect_not_allowed"},502);
@@ -115,7 +116,7 @@ async function gnulaMedia(req,env,u){const t=u.searchParams.get("t")||"",d=await
  const out=new Headers(cors);for(const n of ["content-type","content-length","content-range","accept-ranges"])if(r.headers.has(n))out.set(n,r.headers.get(n));
  if(target.pathname.endsWith(".m3u8")){const text=await r.text();if(!text.startsWith("#EXTM3U"))return json({error:"invalid_playlist"},502);const rewrite=x=>{const url=new URL(x,target);if(!allowedGnula(url)||url.hostname!==base.hostname||!url.pathname.startsWith(directory))throw Error("playlist_url_not_allowed");return proxiedMedia(u.origin,t,url.href)};
  const playlist=text.split(/\r?\n/).map(line=>!line.trim()?line:line.startsWith("#")?line.replace(/URI="([^"]+)"/g,(_,url)=>'URI="'+rewrite(url)+'"'):rewrite(line.trim())).join("\n");out.delete("content-length");out.set("content-type","application/vnd.apple.mpegurl");return new Response(req.method==="HEAD"?null:playlist,{headers:out})}
- return new Response(req.method==="HEAD"?null:r.body,{status:r.status,headers:out})
+ return guardPlaybackExpiry(new Response(req.method==="HEAD"?null:r.body,{status:r.status,headers:out}),d.exp,req.signal,()=>directory(env,"/release-session",{sid:d.sid}),ctx)
 }
 
 async function fetchValidatedMedia(start,headers,type){
@@ -145,17 +146,17 @@ async function serverStreamDirect(req,env,u,ctx){
  if(req.method==='HEAD'){const total=response.headers.get('content-range')?.match(/\/(\d+)$/)?.[1];if(total)out.set('content-length',total);out.delete('content-range');await response.body?.cancel();return new Response(null,{status:response.status===206?200:response.status,headers:out})}
  if(playlist){const text=await response.text();if(!text.startsWith('#EXTM3U'))throw Error('invalid_playlist');const proxy=async value=>{const target=new URL(value,next);if(target.hostname==='194.76.0.119'&&target.port==='8080'&&target.protocol==='http:')target.hostname='media.snaptvnow.com';if(!isApprovedMediaIP(target)){if(/^(?:\d{1,3}\.){3}\d{1,3}$/.test(target.hostname))throw Error('media_origin_unapproved');validateServerUrl(target.origin);}if(target.username||target.password)throw Error('invalid_playlist');return u.origin+'/stream?t='+await ticket(env,{...d,resource:target.href})};
  const lines=await Promise.all(text.split(/\r?\n/).map(async line=>{if(!line.trim())return line;if(!line.startsWith('#'))return proxy(line.trim());const matches=[...line.matchAll(/URI="([^"]+)"/g)];for(const m of matches)line=line.replace(m[0],'URI="'+await proxy(m[1])+'"');return line}));const body=lines.join('\n');if(req.headers.get('X-SMN-Prepare')==='1'&&!d.resource)rememberLiveStart(u.href,body);out.delete('content-length');out.set('content-type','application/vnd.apple.mpegurl');return new Response(body,{headers:out})}
- const result=new Response(response.body,{status:response.status,headers:out});
+ const result=guardPlaybackExpiry(new Response(response.body,{status:response.status,headers:out}),d.exp,req.signal,()=>directory(env,"/release-session",{sid:d.sid}),ctx);
  if(d.xtream&&!d.resource&&d.ext!=='m3u8')return guardXtreamResponse(result,async()=>(await sessionCall(env,d.sid,'/check')).ok&&(await directory(env,'/heartbeat',{sid:d.sid,lease_id:d.lease_id,request_id:d.request_id})).ok,()=>directory(env,'/release',{sid:d.sid,lease_id:d.lease_id,request_id:d.request_id}),ctx,req.signal);
  return result;
 }
 
 const xtreamRequest=createXtreamBridge({directory,registry,sessionCall,ticket,managedPlayback,serverStream,json,catalogCredentials:async(env,server,ctx)=>(await catalogCredentials(env,server,ctx,3)).map(p=>({...p,origin:p.origin||ORIGIN}))});
 export default{async fetch(req,env,ctx){const u=new URL(req.url);if(req.method==="OPTIONS")return new Response(null,{status:204,headers:cors});
-if(u.pathname==="/health")return json({ok:true,service:"snapmovienow-edge",version:"31",capabilities:['xtream']});
+if(u.pathname==="/health")return json({ok:true,service:"snapmovienow-edge",version:"32",capabilities:['xtream']});
 if(matchesXtream(u.pathname))return xtreamRequest(req,env,ctx);
 if(u.pathname==="/admin"&&req.method==="POST"){try{return await adminRequest(req,env)}catch{return json({error:"admin_unavailable"},502)}}
-if(u.pathname==="/gnula-media"&&["GET","HEAD"].includes(req.method)){try{return await gnulaMedia(req,env,u)}catch{return json({error:"media_unavailable"},502)}}
+if(u.pathname==="/gnula-media"&&["GET","HEAD"].includes(req.method)){try{return await gnulaMedia(req,env,u,ctx)}catch{return json({error:"media_unavailable"},502)}}
 if(u.pathname==='/stream'&&['GET','HEAD'].includes(req.method)){try{return await serverStream(req,env,u,ctx)}catch(e){return json({error:e.message==='media_origin_unapproved'?'media_origin_unapproved':'stream_unavailable'},502)}}
 if(req.method!=="POST")return json({error:"method_not_allowed"},405);
 try{const b=await req.json(),op=String(b.op||"");if(!["auth","logout","gnula_catalog","gnula_series_info","gnula_token","stream_token","session_info","playback_heartbeat","playback_release","playback_cancel"].includes(op)&&!Object.hasOwn(actions,op))return json({error:"operation_not_allowed"},403);
@@ -163,7 +164,7 @@ if(op==="auth"){
  if(!b.username||!b.password)return json({error:'credentials_required'},400);
  const has=await (await directory(env,"/has",{username:b.username})).json();let session,a;
  if(has.exists){const r=await directory(env,"/login",{username:b.username,password:b.password,client:req.headers.get("CF-Connecting-IP")||"unknown"});if(!r.ok)return json(await r.json(),r.status);const user=await r.json();session=await ownSession(env,user);a=accountInfo(session)}
- else{a=await validateAccount(String(b.username),String(b.password));if(!a)return json({error:"invalid_credentials"},401);session=await createSession(env,String(b.username),String(b.password))}
+ else{a=await validateAccount(String(b.username),String(b.password));if(!a)return json({error:"invalid_credentials"},401);session=await createSession(env,String(b.username),String(b.password),Number(a.user_info.exp_date)>0?Number(a.user_info.exp_date)*1000:null);a={...a,server_time:Date.now(),session_expires_at:session.exp,account_expires_at:session.accountExpiresAt}}
  const old=await unticket(env,String(b.access_token||""));if(old?.kind==="session"&&old.username===session.username){await directory(env,"/release-session",{sid:old.sid});await sessionCall(env,old.sid,"/logout")}
  return json({...a,access_token:await ticket(env,session)});
 }

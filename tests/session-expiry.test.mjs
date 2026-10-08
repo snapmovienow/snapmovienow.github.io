@@ -1,0 +1,13 @@
+import assert from 'node:assert/strict';import fs from 'node:fs';import vm from 'node:vm';
+const context={};vm.createContext(context);vm.runInContext(fs.readFileSync(new URL('../session-expiry.js',import.meta.url),'utf8'),context);
+let monotonic=0,tick,scheduled,expired=0;
+const expiry=context.createSessionExpiry({now:()=>monotonic,schedule:(fn,ms)=>{tick=fn;scheduled=ms;return 1},unschedule(){},expire(){expired++}});
+expiry.start(2000,1000);assert.equal(scheduled,1000);
+monotonic=999;tick();assert.equal(expired,0);assert.equal(scheduled,1);
+monotonic=1000;tick();assert.equal(expired,1);tick();assert.equal(expired,1);
+expiry.start(5000,2000);expiry.cancel();monotonic=10000;tick();assert.equal(expired,1,'manual logout removes the old deadline');
+expiry.start(12000,11000);monotonic+=1100;expiry.check();assert.equal(expired,2,'foreground return enforces a deadline passed while timers were suspended');
+expiry.start(9999999999,1000);assert.equal(scheduled,2147483647,'long-lived dates do not overflow the browser timer');
+expiry.start(5000,4000,250);assert.equal(scheduled,750,'server clock calibration accounts for response latency');
+expiry.cancel();
+console.log('PASS: exact browser deadline, monotonic clock, logout/new session isolation, foreground resumption, timer overflow and server clock correction.');

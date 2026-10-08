@@ -59,3 +59,31 @@ const s=await req({op:'auth',username:'customer1',password:'changed-password-tes
 for(const object of objects.values()){const sid=await object.state.storage.get('sid');if(sid&&await object.state.storage.get('identity')){await object.alarm();assert.equal(await state.get('playback:'+sid),undefined,'expired sessions remove playback ownership state')}}
 await act('logout');assert.equal((await act('users')).status,401);
 console.log('PASS: protected admin setup/login, independent customer auth, provider-only credentials, movie/series catalogs, concurrent 3-slot capacity, stream protection, suspension, password reset, deletion, expiration and logout.');
+
+// At the stored millisecond boundary, every gateway denies access before any
+// provider call; this includes cached Xtream authentication and old tickets.
+{
+ const realNow=Date.now;let clock=realNow();Date.now=()=>clock;
+ try {
+  const expiresAt=clock+60000;
+  const expiryAdmin=(await admin('login',{username:'owner',password:'owner-password-test'})).data.access_token;
+  const expiryAct=(action,data)=>admin(action,{access_token:expiryAdmin,...data});
+  assert.equal((await expiryAct('save',{create:true,username:'expiryexact',password:'expiry-password-test',status:'active',expiresAt})).status,200);
+  const login=await req({op:'auth',username:'expiryexact',password:'expiry-password-test'});assert.equal(login.status,200);
+  const token=login.data.access_token;assert.equal(login.data.session_expires_at,expiresAt);assert.equal(login.data.account_expires_at,expiresAt);assert.equal(login.data.server_time,clock);
+  const url=root+'/player_api.php?'+new URLSearchParams({username:'expiryexact',password:'expiry-password-test'});
+  assert.equal((await worker.fetch(new Request(url),env)).status,200);
+  const signed=await req({op:'stream_token',access_token:token,type:'movie',id:123});assert.equal(signed.status,200);
+  clock=expiresAt-1;assert.equal((await req({op:'session_info',access_token:token})).status,200);
+  clock=expiresAt;const calls=upstreamCalls;
+  for(const op of ['session_info','vod','series','live','vod_categories','series_categories','live_categories','gnula_catalog','playback_heartbeat'])assert.equal((await req({op,access_token:token})).status,401,op);
+  for(const type of ['movie','series','live'])assert.equal((await req({op:'stream_token',access_token:token,type,id:123})).status,401,type);
+  assert.equal((await worker.fetch(new Request(signed.data.url,{method:'HEAD'}),env)).status,410);
+  for(const action of ['', 'get_live_categories','get_live_streams','get_vod_streams','get_series'])assert.equal((await worker.fetch(new Request(url+(action?'&action='+action:'')),env)).status,401,action);
+  assert.equal((await req({op:'auth',username:'expiryexact',password:'expiry-password-test'})).status,401);
+  assert.equal(upstreamCalls,calls,'expired users never reach the provider');
+  for(const [id,obj]of objects)if(id!=='__smn_accounts_v1'&&await obj.state.storage.get('identity')?.then(identity=>identity?.username==='expiryexact'))await obj.alarm();
+  assert.equal(Object.values(await leaseStore.get('leases')||{}).filter(x=>x.username==='expiryexact').length,0,'expiry alarm releases reserved capacity');
+ } finally{Date.now=realNow}
+}
+console.log('PASS: exact account date/time boundary blocks web/Xtream login, all content catalogs, stream tokens, cached authentication and previous tickets; alarm releases capacity.');
