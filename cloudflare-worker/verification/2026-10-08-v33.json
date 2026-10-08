@@ -1,0 +1,101 @@
+{
+  "version": "33",
+  "backend_commit": "f8032f51e0df4c306704bf9a4ded267f6581bd71",
+  "verified_date_utc": "2026-10-08",
+  "regression_test_files_passed": 14,
+  "regression_test_files_total": 14,
+  "dry_run_passed": true,
+  "backend_deploy_checks_passed": 4,
+  "implemented": [
+    "Enforce exact account expiry on login, catalog access, media ticket issuance and already-open media transfers.",
+    "Stop the web player and clear the session at its server-provided deadline.",
+    "Use the existing native response guard for native streams, with an exact expiry timer.",
+    "Cancel upstream transfers and release capacity on closure; preserve replacement ownership and idempotent retry cleanup."
+  ],
+  "controlled_clock_coverage": [
+    "Access allowed immediately before the exact expiry boundary and rejected at the boundary.",
+    "Cached native authentication cannot bypass expiry.",
+    "All catalog operations, stream tokens and previously signed media tickets reject expired users.",
+    "Session alarm releases playback ownership and reservations.",
+    "Open binary and native responses stop at the signed deadline.",
+    "Ordinary canceled HLS segments do not revoke the entire session.",
+    "Browser monotonic deadline, foreground resumption, old-session timer isolation and network clock correction."
+  ],
+  "production_expiry_metadata_v32": {
+    "auth_status": 200,
+    "server_clock_supplied": true,
+    "deadline_supplied": true,
+    "deadline_not_after_account_expiry": true,
+    "restore_status": 200,
+    "restore_same_deadline": true,
+    "remaining_seconds": 43197,
+    "logout_status": 200
+  },
+  "production_hls_binary_v33": {
+    "auth_status": 200,
+    "prepare_status": 200,
+    "resource_status": 200,
+    "declared_bytes": 796368,
+    "received_bytes": 796368,
+    "complete_resource": true,
+    "ts_packet_aligned": true,
+    "cancel_status": 200,
+    "logout_status": 200
+  },
+  "production_native_cleanup_v33": {
+    "baseline_customer_reservations": 0,
+    "stream_status": 200,
+    "media_read_timed_out": true,
+    "customer_reservations_after_close": [
+      0
+    ],
+    "release_observed_seconds": 4.458,
+    "returned_to_baseline": true
+  },
+  "earlier_production_web_lifecycle_v32": [
+    {
+      "test": "published_version",
+      "passed": true
+    },
+    {
+      "test": "own_customer_login",
+      "passed": true
+    },
+    {
+      "test": "web_live_catalog",
+      "passed": true,
+      "channels": 2380
+    },
+    {
+      "test": "cancel_before_allocation",
+      "passed": true
+    },
+    {
+      "test": "late_preparation_rejected",
+      "passed": true,
+      "status": 410
+    },
+    {
+      "test": "first_live_prepared",
+      "passed": false,
+      "status": 409
+    },
+    {
+      "test": "unexpected_failure",
+      "passed": false,
+      "error_type": "AssertionError"
+    },
+    {
+      "test": "own_test_session_logout",
+      "passed": true
+    }
+  ],
+  "limitations": [
+    "The native raw TS request returned HTTP 200 but its video read timed out. Native video delivery is not verified as fixed.",
+    "The native close probe returned reservations to baseline zero in the first post-close control check after 4.458 seconds; this includes control request latency.",
+    "The latest HLS probe verifies one complete 1080p segment, not sustained playback of all provider channels.",
+    "Full v32 production lifecycle attempts encountered transport and preparation failures; they were not a complete passing end-to-end run.",
+    "No production customer expiry dates were changed for testing. Exact expiry boundary tests use a controlled clock.",
+    "Android APK and physical devices were not modified or tested. The server rejects expired app access; third-party application screens and already-buffered bytes cannot be forced to clear by this server change."
+  ]
+}
