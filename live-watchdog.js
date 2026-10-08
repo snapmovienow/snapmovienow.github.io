@@ -27,7 +27,9 @@ function watchLivePlayback(video,options){
   const time=now(),position=Number(video.currentTime)||0;
   if(video.paused||options.hidden?.()){lastMove=time;stableSince=time;lastTime=position;return}
   if(Math.abs(position-lastTime)>0.04){lastMove=time;lastTime=position;if(time-stableSince>=30000)attempts=0;return}
-  if(time-lastMove<8000||time-lastTry<8000)return;
+  const duration=Number(options.segmentDuration?.());
+  const stallWindow=Number.isFinite(duration)&&duration>0?Math.max(8000,Math.min(20000,duration*1500)):8000;
+  if(time-lastMove<stallWindow||time-lastTry<stallWindow)return;
   lastTry=time;lastMove=time;stableSince=time;
   if(attempts<2){attempts++;options.recover(attempts)}else{stop();options.fallback()}
  },1000);

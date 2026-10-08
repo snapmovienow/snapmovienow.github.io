@@ -37,3 +37,15 @@ context.recoverLivePlayback(native,null,2);assert.equal(loaded,1,'native recover
 native.buffered={length:2,start:i=>i===1?50:0,end:i=>i===1?60:10};
 context.recoverLivePlayback(native,null,1);assert.equal(native.currentTime,56,'a native seek stays in the latest buffered range');
 console.log('PASS: segment-aligned recovery, bounded decoder reset, missing metadata, native buffered seek and reload.');
+
+// Long provider segments need a proportional grace period before reconnecting.
+{
+ let now=0,tick,retries=0;
+ const video={currentTime:0,paused:false};
+ const close=context.watchLivePlayback(video,{now:()=>now,schedule:fn=>(tick=fn,1),unschedule(){},active:()=>true,segmentDuration:()=>10,recover:()=>retries++,fallback(){}});
+ now=9000;tick();assert.equal(retries,0,'a long 1080p segment must not trigger the old eight-second restart');
+ now=15000;tick();assert.equal(retries,1,'a genuine freeze still recovers within a bounded time');
+ now=22000;tick();assert.equal(retries,1,'the recovery itself receives one full segment grace period');
+ close();
+}
+console.log('PASS: target-duration-aware live stall deadline without unbounded waiting.');

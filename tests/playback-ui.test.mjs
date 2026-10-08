@@ -35,3 +35,11 @@ assert.equal(stops,0);assert.equal(logouts,0);
 heartbeat.playbackLifecycle.current=null;heartbeat.playbackLease=null;heartbeat.api=async()=>{throw {status:401}};
 await tick();assert.equal(stops,1);assert.equal(logouts,1,'idle authenticated users still receive access revocation');
 console.log('PASS: old heartbeat cannot close a new channel; idle access revocation is preserved.');
+
+// Feature detection preserves playback on devices lacking streaming Fetch APIs.
+{
+ const code=html.slice(html.indexOf('function supportsProgressiveLive'),html.indexOf('function ensureHls'));
+ const modern=vm.createContext({fetch(){},AbortController,ReadableStream,Request});vm.runInContext(code,modern);assert.equal(modern.supportsProgressiveLive(),true);
+ const legacy=vm.createContext({fetch(){},AbortController,Request});vm.runInContext(code,legacy);assert.equal(legacy.supportsProgressiveLive(),false);
+}
+console.log('PASS: progressive live streaming feature detection preserves legacy loading.');
