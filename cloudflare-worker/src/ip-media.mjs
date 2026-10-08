@@ -35,8 +35,25 @@ export async function fetchApprovedMediaIP(value,headers,connectSocket,nativeStr
   if(length!==null&&(!Number.isSafeInteger(length)||length<0||buffer.length>length))throw Error('invalid_http_response');
   if([204,205,304].includes(status)||length===0){await reader.cancel();socket.close().catch(()=>{});return new Response(length===0&&![204,205,304].includes(status)?'':null,{status,headers:responseHeaders})}
   const stream=factory(length),prefix=buffer;reader.releaseLock();
+  // Read native byte streams in larger blocks, but finish finite HTTP bodies
+  // at Content-Length. Waiting for socket EOF can hang a complete playlist or
+  // segment when the upstream keeps the TCP connection open.
+  let nativeReader,readBlock;
+  try{nativeReader=socket.readable.getReader({mode:'byob'});readBlock=size=>typeof nativeReader.readAtLeast==='function'?nativeReader.readAtLeast(size,new Uint8Array(size)):nativeReader.read(new Uint8Array(size))}
+  catch{nativeReader=socket.readable.getReader();readBlock=()=>nativeReader.read()}
   const writer=stream.writable.getWriter();
-  (async()=>{try{if(prefix.length)await writer.write(prefix);writer.releaseLock();await socket.readable.pipeTo(stream.writable)}catch(error){try{writer.releaseLock()}catch{}await stream.writable.abort(error).catch(()=>{})}finally{socket.close().catch(()=>{})}})();
+  writer.closed.catch(error=>{nativeReader.cancel(error).catch(()=>{});socket.close().catch(()=>{})});
+  (async()=>{try{
+   let received=prefix.length;if(prefix.length)await writer.write(prefix);
+   while(length===null||received<length){
+    const size=length===null?65536:Math.min(65536,length-received),chunk=await timed(readBlock(size));
+    if(chunk.done){if(length!==null&&received<length)throw Error('truncated_http_body');break}
+    const bytes=length===null?chunk.value:chunk.value.subarray(0,length-received);
+    received+=bytes.length;await writer.write(bytes);
+   }
+   await writer.close();
+  }catch(error){await writer.abort(error).catch(()=>{})}
+  finally{nativeReader.cancel().catch(()=>{});socket.close().catch(()=>{})}})();
   return new Response(stream.readable,{status,headers:responseHeaders});
  }
  let chunkRemaining=0,chunkCRLF=false,finished=false;

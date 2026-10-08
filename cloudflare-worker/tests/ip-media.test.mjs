@@ -28,3 +28,19 @@ r=await fetchApprovedMediaIP(allowed,new Headers(),t.connect,nativeFactory);awai
 t=transport('HTTP/1.0 200 OK\r\nContent-Length: 10000\r\n\r\n'+'x'.repeat(10000),100);
 r=await fetchApprovedMediaIP(allowed,new Headers(),t.connect,nativeFactory);await r.body.cancel();await new Promise(resolve=>setTimeout(resolve,0));assert.ok(t.state().closed,'canceling native transport closes the provider socket');
 console.log('PASS: native multi-megabyte transfer, HTTP/1.0 framing, range-derived length, truncated EOF rejection and cancellation.');
+
+// A server can leave its TCP connection open after delivering Content-Length.
+// Completing a finite HTTP body must not depend on a subsequent socket EOF.
+function openSocket(raw){
+ const bytes=new TextEncoder().encode(raw);let sent=false,closed=false;
+ return {connect(){return {opened:Promise.resolve(),closed:Promise.resolve(),close:async()=>{closed=true},
+  readable:new ReadableStream({pull(c){if(!sent){sent=true;c.enqueue(bytes)}else return new Promise(()=>{})}}),
+  writable:new WritableStream()}},state:()=>({closed})};
+}
+t=openSocket('HTTP/1.0 200 OK\r\nContent-Length: 5\r\n\r\nhello');
+r=await fetchApprovedMediaIP(allowed,new Headers(),t.connect,nativeFactory);
+let deadline;
+try{assert.equal(await Promise.race([r.text(),new Promise((_,reject)=>{deadline=setTimeout(()=>reject(Error('finite_body_waited_for_socket_eof')),250)})]),'hello')}
+finally{clearTimeout(deadline)}
+assert.ok(t.state().closed,'finite body completion closes the upstream socket');
+console.log('PASS: a complete finite response does not wait for upstream socket EOF.');
