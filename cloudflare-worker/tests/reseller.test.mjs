@@ -6,13 +6,13 @@ assert.equal(parseLines({data:[row(1),row(2,0,3,false)]}).length,1);
 assert.equal(parseLines({data:[row(1)]})[0].password,'fake-line-password');
 let loginCalls=0;globalThis.fetch=async(url,opts)=>{const u=new URL(url);assert.equal(u.origin,'http://ccf.center:8444');if(u.pathname.endsWith('/login')){if(opts.method==='POST'){loginCalls++;assert.ok(opts.body.includes('username=owner'));assert.ok(opts.headers.Cookie);return new Response('<a href="dashboard">Welcome</a>')}return new Response('<input name="password">',{headers:{'set-cookie':'PHPSESSID=fake-cookie; path=/'}})}if(u.pathname.endsWith('/table')){assert.equal(u.searchParams.get('id'),'lines');return Response.json({recordsFiltered:2,data:[row(1,1),row(2)]})}throw Error('unexpected_request')};
 const loaded=await readPanel('owner','fake-password');assert.equal(loaded.length,2);assert.equal(loginCalls,1);
-// Real XUI R6 semantics: filter=1 is online. An idle reseller can have
-// twelve active subscriptions while the online table is empty.
+// The provider-filtered inventory can omit idle active subscriptions.
+// Read all lines, then exclude disabled and expired subscriptions locally.
 globalThis.fetch=async(url,opts)=>{
  const u=new URL(url);
  if(u.pathname.endsWith('/login'))return opts.method==='POST'?new Response('<a href="dashboard">Welcome</a>'):new Response('<input name="password">',{headers:{'set-cookie':'PHPSESSID=idle-test; path=/'}});
  if(u.pathname.endsWith('/table')){
-  assert.equal(u.searchParams.get('filter'),'','read the complete authorised inventory rather than online connections');
+  assert.equal(u.searchParams.get('filter'),'','read the complete authorised inventory before validating active subscriptions');
   return Response.json({recordsFiltered:14,data:[...Array.from({length:12},(_,i)=>row(i+10,0,3)),row(30,0,3,false),[...row(31)].map((cell,i)=>i===11?'2000-01-01':cell)]});
  }
  throw Error('unexpected_request');
@@ -20,7 +20,7 @@ globalThis.fetch=async(url,opts)=>{
 const idle=await readPanel('idle-reseller','test-password');
 assert.equal(idle.length,12);assert.equal(idle.reduce((n,l)=>n+l.maxConnections-l.external,0),36);
 assert.ok(idle.every(l=>l.external===0),'idle active accounts contribute capacity');
-console.log('PASS: XUI R6 online filter cannot hide idle active subscriptions; disabled and expired subscriptions stay excluded.');
+console.log('PASS: Provider-side inventory filters cannot hide idle active subscriptions; disabled and expired subscriptions stay excluded.');
 class Store{constructor(){this.data=new Map();this.queue=Promise.resolve()}async get(k){return structuredClone(this.data.get(k))}async put(k,v){this.data.set(k,structuredClone(v))}async delete(k){this.data.delete(k)}transaction(fn){const r=this.queue.then(()=>fn(this));this.queue=r.catch(()=>{});return r}}
 const storage=new Store(),state={storage};const call=async(path,b={})=>{const r=await accountsFetch(state,{},new Request('https://internal/accounts'+path,{method:'POST',body:JSON.stringify(b)}));return {status:r.status,data:await r.json()}};
 await call('/provider-save',{mode:'panel',encrypted:'fake-encrypted-reseller',username:'owner'});

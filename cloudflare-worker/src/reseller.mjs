@@ -21,9 +21,9 @@ export async function readPanel(username,password,base=BASE){
   if(!r.ok)throw Error('panel_unavailable');return r.text();}throw Error('panel_redirect_failed');}
  await request('login');const text=await request('login',new URLSearchParams({username,password,login:'',referrer:''}).toString());
  if(/name=["']password["']/.test(text)||!text.includes('dashboard'))throw Error('panel_invalid');
- // XUI filter=1 means online connections, not active subscriptions. Idle
- // authorised accounts must remain available; parseLines validates status and
- // expiry locally, and playback validates the selected account before use.
+ // Provider-side filters can exclude usable idle active lines. Read the full
+ // authenticated inventory and validate status and expiry locally. Playback
+ // also validates the selected account before use.
  const lines=[];let total=0;for(let start=0;start<10000;start+=1000){const query=new URLSearchParams({id:'lines',filter:'',reseller:'',draw:'1',start:String(start),length:'1000','search[value]':'','order[0][column]':'0','order[0][dir]':'asc'});let d;try{d=JSON.parse(await request('table?'+query))}catch(e){if(e.message.startsWith('panel_'))throw e;throw Error('panel_format_changed')}
   total=Number(d.recordsFiltered);lines.push(...parseLines(d));if(!d.data?.length||start+1000>=total)break;if(start===9000)throw Error('panel_too_many_lines');}
  if(!lines.length)throw Error('panel_no_active_lines');return lines;
