@@ -1,0 +1,69 @@
+{
+  "timestamp": "2026-10-08T22:24:45.106Z",
+  "version": "37-baseline",
+  "scope": "local workerd SQLite reservation controller; synthetic users/accounts; no real video, upstream or production latency",
+  "runtime": "Miniflare/workerd",
+  "checks": [],
+  "scenarios": [
+    {
+      "active_reservations": 500,
+      "provider_accounts": 167,
+      "concurrency": 50,
+      "allocation": {
+        "operations": 500,
+        "p50_ms": 179.51,
+        "p95_ms": 259.282,
+        "max_ms": 275.766,
+        "elapsed_ms": 1909.31
+      },
+      "heartbeat": {
+        "operations": 5000,
+        "p50_ms": 81.181,
+        "p95_ms": 106.843,
+        "max_ms": 164.181,
+        "elapsed_ms": 8540.06,
+        "operations_per_second": 585.48,
+        "errors": 0
+      },
+      "close": {
+        "operations": 510,
+        "p50_ms": 80.067,
+        "p95_ms": 163.66,
+        "max_ms": 172.334,
+        "elapsed_ms": 984.2,
+        "remaining_reservations": 0
+      },
+      "capacity_enforced": true
+    },
+    {
+      "active_reservations": 1000,
+      "provider_accounts": 334,
+      "concurrency": 50,
+      "allocation": {
+        "operations": 1000,
+        "p50_ms": 336.264,
+        "p95_ms": 599.101,
+        "max_ms": 625.193,
+        "elapsed_ms": 6909.83
+      },
+      "heartbeat": {
+        "operations": 10000,
+        "p50_ms": 120.611,
+        "p95_ms": 153.167,
+        "max_ms": 245.578,
+        "elapsed_ms": 24889.46,
+        "operations_per_second": 401.78,
+        "errors": 0
+      },
+      "close": {
+        "operations": 1010,
+        "p50_ms": 145.73,
+        "p95_ms": 296.286,
+        "max_ms": 315.14,
+        "elapsed_ms": 3285.16,
+        "remaining_reservations": 0
+      },
+      "capacity_enforced": true
+    }
+  ]
+}

@@ -1,3 +1,4 @@
+import {openLeaseStore} from '../src/lease-store.mjs';
 import assert from 'node:assert/strict';
 import {webcrypto} from 'node:crypto';
 import worker,{PlaybackSession} from '../src/index.js';
@@ -41,7 +42,7 @@ await preparing;await cancel('delayed',102);finishPrepared();
 assert.equal((await delayed).status,410,'closing during manifest preparation cannot return a usable late token');
 globalThis.fetch=originalFetch;
 const leaseStore=objects.get('__smn_accounts_v1').state.storage;
-assert.equal(Object.values(await leaseStore.get('leases')).filter(x=>x.username==='customer0').length,0,'pending close frees the customer reservation');
+assert.equal([...(await (await openLeaseStore(leaseStore)).active()).values()].filter(x=>x.username==='customer0').length,0,'pending close frees the customer reservation');
 const finalPlay=await playback('final',103);assert.equal(finalPlay.status,200);
 await cancel('delayed',102);
 assert.equal((await worker.fetch(new Request(finalPlay.data.url,{method:'HEAD'}),env)).status,200,'late cancellation preserves new playback');
@@ -83,7 +84,7 @@ console.log('PASS: protected admin setup/login, independent customer auth, provi
   assert.equal((await req({op:'auth',username:'expiryexact',password:'expiry-password-test'})).status,401);
   assert.equal(upstreamCalls,calls,'expired users never reach the provider');
   for(const [id,obj]of objects)if(id!=='__smn_accounts_v1'&&await obj.state.storage.get('identity')?.then(identity=>identity?.username==='expiryexact'))await obj.alarm();
-  assert.equal(Object.values(await leaseStore.get('leases')||{}).filter(x=>x.username==='expiryexact').length,0,'expiry alarm releases reserved capacity');
+  assert.equal([...(await (await openLeaseStore(leaseStore)).active()).values()].filter(x=>x.username==='expiryexact').length,0,'expiry alarm releases reserved capacity');
  } finally{Date.now=realNow}
 }
 console.log('PASS: exact account date/time boundary blocks web/Xtream login, all content catalogs, stream tokens, cached authentication and previous tickets; alarm releases capacity.');

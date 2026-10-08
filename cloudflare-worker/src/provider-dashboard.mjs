@@ -1,7 +1,9 @@
 // A read-only, administrator-only projection of the same inventory and leases
 // used by allocation. Never serialize storage records or encrypted credentials.
+import {openLeaseStore} from './lease-store.mjs';
 const count=value=>Number.isFinite(Number(value))?Math.max(0,Math.floor(Number(value))):0;
-export async function providerDashboard(store,now=Date.now()){
+export async function providerDashboard(store,now=Date.now(),leases=null){
+ leases??=await openLeaseStore(store);
  const provider=await store.get('provider'),providers=await store.get('providers')||(provider?[{...provider,source:provider.mode+':'+provider.username}]:[]);
  const pool=await store.get('pool')||{lines:[],syncedAt:0},pools=await store.get('source-pools')||{};
  const rows=new Map(),byKey=new Map((pool.lines||[]).filter(l=>l.key).map(l=>[l.key,l])),byId=new Map((pool.lines||[]).map(l=>[l.id,l])),identities=new Map([...byKey].map(([key,line])=>[key,line.id]));
@@ -15,7 +17,7 @@ export async function providerDashboard(store,now=Date.now()){
  // Legacy single-account configurations also have a useful read-only view.
  if(!rows.size&&provider&&provider.mode!=='panel')rows.set('legacy-single',{id:'legacy-single',username:provider.username,server:'ccf',status:'active',eligible:true,maxConnections:Math.min(3,count(provider.maxConnections)),reported:0,syncedAt:0,stale:true,sources:[{source:'legacy-single',name:provider.username}],reservations:[]});
  const assignments=[],users=new Map(Array.from((await store.list({prefix:'user:'})).values()).map(u=>[u.id,u]));
- for(const lease of Object.values(await store.get('leases')||{})){
+ for(const lease of (await leases.active({},now)).values()){
   const user=users.get(lease.uid);if(lease.until<=now||!user||user.version!==lease.version||user.status!=='active'||(user.expiresAt&&user.expiresAt<=now))continue;
   const row=rows.get(lease.provider_id)||(rows.size===1&&!lease.provider_id?[...rows.values()][0]:null);if(!row)continue;
   const kind=String(lease.mediaKey||'').split('|')[0],assignment={username:user.username,accountId:row.id,accountUsername:row.username,server:row.server,type:['movie','series','live'].includes(kind)?kind:'unknown',client:lease.xtream?'xtream':'web',until:lease.until};

@@ -1,3 +1,4 @@
+import {openLeaseStore} from '../src/lease-store.mjs';
 import assert from 'node:assert/strict';
 import worker,{PlaybackSession} from '../src/index.js';
 import {providerDashboard} from '../src/provider-dashboard.mjs';
@@ -34,7 +35,7 @@ assert.equal(selectAccounts(view.accounts,{status:'inactive'}).length,2);
 assert.equal(selectAccounts(view.accounts,{status:'free'}).length,1);
 assert.equal(selectAccounts(view.accounts,{source:'a'}).length,2);
 assert.equal(selectAccounts(view.accounts,{query:'missing'}).length,0);
-await store.put('leases',{});view=await providerDashboard(store,now);assert.equal(view.assignments.length,0);assert.equal(view.summary.available,5,'closing playback removes the assignment and restores its slot');
+await (await openLeaseStore(store)).clear();view=await providerDashboard(store,now);assert.equal(view.assignments.length,0);assert.equal(view.summary.available,5,'closing playback removes the assignment and restores its slot');
 const pools=await store.get('source-pools');pools.a.attemptedAt=now;await store.put('source-pools',pools);assert.equal((await providerDashboard(store,now)).stale,true);
 const row=(id,status='Active',date='2099-01-01')=>[String(id),'line'+id,'<span title="upstream-secret" class="table-trunc-copy-cell__text">hidden</span>','owner','<i title="'+status+'"></i>','','','0','3','','',date];
 const inventory=parseInventory({data:[row(1),row(2,'Disabled'),row(3,'Active','2000-01-01')]});assert.deepEqual(inventory.map(a=>a.status),['active','suspended','expired']);assert.ok(!JSON.stringify(inventory).includes('upstream-secret'));
@@ -55,7 +56,7 @@ await admin('save',{username:'nito',password:'test-customer-password',status:'ac
 const auth=await worker.fetch(new Request(root,{method:'POST',body:JSON.stringify({op:'auth',username:'nito',password:'test-customer-password'})}),env);const customer=(await auth.json()).access_token;
 assert.equal((await request('provider-dashboard',{access_token:customer})).status,401,'a customer token cannot see another provider account or its allocations');
 fail=true;const failed=await admin('provider-dashboard',{refresh:true});assert.equal(failed.status,200);assert.equal(failed.data.stale,true,'a retained snapshot is explicitly marked stale');assert.equal(failed.data.summary.activeAccounts,1,'a transient outage preserves the known inventory');assert.equal(failed.data.stale,true);
-const before=JSON.stringify(await objects.get('__smn_accounts_v1').state.storage.get('leases'));await admin('provider-dashboard');assert.equal(JSON.stringify(await objects.get('__smn_accounts_v1').state.storage.get('leases')),before,'viewing a dashboard never starts or stops playback');
+const before=JSON.stringify([...await (await openLeaseStore(objects.get('__smn_accounts_v1').state.storage)).active()]);await admin('provider-dashboard');assert.equal(JSON.stringify([...await (await openLeaseStore(objects.get('__smn_accounts_v1').state.storage)).active()]),before,'viewing a dashboard never starts or stops playback');
 await admin('logout');assert.equal((await admin('provider-dashboard')).status,401);
 // A panel with no playable accounts still returns all account metadata.
 fail=false;globalThis.fetch=async(url,opts={})=>new URL(url).pathname.endsWith('/table')?Response.json({recordsFiltered:1,data:[row(5,'Disabled')]}):new Response(opts.method==='POST'?'<a href="dashboard">Welcome</a>':'<input name="password">',{headers:{'set-cookie':'PHPSESSID=test; path=/'}});

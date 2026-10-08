@@ -1,0 +1,140 @@
+{
+  "timestamp": "2026-10-08T22:24:10.250Z",
+  "version": "38",
+  "scope": "local workerd SQLite reservation controller; synthetic users/accounts; no real video, upstream or production latency",
+  "runtime": "Miniflare/workerd",
+  "checks": [
+    "real SQLite migration preserves live lease IDs/tickets and removes expired rows",
+    "primary-key/session indexes used",
+    "SQL/KV atomic rollback",
+    "same-media retry reuses one reservation",
+    "old cleanup/heartbeat cannot affect replacement",
+    "expired heartbeat cannot resurrect lease",
+    "30 duplicate concurrent starts allocate one lease",
+    "three-slot provider capacity enforced under simultaneous starts",
+    "foreign ownership denied",
+    "session close frees exactly its own slot"
+  ],
+  "scenarios": [
+    {
+      "active_reservations": 100,
+      "provider_accounts": 34,
+      "concurrency": 50,
+      "allocation": {
+        "operations": 100,
+        "p50_ms": 145.783,
+        "p95_ms": 212.324,
+        "max_ms": 216.973,
+        "elapsed_ms": 321.33
+      },
+      "heartbeat": {
+        "operations": 1000,
+        "p50_ms": 46.662,
+        "p95_ms": 74.342,
+        "max_ms": 82.762,
+        "elapsed_ms": 1075.92,
+        "operations_per_second": 929.43,
+        "errors": 0
+      },
+      "close": {
+        "operations": 110,
+        "p50_ms": 48.223,
+        "p95_ms": 66.356,
+        "max_ms": 68.132,
+        "elapsed_ms": 119.97,
+        "remaining_reservations": 0
+      },
+      "capacity_enforced": true
+    },
+    {
+      "active_reservations": 250,
+      "provider_accounts": 84,
+      "concurrency": 50,
+      "allocation": {
+        "operations": 250,
+        "p50_ms": 103.291,
+        "p95_ms": 128.58,
+        "max_ms": 143.739,
+        "elapsed_ms": 556.81
+      },
+      "heartbeat": {
+        "operations": 2500,
+        "p50_ms": 42.087,
+        "p95_ms": 63.887,
+        "max_ms": 99.769,
+        "elapsed_ms": 2265.43,
+        "operations_per_second": 1103.54,
+        "errors": 0
+      },
+      "close": {
+        "operations": 260,
+        "p50_ms": 35.208,
+        "p95_ms": 131.994,
+        "max_ms": 137.337,
+        "elapsed_ms": 293.08,
+        "remaining_reservations": 0
+      },
+      "capacity_enforced": true
+    },
+    {
+      "active_reservations": 500,
+      "provider_accounts": 167,
+      "concurrency": 50,
+      "allocation": {
+        "operations": 500,
+        "p50_ms": 113.018,
+        "p95_ms": 148.751,
+        "max_ms": 158.53,
+        "elapsed_ms": 1155.66
+      },
+      "heartbeat": {
+        "operations": 5000,
+        "p50_ms": 40.15,
+        "p95_ms": 70.932,
+        "max_ms": 144.005,
+        "elapsed_ms": 4475.7,
+        "operations_per_second": 1117.14,
+        "errors": 0
+      },
+      "close": {
+        "operations": 510,
+        "p50_ms": 37.666,
+        "p95_ms": 47.544,
+        "max_ms": 59.835,
+        "elapsed_ms": 408.31,
+        "remaining_reservations": 0
+      },
+      "capacity_enforced": true
+    },
+    {
+      "active_reservations": 1000,
+      "provider_accounts": 334,
+      "concurrency": 50,
+      "allocation": {
+        "operations": 1000,
+        "p50_ms": 129.295,
+        "p95_ms": 188.644,
+        "max_ms": 206.806,
+        "elapsed_ms": 2716.06
+      },
+      "heartbeat": {
+        "operations": 10000,
+        "p50_ms": 38.229,
+        "p95_ms": 73.184,
+        "max_ms": 180.513,
+        "elapsed_ms": 8604.87,
+        "operations_per_second": 1162.13,
+        "errors": 0
+      },
+      "close": {
+        "operations": 1010,
+        "p50_ms": 34.829,
+        "p95_ms": 82.9,
+        "max_ms": 185.367,
+        "elapsed_ms": 877.46,
+        "remaining_reservations": 0
+      },
+      "capacity_enforced": true
+    }
+  ]
+}

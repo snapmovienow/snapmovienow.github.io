@@ -1,3 +1,4 @@
+import {openLeaseStore} from '../src/lease-store.mjs';
 import assert from 'node:assert/strict';
 import worker, {PlaybackSession} from '../src/index.js';
 import {guardXtreamResponse, publicMetadata} from '../src/xtream-bridge.mjs';
@@ -105,7 +106,7 @@ const api = (action = '', params = {}, device = 1, method = 'GET') => {
   return worker.fetch(new Request(origin+'/player_api.php'+(method === 'GET' ? '?'+query : ''), {method, headers:{...headers(device),...(method === 'POST' ? {'content-type':'application/x-www-form-urlencoded'} : {})},...(method === 'POST' ? {body:query} : {})}), env);
 };
 const media = (kind, id, ext, device = 1, extra = {}) => worker.fetch(new Request(`${origin}/${kind}/${customer.username}/${customer.password}/${id}.${ext}`, {...extra,headers:{...headers(device),...extra.headers}}), env);
-const leases = async () => Object.values(await objects.get('__smn_accounts_v1').state.storage.get('leases') || {}).filter(l => l.until > Date.now());
+const leases = async () => [...(await (await openLeaseStore(objects.get('__smn_accounts_v1').state.storage)).active()).values()];
 const noProviderSecrets = data => {
   const text = JSON.stringify(data);
   for (const secret of [...providerOrigins,'upstream-0','upstream-1','provider-password-test-0','provider-password-test-1']) assert.ok(!text.includes(secret), 'provider configuration is private');
