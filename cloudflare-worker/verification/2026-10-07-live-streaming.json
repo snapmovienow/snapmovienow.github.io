@@ -1,0 +1,286 @@
+{
+  "backend_version": "31",
+  "frontend_commit": "8bd331fbd30ae0d9da10588efa617efb4063c475",
+  "regression_suites_passed": 12,
+  "inline_script_syntax_passed": true,
+  "real_hls_runtime": {
+    "version": "1.6.15",
+    "progressive_fetch_loader_selected": true,
+    "received_data_before_segment_complete": true
+  },
+  "fixes": [
+    "Enable progressive live HLS decoding when streaming Fetch APIs are supported.",
+    "Keep existing loading on legacy clients.",
+    "Scale live freeze detection with playlist target duration, bounded between 8 and 20 seconds.",
+    "Keep cancellation, request ownership and same-channel quality fallback."
+  ],
+  "live_samples": [
+    {
+      "region": "COL",
+      "requested_seconds": 30,
+      "prepare_status": 200,
+      "prepare_seconds": 5.061,
+      "first_frame_seconds": 9.818,
+      "returncode": 0,
+      "decoded_frames": 899,
+      "decoded_seconds": 29.966667,
+      "decoder_warnings": "\n[vist#0:0/h264 @ [decoder]] timestamp discontinuity (stream id=0): 42954045, new offset= -42063625\n[aist#0:1/aac @ [decoder]] timestamp discontinuity (stream id=0): -42958496, new offset= 894871\n[vist#0:0/h264 @ [decoder]] timestamp discontinuity (stream id=0): 42958156, new offset= -42063285\n[aist#0:1/aac @ [decoder]] timestamp discontinuity (stream id=0): -42958153, new offset= 894868\n[vist#0:0/h264 @ [decoder]] timestamp discontinuity (stream id=0): 42958822, new offset= -42063954\n[aist#0:1/aac @ [decoder]] timestamp discontinuity (stream id=0): -42962252, new offset= 898298\n[vist#0:0/h264 @ [decoder]] timestamp discontinuity (stream id=0): 42961922, new offset= -42063624\n[null @ [decoder]] Application provided invalid, non monotonically increasing dts to muxer in stream 0: 871 >= 871\n[aist#0:1/aac @ [decoder]] timestamp discontinuity (stream id=0): -42966342, new offset= 902718\n[vist#0:0/h264 @ [decoder]] timestamp discontinuity (stream id=0): 42966012, new offset= -42063294\n[null @ [decoder]] Application provided invalid, non monotonically increasing dts to muxer in stream 0: 875 >= 875\n[aist#0:1/aac @ [decoder]] timestamp discontinuity (stream id=0): -42968463, new offset= 905169\n[vist#0:0/h264 @ [decoder]] timestamp discontinuity (stream id=0): 42968122, new offset= -42062953\n[aist#0:1/aac @ [decoder]] timestamp discontinuity (stream id=0): -42974785, new offset= 911832\n[null @ [decoder]] Application provided invalid, non monotonically increasing dts to muxer in stream 0: 882 >= 882\n[vist#0:0/h264 @ [decoder]] timestamp discontinuity (stream id=0): 42974456, new offset= -42062624\n[aist#0:1/aac @ [decoder]] timestamp discontinuity (stream id=0): -42976897, new offset= 914273\n[vist#0:0/h264 @ [decoder]] timestamp discontinuity (stream id=0): 42976567, new offset= -42062294\n[aist#0:1/aac @ [decoder]] timestamp discontinuity (stream id=0): -42981019, new offset= 918725\n[vist#0:0/h264 @ [decoder]] timestamp discontinuity (stream id=0): 42980678, new offset= -42061953\n[aist#0:1/aac @ [decoder]] timestamp discontinuity (stream id=0): -42985119, new offset= 923166\n[vist#0:0/h264 @ [decoder]] timestamp discontinuity (stream id=0): 42985789, new offset= -42062623\n",
+      "duration_completed": true,
+      "cancel_status": 200,
+      "wall_seconds": 64.15,
+      "http": [
+        {
+          "label": "/current.m3u8",
+          "method": "GET",
+          "range": "bytes=0-",
+          "bytes": 554,
+          "content_length": "4628",
+          "content_range": null,
+          "status": 200,
+          "headers_seconds": 4.29,
+          "total_seconds": 4.29
+        },
+        {
+          "label": "hls_resource",
+          "method": "GET",
+          "range": "bytes=0-",
+          "bytes": 4188640,
+          "content_length": null,
+          "content_range": "bytes 0-4188639/4188640",
+          "status": 206,
+          "headers_seconds": 4.75,
+          "total_seconds": 5.26
+        },
+        {
+          "label": "/current.m3u8",
+          "method": "GET",
+          "range": "bytes=0-",
+          "bytes": 554,
+          "content_length": "4628",
+          "content_range": null,
+          "status": 200,
+          "headers_seconds": 4.24,
+          "total_seconds": 4.25
+        },
+        {
+          "label": "hls_resource",
+          "method": "GET",
+          "range": "bytes=0-",
+          "bytes": 4173788,
+          "content_length": null,
+          "content_range": "bytes 0-4173787/4173788",
+          "status": 206,
+          "headers_seconds": 5.39,
+          "total_seconds": 5.89
+        },
+        {
+          "label": "hls_resource",
+          "method": "GET",
+          "range": "bytes=0-",
+          "bytes": 3746840,
+          "content_length": null,
+          "content_range": "bytes 0-3746839/3746840",
+          "status": 206,
+          "headers_seconds": 3.91,
+          "total_seconds": 4.39
+        },
+        {
+          "label": "/current.m3u8",
+          "method": "GET",
+          "range": "bytes=0-",
+          "bytes": 554,
+          "content_length": "4628",
+          "content_range": null,
+          "status": 200,
+          "headers_seconds": 6.44,
+          "total_seconds": 6.44
+        },
+        {
+          "label": "hls_resource",
+          "method": "GET",
+          "range": "bytes=0-",
+          "bytes": 851968,
+          "content_length": null,
+          "content_range": "bytes 0-4183375/4183376",
+          "status": 206,
+          "headers_seconds": 6.14,
+          "client_closed": true,
+          "total_seconds": 6.33
+        }
+      ]
+    },
+    {
+      "region": "CHI",
+      "requested_seconds": 30,
+      "prepare_status": 200,
+      "prepare_seconds": 7.861,
+      "first_frame_seconds": 10.736,
+      "returncode": 0,
+      "decoded_frames": 1789,
+      "decoded_seconds": 29.996633,
+      "decoder_warnings": "[h264 @ [decoder]] mmco: unref short failure\n[h264 @ [decoder]] mmco: unref short failure\n",
+      "duration_completed": true,
+      "cancel_status": 200,
+      "wall_seconds": 67.704,
+      "http": [
+        {
+          "label": "/current.m3u8",
+          "method": "GET",
+          "range": "bytes=0-",
+          "bytes": 552,
+          "content_length": "4674",
+          "content_range": null,
+          "status": 200,
+          "headers_seconds": 4.35,
+          "total_seconds": 4.35
+        },
+        {
+          "label": "hls_resource",
+          "method": "GET",
+          "range": "bytes=0-",
+          "bytes": 2465808,
+          "content_length": null,
+          "content_range": "bytes 0-2465807/2465808",
+          "status": 206,
+          "headers_seconds": 5.77,
+          "total_seconds": 5.98
+        },
+        {
+          "label": "/current.m3u8",
+          "method": "GET",
+          "range": "bytes=0-",
+          "bytes": 552,
+          "content_length": "4674",
+          "content_range": null,
+          "status": 200,
+          "headers_seconds": 8.67,
+          "total_seconds": 8.67
+        },
+        {
+          "label": "hls_resource",
+          "method": "GET",
+          "range": "bytes=0-",
+          "bytes": 2863616,
+          "content_length": null,
+          "content_range": "bytes 0-2863615/2863616",
+          "status": 206,
+          "headers_seconds": 6.14,
+          "total_seconds": 6.42
+        },
+        {
+          "label": "hls_resource",
+          "method": "GET",
+          "range": "bytes=0-",
+          "bytes": 2563192,
+          "content_length": null,
+          "content_range": "bytes 0-2563191/2563192",
+          "status": 206,
+          "headers_seconds": 9.23,
+          "total_seconds": 9.4
+        },
+        {
+          "label": "/current.m3u8",
+          "method": "GET",
+          "range": "bytes=0-",
+          "bytes": 553,
+          "content_length": "4675",
+          "content_range": null,
+          "status": 200,
+          "headers_seconds": 6.9,
+          "total_seconds": 6.9
+        },
+        {
+          "label": "hls_resource",
+          "method": "GET",
+          "range": "bytes=0-",
+          "bytes": 131072,
+          "content_length": null,
+          "content_range": "bytes 0-2238327/2238328",
+          "status": 206,
+          "headers_seconds": 4.27,
+          "client_closed": true,
+          "total_seconds": 4.3
+        }
+      ]
+    },
+    {
+      "region": "ARG",
+      "requested_seconds": 30,
+      "prepare_status": 200,
+      "prepare_seconds": 7.638,
+      "first_frame_seconds": 16.224,
+      "returncode": 0,
+      "decoded_frames": 895,
+      "decoded_seconds": 29.97995,
+      "decoder_warnings": "[h264 @ [decoder]] mmco: unref short failure\n    Last message repeated 1 times\n[h264 @ [decoder]] number of reference frames (0+5) exceeds max (4; probably corrupt input), discarding one\n[h264 @ [decoder]] mmco: unref short failure\n    Last message repeated 1 times\n[h264 @ [decoder]] mmco: unref short failure\n    Last message repeated 1 times\n[h264 @ [decoder]] number of reference frames (0+5) exceeds max (4; probably corrupt input), discarding one\n[h264 @ [decoder]] mmco: unref short failure\n    Last message repeated 1 times\n",
+      "duration_completed": true,
+      "cancel_status": 200,
+      "wall_seconds": 58.282,
+      "http": [
+        {
+          "label": "/current.m3u8",
+          "method": "GET",
+          "range": "bytes=0-",
+          "bytes": 551,
+          "content_length": "4637",
+          "content_range": null,
+          "status": 200,
+          "headers_seconds": 9.8,
+          "total_seconds": 9.8
+        },
+        {
+          "label": "hls_resource",
+          "method": "GET",
+          "range": "bytes=0-",
+          "bytes": 3045600,
+          "content_length": null,
+          "content_range": "bytes 0-3045599/3045600",
+          "status": 206,
+          "headers_seconds": 5.78,
+          "total_seconds": 6.16
+        },
+        {
+          "label": "/current.m3u8",
+          "method": "GET",
+          "range": "bytes=0-",
+          "bytes": 552,
+          "content_length": "4638",
+          "content_range": null,
+          "status": 200,
+          "headers_seconds": 3.56,
+          "total_seconds": 3.56
+        },
+        {
+          "label": "hls_resource",
+          "method": "GET",
+          "range": "bytes=0-",
+          "bytes": 3773536,
+          "content_length": null,
+          "content_range": "bytes 0-3773535/3773536",
+          "status": 206,
+          "headers_seconds": 6.32,
+          "total_seconds": 6.78
+        },
+        {
+          "label": "hls_resource",
+          "method": "GET",
+          "range": "bytes=0-",
+          "bytes": 3104256,
+          "content_length": null,
+          "content_range": "bytes 0-3104255/3104256",
+          "status": 206,
+          "headers_seconds": 3.77,
+          "total_seconds": 4.19
+        }
+      ]
+    }
+  ],
+  "diagnostic_logout_status": 200,
+  "limitations": [
+    "FFmpeg checks confirm three 30-second streams completed; they are short samples, not a load or uptime guarantee.",
+    "CHILE and ARGENTINA have H.264 decoder warnings. Argentina warnings were also observed in a direct provider segment during the earlier verified diagnostic.",
+    "Colombia now shows timestamp discontinuity warnings; their origin is not determined by this test.",
+    "Progressive decoding was verified with the real HLS.js FetchLoader; startup improvement on physical devices was not measured.",
+    "The native Android APK was not changed."
+  ]
+}
