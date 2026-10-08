@@ -44,3 +44,11 @@ assert.equal((await call('/overview')).data.provider.sourceCount,2);
 await call('/pool-sync',{source:'panel:owner',lines:[{id:'4',external:0,maxConnections:3,encrypted:'line4'}]});
 added=await call('/overview');assert.equal(added.data.provider.activeAccounts,3);assert.equal(added.data.provider.maxConnections,9);assert.ok(!JSON.stringify(added).includes('secret'));
 console.log('PASS: additive panels, duplicate accounts counted once, same panel updated without duplication, source refresh preserves other panels, existing leases preserved.');
+
+const snapshot=await storage.get('pool');
+for(const i of [6,7])await storage.put('user:customer'+i,{id:'u'+i,username:'customer'+i,version:1,status:'active'});
+snapshot.syncedAt=Date.now()-120000;await storage.put('pool',snapshot);
+assert.equal((await acquire(6)).status,200,'web playback can use a recent inventory during background refresh');
+snapshot.syncedAt=Date.now()-12*3600000-1000;await storage.put('pool',snapshot);
+assert.equal((await acquire(7)).status,503,'inventory older than twelve hours cannot allocate capacity');
+console.log('PASS: web/native inventory age agrees with background refresh; stale snapshots remain bounded.');
