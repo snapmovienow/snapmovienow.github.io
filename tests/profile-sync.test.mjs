@@ -15,4 +15,18 @@ let releasePatch,patches=0;
 const racing=ctx.SMNProfiles.create({api:async(op,b)=>{if(op==='profile_get')return{records:[]};patches++;if(patches===1)await new Promise(r=>releasePatch=r);return{records:b.patches}},local:()=>[],onData:()=>{},schedule,cancel});await racing.initial;racing.progress({...base,time:10,duration:100});const first=racing.flush();await Promise.resolve();racing.progress({...base,time:20,duration:100});releasePatch();await first;await racing.flush();assert.equal(patches,2,'new progress survives an older in-flight acknowledgement');racing.stop();
 let unsupportedRequests=0,legacySaved=[];
 const legacy=ctx.SMNProfiles.create({api:async()=>{unsupportedRequests++;throw Error('operation_not_allowed')},local:()=>[base],onData:()=>{},onPersist:rows=>legacySaved=rows,schedule,cancel});await legacy.initial;legacy.progress({...base,time:30,duration:100});await legacy.flush();await legacy.refresh();assert.equal(unsupportedRequests,1,'an older backend is not retried repeatedly');assert.ok(legacySaved.some(p=>p.kind==='progress'&&p.time===30),'local progress remains usable while the backend awaits deployment');legacy.stop();assert.equal(timers.size,0);
-console.log('PASS: local/remote merge ordering, stopped-account isolation, persisted offline removals, concurrent progress acknowledgement and older-backend fallback.');
+for(const initialFailure of [false,true]){
+ let finishGet,latest=[],uploaded=[];
+ const older={...base,kind:'progress',time:10,duration:100,updatedAt:Date.now()-1000};
+ const hydrating=ctx.SMNProfiles.create({api:async(op,b)=>{if(op==='profile_get')return new Promise((resolve,reject)=>finishGet=()=>initialFailure?reject(Error('offline')):resolve({records:[]}));uploaded.push(...b.patches);return{records:b.patches}},local:()=>[older],onData:rows=>latest=rows,schedule,cancel});
+ await Promise.resolve();hydrating.progress({...base,time:20,duration:100});finishGet();await hydrating.initial;await hydrating.flush();
+ assert.equal(latest.find(p=>p.kind==='progress').time,20,'delayed initial hydration preserves progress recorded while the request was pending');
+ assert.equal(uploaded.find(p=>p.kind==='progress').time,20,'initial success or offline retry uploads the latest progress');hydrating.stop();
+}
+let deleteResponse,deletedRows=[];
+const tombstone={...base,deleted:true,updatedAt:Date.now()};
+const deleting=ctx.SMNProfiles.create({api:async(op,b)=>op==='profile_get'?new Promise(r=>deleteResponse=r):{records:b.patches},local:()=>[tombstone],onData:rows=>deletedRows=rows,schedule,cancel});
+await Promise.resolve();deleteResponse({records:[{...base,updatedAt:tombstone.updatedAt}]});await deleting.initial;
+assert.equal(deletedRows[0].deleted,true,'an equal-timestamp remote favorite cannot resurrect a local deletion');deleting.stop();
+assert.equal(timers.size,0);
+console.log('PASS: local/remote merge ordering, stopped-account isolation, persisted offline removals, concurrent progress acknowledgement, delayed hydration, deletion precedence and older-backend fallback.');
