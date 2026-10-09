@@ -1,3 +1,4 @@
+import {isAdult} from './content-permissions.mjs';
 // Xtream player compatibility. Provider passwords and playback origins stay private.
 const ACTIONS = {
   get_live_categories: ['tv', 'live_category'], get_live_streams: ['tv', 'live'],
@@ -73,8 +74,10 @@ async function details(params, kind, auth, deps, base) {
   if (!numeric(publicId)) return deps.json({error: 'invalid_stream'}, 400);
   const record = await deps.resolve(publicId);
   if (!record || record.kind !== kind) return deps.json({error: 'not_found'}, 404);
+  if (auth.user.permissions.adults === false && !await deps.adultPolicy.allowed(record)) return deps.json({error:'adult_content_disabled'},403);
   const action = kind === 'movie' ? 'get_vod_info' : 'get_series_info';
   const data = await deps.catalog(action, record.server, {[kind === 'movie' ? 'vod_id' : 'series_id']: record.upstreamId});
+  if (auth.user.permissions.adults === false && (isAdult(data.info) || isAdult(data.movie_data))) return deps.json({error:'adult_content_disabled'},403);
   if (kind === 'movie') {
     const row = {...data.movie_data, stream_id: Number(publicId), container_extension: record.ext || 'mp4'};
     row.direct_source = playbackURL(base, auth, 'movie', publicId, row.container_extension);
@@ -85,17 +88,18 @@ async function details(params, kind, auth, deps, base) {
   for (const [season, rows] of Object.entries(data.episodes || {})) {
     episodes[season] = [];
     for (const row of Array.isArray(rows) ? rows : []) {
-      if (numeric(row.id)) flat.push({season, row});
+      if (numeric(row.id) && (auth.user.permissions.adults !== false || (!isAdult(row) && !isAdult(row.info)))) flat.push({season, row});
     }
   }
-  const ids = await deps.register(flat.map(({row}) => entry('episode', record.server, row.id, {ext: EXTENSIONS.has(row.container_extension) ? row.container_extension : 'mp4'})));
+  const ids = await deps.register(flat.map(({row}) => entry('episode', record.server, row.id, {parentId:record.upstreamId, ext: EXTENSIONS.has(row.container_extension) ? row.container_extension : 'mp4'})));
   flat.forEach(({season, row}, i) => {
     const ext = EXTENSIONS.has(row.container_extension) ? row.container_extension : 'mp4';
     episodes[season].push({...row, id: String(ids[i]), container_extension: ext, direct_source: playbackURL(base, auth, 'series', ids[i], ext)});
   });
+  for (const season of Object.keys(episodes)) if (!episodes[season].length) delete episodes[season];
   const info = {...data.info};
   if (info.category_id != null) info.category_id = String((await deps.register([entry('series_category', record.server, info.category_id)]))[0]);
-  return deps.json({...data, info, episodes});
+  return deps.json({...data, info, episodes, seasons:(data.seasons||[]).filter(season=>auth.user.permissions.adults!==false||Object.hasOwn(episodes,String(season.season_number)))});
 }
 
 export async function handleXtream(req, deps) {
@@ -121,6 +125,7 @@ export async function handleXtream(req, deps) {
     if (!auth.user.permissions[permission(kind)]) return deps.json({error: 'content_disabled'}, 403);
     const record = await deps.resolve(publicId), expected = kind === 'series' ? 'episode' : kind;
     if (!record || record.kind !== expected) return deps.json({error: 'not_found'}, 404);
+    if (auth.user.permissions.adults === false && !await deps.adultPolicy.allowed(record)) return deps.json({error:'adult_content_disabled'},403);
     return deps.play(req, auth.session, {...record, type: kind, ext: ext.toLowerCase()});
   }
   if (url.pathname !== '/player_api.php') return deps.json({error: 'not_found'}, 404);
@@ -133,11 +138,13 @@ export async function handleXtream(req, deps) {
   if (action === 'get_short_epg' || action === 'get_simple_data_table') {
     const record = await deps.resolve(params.get('stream_id'));
     if (!record || record.kind !== 'live') return deps.json({epg_listings: []});
+    if (auth.user.permissions.adults === false && !await deps.adultPolicy.allowed(record)) return deps.json({epg_listings: []});
     return deps.json(await deps.catalog(action, record.server, {stream_id: record.upstreamId, limit: String(Math.min(100, Math.max(1, Number(params.get('limit')) || 10)))}));
   }
   const categoryId = params.get('category_id');
   let rows = await deps.catalog(action);
   if (!Array.isArray(rows)) throw Error('invalid_catalog');
+  if (auth.user.permissions.adults === false) rows = await deps.adultPolicy.filter(action, rows);
   if (categoryId && !spec[1].endsWith('_category')) {
     const category = await deps.resolve(categoryId);
     if (!category || category.kind !== categoryKind(spec[1])) return deps.json([]);

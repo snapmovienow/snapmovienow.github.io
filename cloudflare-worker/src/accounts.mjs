@@ -1,11 +1,12 @@
 // Private Durable Object routes. This module is never served as an HTTP endpoint.
+import {contentPermissions} from './content-permissions.mjs';
 import {catalogCacheRoute} from './catalog-cache.mjs';
 import {providerDashboard} from './provider-dashboard.mjs';
 import {openLeaseStore} from './lease-store.mjs';
 const answer=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:{'content-type':'application/json'}});
 const normal=x=>String(x||'').trim().toLowerCase();
 const validName=x=>/^[a-z0-9_.@-]{3,80}$/.test(x);
-const publicUser=u=>({id:u.id,username:u.username,name:u.name,status:u.status,expiresAt:u.expiresAt,createdAt:u.createdAt,updatedAt:u.updatedAt,permissions:u.permissions||{movies:true,series:true,tv:true}});
+const publicUser=u=>({id:u.id,username:u.username,name:u.name,status:u.status,expiresAt:u.expiresAt,createdAt:u.createdAt,updatedAt:u.updatedAt,permissions:contentPermissions(u.permissions)});
 const alive=u=>u&&u.status==='active'&&(!u.expiresAt||u.expiresAt>Date.now());
 const enc=new TextEncoder();
 async function digest(x){return new Uint8Array(await crypto.subtle.digest('SHA-256',enc.encode(String(x))))}
@@ -22,6 +23,10 @@ export async function accountsFetch(state,env,req){
  if(p==='/xtream-save')return store.transaction(async tx=>{if(typeof b.enabled!=='boolean')return answer({error:'invalid_setting'},400);const old=await tx.get('xtream-config')||{enabled:true,version:1};const next={enabled:b.enabled,version:old.version+(old.enabled===b.enabled?0:1)};await tx.put('xtream-config',next);if(!next.enabled)await leases.in(tx).removeFor({xtream:true});return answer(next)});
  if(p==='/xtream-register')return registerXtream(store,b.entries);
  if(p==='/xtream-resolve')return answer(/^\d+$/.test(String(b.id))?await store.get('xtream-id:'+b.id)||null:null);
+ if(p==='/xtream-episode'){
+  const id=await store.get('xtream-map:episode:'+String(b.server)+':'+String(b.id));
+  return answer(id?await store.get('xtream-id:'+id)||null:null);
+ }
  if(p==='/xtream-count')return answer({connections:await leases.count({uid:b.uid})});
  if(p==='/xtream-login'){
   const username=normal(b.username),u=await store.get('user:'+username),key='xtream-auth:'+username+':'+b.authKey;
@@ -44,7 +49,7 @@ export async function accountsFetch(state,env,req){
   const u=await store.get(p==='/admin-login'?'admin':'user:'+username);
   const hash=await passwordHash(String(b.password||'').slice(0,256),u?.salt||'missing-account-salt');
   if(!u||!await same(hash,u.hash)||(p==='/login'&&!alive(u)))return answer({error:'invalid_credentials'},401);
-  await store.delete(bucket);return answer({id:u.id,username:u.username,version:u.version,expiresAt:u.expiresAt,permissions:u.permissions||{movies:true,series:true,tv:true}});
+  await store.delete(bucket);return answer({id:u.id,username:u.username,version:u.version,expiresAt:u.expiresAt,permissions:contentPermissions(u.permissions)});
  }
  if(p==='/check'){
   if(b.xtream){const config=await store.get('xtream-config')||{enabled:true,version:1};if(!config.enabled||config.version!==b.xtreamVersion)return answer({ok:false},401)}
@@ -56,7 +61,7 @@ export async function accountsFetch(state,env,req){
   const username=normal(b.username);if(!validName(username))return answer({error:'invalid_username'},400);
   const old=await store.get('user:'+username);if(b.create&&old)return answer({error:'username_exists'},409);if(!b.create&&!old)return answer({error:'not_found'},404);
   if(!['active','suspended'].includes(b.status))return answer({error:'invalid_status'},400);
-  const permissions=b.permissions===undefined?(old?.permissions||{movies:true,series:true,tv:true}):{movies:b.permissions?.movies===true,series:b.permissions?.series===true,tv:b.permissions?.tv===true};
+  const permissions=b.permissions===undefined?contentPermissions(old?.permissions):{movies:b.permissions?.movies===true,series:b.permissions?.series===true,tv:b.permissions?.tv===true,adults:Object.hasOwn(b.permissions||{},'adults')?b.permissions.adults===true:contentPermissions(old?.permissions).adults};
   let u={...old,permissions,id:old?.id||crypto.randomUUID(),username,name:String(b.name||'').slice(0,120),status:b.status,expiresAt:expiry(b.expiresAt),createdAt:old?.createdAt||Date.now(),updatedAt:Date.now(),version:(old?.version||0)+1};
   if(b.password)u=await withPassword(u,b.password);else if(!old)return answer({error:'password_required'},400);
   return store.transaction(async tx=>{const latest=await tx.get('user:'+username);if((latest?.version||0)!==(old?.version||0))return answer({error:'edit_conflict'},409);await tx.put('user:'+username,u);await leases.in(tx).removeFor({uid:u.id});return answer(publicUser(u))});
@@ -71,7 +76,7 @@ export async function accountsFetch(state,env,req){
   const pools=await tx.get('source-pools')||{};pools[source]={lines:b.lines,inventory:b.inventory,syncedAt:Date.now()};await tx.put('source-pools',pools);await tx.put('providers',providers);await tx.put('provider',{...providers[0],mode:'panel'});await mergePools(tx,pools,leases.in(tx));return answer({ok:true,updated:!!previous,sourceCount:providers.length});
  });
  if(p==='/provider-remove')return store.transaction(async tx=>{const providers=await tx.get('providers')||[],next=providers.filter(x=>x.source!==b.source);if(next.length===providers.length)return answer({error:'not_found'},404);const pools=await tx.get('source-pools')||{};delete pools[b.source];await tx.put('providers',next);await tx.put('source-pools',pools);if(next.length)await tx.put('provider',{...next[0],mode:'panel'});else await tx.delete('provider');await mergePools(tx,pools,leases.in(tx));return answer({ok:true})});
- if(p==='/permissions'){const user=await store.get('user:'+normal(b.username));return answer(user?.permissions||{movies:true,series:true,tv:true})}
+ if(p==='/permissions'){const user=await store.get('user:'+normal(b.username));return answer(contentPermissions(user?.permissions))}
  if(p==='/provider')return answer(await store.get('provider')||{});
  if(p==='/pool')return answer(await store.get('pool')||{lines:[],syncedAt:0});
  if(p==='/provider-dashboard')return store.transaction(async tx=>answer(await providerDashboard(tx,Date.now(),leases.in(tx))));
@@ -142,7 +147,7 @@ async function registerXtream(store,entries){
  return store.transaction(async tx=>{
   let next=await tx.get('xtream-next-id')||1;const result=[];
   for(let offset=0;offset<entries.length;offset+=60){const chunk=entries.slice(offset,offset+60),keys=chunk.map(e=>'xtream-map:'+e.kind+':'+e.server+':'+e.upstreamId),existing=await tx.get(keys),writes={};
-   for(let i=0;i<chunk.length;i++){const key=keys[i],e=chunk[i];let id=existing.get(key)||writes[key];if(!id){if(next>2147483647)throw Error('catalog_id_limit');id=next++;writes[key]=id;writes['xtream-id:'+id]={...e,id};}result.push(id)}
+   for(let i=0;i<chunk.length;i++){const key=keys[i],e=chunk[i];let id=existing.get(key)||writes[key];if(!id){if(next>2147483647)throw Error('catalog_id_limit');id=next++;writes[key]=id;writes['xtream-id:'+id]={...e,id};}else if(e.parentId){writes['xtream-id:'+id]={...e,id};}result.push(id)}
    if(Object.keys(writes).length)await tx.put(writes);
   }
   await tx.put('xtream-next-id',next);return answer(result);

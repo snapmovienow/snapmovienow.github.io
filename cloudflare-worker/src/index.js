@@ -3,6 +3,8 @@ import {isApprovedMediaIP,fetchApprovedMediaIP} from './ip-media.mjs';
 import {readPanel,validateServerUrl} from "./reseller.mjs";
 import {accountsFetch} from "./accounts.mjs";
 import {matchesXtream} from './xtream.mjs';
+import {contentPermissions,createAdultPolicy,isAdult} from './content-permissions.mjs';
+import {createProviderCatalog} from './provider-catalog.mjs';
 import {createXtreamBridge,guardXtreamResponse} from './xtream-bridge.mjs';
 import {fetchMedia,recoverMedia} from './media-fetch.mjs';
 import {guardPlaybackExpiry} from './playback-expiry.mjs';
@@ -163,7 +165,8 @@ async function serverStreamDirect(req,env,u,ctx){
  return guardPlaybackExpiry(result,d.exp,req.signal,()=>directory(env,"/release-session",{sid:d.sid}),ctx);
 }
 
-const xtreamRequest=createXtreamBridge({directory,registry,sessionCall,ticket,managedPlayback,serverStream,json,catalogCredentials:async(env,server,ctx)=>(await catalogCredentials(env,server,ctx,3)).map(p=>({...p,origin:p.origin||ORIGIN}))});
+const catalogDeps={directory,registry,sessionCall,ticket,managedPlayback,serverStream,json,catalogCredentials:async(env,server,ctx)=>(await catalogCredentials(env,server,ctx,3)).map(p=>({...p,origin:p.origin||ORIGIN}))};
+const xtreamRequest=createXtreamBridge(catalogDeps);
 async function handleRequest(req,env,ctx){const u=new URL(req.url);if(req.method==="OPTIONS")return new Response(null,{status:204,headers:cors});
 if(u.pathname==="/health")return json({ok:true,service:"snapmovienow-edge",version:SERVICE_VERSION,capabilities:['xtream']});
 if(matchesXtream(u.pathname))return xtreamRequest(req,env,ctx);
@@ -181,9 +184,10 @@ if(op==="auth"){
  return json({...a,access_token:await ticket(env,session)});
 }
 let session=await unticket(env,String(b.access_token||""));if(session?.kind!=="session"||!(await sessionCall(env,session.sid,"/check")).ok)return json({error:"session_required"},401);
-const permissions=session.managed?await (await directory(env,'/permissions',{username:session.username})).json():{movies:true,series:true,tv:true};session.permissions=permissions;
+const permissions=contentPermissions(session.managed?await (await directory(env,'/permissions',{username:session.username})).json():null);session.permissions=permissions;
+const catalog=createProviderCatalog(catalogDeps,env,ctx),adultPolicy=createAdultPolicy(catalog);
 if(op==='session_info')return json(accountInfo(session));
-const required=op.startsWith('live')||(op==='stream_token'&&b.type==='live')?'tv':op.startsWith('series')||op==='gnula_series_info'||(op==='stream_token'&&b.type==='series')?'series':['vod','vod_info','vod_categories','gnula_token'].includes(op)||(op==='stream_token'&&b.type!=='series')?'movies':null;
+const required=op.startsWith('live')||(op==='stream_token'&&b.type==='live')?'tv':op.startsWith('series')||op==='gnula_series_info'||(op==='stream_token'&&b.type==='series')?'series':['vod','vod_info','vod_categories'].includes(op)||(op==='stream_token'&&b.type!=='series')?'movies':null;
 if(required&&!permissions[required])return json({error:'content_disabled'},403);
 
 if(op==="playback_cancel"){if(!session.managed)return json({ok:true});const r=await directory(env,"/playback-cancel",{sid:session.sid,request_id:b.request_id,revision:b.revision});return json(await r.json(),r.status)}
@@ -191,14 +195,35 @@ if(op==="playback_heartbeat"){if(!session.managed||!b.lease_id)return json({ok:t
 if(op==="playback_release"){if(!session.managed||!b.lease_id)return json({ok:true});const r=await directory(env,"/release",{sid:session.sid,lease_id:b.lease_id,request_id:b.request_id});return json(await r.json(),r.status)}
 if(op==="logout"){await directory(env,"/release-session",{sid:session.sid});await sessionCall(env,session.sid,"/logout");return json({ok:true})}
 b.username=session.username;b.password=session.password;
-if(op==="gnula_catalog")return json(GNULA_CATALOG.filter(x=>x.type==="series"?permissions.series:permissions.movies).map(publicTitle));
-if(op==="gnula_series_info"){const item=GNULA_CATALOG.find(x=>x.series_id===b.series_id);if(!item)return json({error:"title_not_allowed"},404);const episodes={};for(const ep of item.episodes||[]){(episodes[ep.season]??=[]).push({id:ep.id,title:"Episodio "+ep.episode_num,episode_num:ep.episode_num,container_extension:"m3u8"})}return json({info:{plot:item.plot,year:item.year},episodes})}
-if(op==="gnula_token"){const item=GNULA_CATALOG.find(x=>x.stream_id===b.id);let page=item?.page,preferred=item?.preferredEmbed;if(!page){const parent=GNULA_CATALOG.find(x=>x.episodes?.some(ep=>ep.id===b.id));const ep=parent?.episodes.find(ep=>ep.id===b.id);page=ep?.page;preferred=ep?.preferredEmbed}if(!page)return json({error:"title_not_allowed"},404);const source=await resolveGnula(page,preferred);const data={kind:"gnula",source,sid:session.sid,exp:Math.min(session.exp,Date.now()+3*60*60*1000)};const t=await ticket(env,data);return json({url:proxiedMedia(u.origin,t,source)})}
+if(op==="gnula_catalog")return json(GNULA_CATALOG.filter(x=>permissions.adults||!isAdult(x)).filter(x=>x.type==="series"?permissions.series:permissions.movies).map(publicTitle));
+if(op==="gnula_series_info"){const item=GNULA_CATALOG.find(x=>x.series_id===b.series_id);if(!item)return json({error:"title_not_allowed"},404);if(!permissions.adults&&isAdult(item))return json({error:"adult_content_disabled"},403);const episodes={};for(const ep of item.episodes||[]){if(!permissions.adults&&isAdult(ep))continue;(episodes[ep.season]??=[]).push({id:ep.id,title:"Episodio "+ep.episode_num,episode_num:ep.episode_num,container_extension:"m3u8"})}return json({info:{plot:item.plot,year:item.year},episodes})}
+if(op==="gnula_token"){const item=GNULA_CATALOG.find(x=>x.stream_id===b.id);let page=item?.page,preferred=item?.preferredEmbed;if(item&&!permissions.movies)return json({error:"content_disabled"},403);if(!permissions.adults&&isAdult(item))return json({error:"adult_content_disabled"},403);if(!page){const parent=GNULA_CATALOG.find(x=>x.episodes?.some(ep=>ep.id===b.id));const ep=parent?.episodes.find(ep=>ep.id===b.id);if(!permissions.adults&&(isAdult(parent)||isAdult(ep)))return json({error:"adult_content_disabled"},403);if(parent&&!permissions.series)return json({error:"content_disabled"},403);page=ep?.page;preferred=ep?.preferredEmbed}if(!page)return json({error:"title_not_allowed"},404);const source=await resolveGnula(page,preferred);const data={kind:"gnula",source,sid:session.sid,exp:Math.min(session.exp,Date.now()+3*60*60*1000)};const t=await ticket(env,data);return json({url:proxiedMedia(u.origin,t,source)})}
 if(op==="stream_token"){
  if(!["movie","series","live"].includes(String(b.type||"movie"))||!/^\d+$/.test(String(b.id||"")))return json({error:"invalid_stream"},400);
+ if(!permissions.adults){
+  let parentId=b.series_id;
+  if(b.type==='series'&&!parentId)parentId=(await (await registry(env,'/xtream-episode',{server:b.server||'ccf',id:b.id})).json())?.parentId;
+  if(!await adultPolicy.allowed({kind:b.type==='series'?'episode':b.type||'movie',server:b.server||'ccf',upstreamId:b.id,parentId}))return json({error:'adult_content_disabled'},403);
+ }
  return await prepareWebPlayback(b,session,req.url,env,ctx,{directory,managedPlayback,ticket,serverStream,json,cleanExt,origin:ORIGIN});
 }
-if(session.managed){const credentials=await catalogCredentials(env,b.server,ctx);if(!credentials.length)return json({error:'server_unavailable'},503);const results=await Promise.all(credentials.map(async p=>{try{const x=new URL((p.origin||ORIGIN)+'/player_api.php');x.searchParams.set('username',p.username);x.searchParams.set('password',p.password);x.searchParams.set('action',actions[op]);if(b.series_id)x.searchParams.set('series_id',String(b.series_id));if(b.vod_id)x.searchParams.set('vod_id',String(b.vod_id));const response=await fetch(x,{headers:{'User-Agent':'SnapMovieNow/1.0'},signal:AbortSignal.timeout(20000)});if(!response.ok)throw Error('upstream_unavailable');const data=await response.json();return Array.isArray(data)?data.map(item=>({...item,_server:p.server})):data}catch{return null}}));const good=results.filter(x=>x!==null);if(!good.length)return json({error:'upstream_unavailable'},502);return json(good.every(Array.isArray)?good.flat():good[0])}
+if(session.managed){
+ const kind=op==='series_info'?'series_list':op==='vod_info'?'movie':null;
+ if(kind&&!permissions.adults&&!await adultPolicy.allowed({kind,server:b.server||'ccf',upstreamId:b.series_id||b.vod_id}))return json({error:'adult_content_disabled'},403);
+ const params=op==='series_info'?{series_id:b.series_id}:op==='vod_info'?{vod_id:b.vod_id}:{};
+ let data=await catalog(actions[op],b.server,params);
+ if(!permissions.adults){
+  if(Array.isArray(data))data=await adultPolicy.filter(actions[op],data);
+  else {if(isAdult(data.info)||isAdult(data.movie_data))return json({error:'adult_content_disabled'},403);
+   if(data.episodes)data={...data,episodes:Object.fromEntries(Object.entries(data.episodes).map(([season,rows])=>[season,rows.filter(ep=>!isAdult(ep)&&!isAdult(ep.info))]).filter(([,rows])=>rows.length))};
+  }
+ }
+ if(op==='series_info'&&data.episodes){
+  const entries=Object.values(data.episodes).flat().filter(ep=>/^\d+$/.test(String(ep.id))).map(ep=>({kind:'episode',server:b.server||'ccf',upstreamId:String(ep.id),parentId:String(b.series_id),ext:cleanExt(ep.container_extension)}));
+  if(entries.length)await registry(env,'/xtream-register',{entries});
+ }
+ return json(data);
+}
 const x=new URL(ORIGIN+"/player_api.php");x.searchParams.set("username",String(b.username));x.searchParams.set("password",String(b.password));if(op!=="auth")x.searchParams.set("action",actions[op]);if(op==="series_info"&&b.series_id)x.searchParams.set("series_id",String(b.series_id));if(op==="vod_info"&&b.vod_id)x.searchParams.set("vod_id",String(b.vod_id));const up=await fetch(x,{headers:{"User-Agent":"SnapMovieNow/1.0"},redirect:"follow"});return new Response(await up.text(),{status:up.status,headers:{...cors,"content-type":up.headers.get("content-type")||"application/json"}})}catch{return json({error:"upstream_unavailable"},502)}}
 export default {fetch(req, env, ctx) {return traceRequest(req, () => handleRequest(req, env, ctx), {allowedOrigin: SITE});}};
 

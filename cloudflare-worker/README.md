@@ -36,3 +36,26 @@ load scenarios. `SMN_LOAD_REPORT=/absolute/path/report.json` saves the metrics.
 The test entry is never deployed; production uses `src/index.js`. The measured
 reservation capacity and its streaming limits are documented in `VERIFICATION-v38.md`
 in the repository root.
+
+## Adult access and live recovery (v40)
+
+The administrator can change **Contenido para adultos (+18)** per user in the
+editor or user table. Existing and newly created accounts retain enabled access
+until it is explicitly disabled. Saving revokes prior sessions and playback
+reservations; clients must sign in again and refresh their catalogs.
+
+Restricted users receive filtered live, movie and series catalogs/categories.
+The server also checks details, EPG, playback tokens and direct Xtream media URLs.
+Adult flags and adult category/title labels identify content, with nested category
+inheritance and provider-scoped IDs. Unlabelled content cannot be classified from
+video itself. Episodes inherit their series restriction and are verified against
+its details. Cached favorites and continue entries only display titles still in
+an allowed catalog. Earlier API clients can obtain episode parentage by loading
+series details without adding a new request parameter.
+
+The web live player gives larger fragments a separate load deadline, recovers
+ended playlists despite the browser's paused state, reloads stale sources without
+allocating another connection, and only seeks into buffered segment boundaries.
+VOD seeking and native media transport are preserved. Regression tests include
+simulated providers and an ended live timeline; they do not establish the behavior
+of a real authenticated 1080p channel on a customer's device.

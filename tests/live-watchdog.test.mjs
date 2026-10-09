@@ -22,12 +22,13 @@ stop();const before=cleared;stop();assert.equal(cleared,before);
 console.log('PASS: frozen live timeline recovery, bounded fallback, sustained playback reset, pause/background, obsolete playback and timer cleanup.');
 
 let started=[],mediaRecovered=0,plays=0;
-const recovering={currentTime:98,play:async()=>{plays++}};
+const recovering={currentTime:98,buffered:{length:1,start:()=>80,end:()=>100},play:async()=>{plays++}};
 const engine={currentLevel:0,liveSyncPosition:95,levels:[{details:{fragments:[{start:80},{start:90},{start:100}]}}],startLoad:position=>started.push(position),recoverMediaError:()=>mediaRecovered++};
 context.recoverLivePlayback(recovering,engine,1);
 assert.equal(recovering.currentTime,90,'recovery uses the segment boundary, not an arbitrary position in the newest fragment');
 assert.deepEqual(started,[90]);assert.equal(mediaRecovered,0);
-context.recoverLivePlayback(recovering,engine,2);assert.equal(mediaRecovered,1);assert.equal(plays,2);
+let reloads=[];engine.url='https://example.test/live.m3u8';engine.loadSource=url=>reloads.push(url);context.recoverLivePlayback(recovering,engine,2);assert.equal(mediaRecovered,0);assert.deepEqual(reloads,[engine.url]);assert.equal(started.at(-1),-1);assert.equal(plays,2);
+recovering.currentTime=98;recovering.buffered={length:0};context.recoverLivePlayback(recovering,engine,1);assert.equal(recovering.currentTime,98,'an unbuffered live edge is never forced');
 const noDetails={currentLevel:-1,loadLevel:-1,liveSyncPosition:undefined,startLoad:p=>started.push(p),recoverMediaError:()=>{}};
 recovering.currentTime=77;context.recoverLivePlayback(recovering,noDetails,1);
 assert.equal(recovering.currentTime,77,'missing playlist details do not force an unbuffered seek');assert.equal(started.at(-1),-1);
@@ -49,3 +50,13 @@ console.log('PASS: segment-aligned recovery, bounded decoder reset, missing meta
  close();
 }
 console.log('PASS: target-duration-aware live stall deadline without unbounded waiting.');
+
+// An ended live video is paused by the browser but must reconnect. Intentional pause stays paused.
+{
+ let now=0,tick,retries=0,falls=0;
+ const video={currentTime:59,paused:true,ended:true};
+ const close=context.watchLivePlayback(video,{now:()=>now,schedule:fn=>(tick=fn,1),unschedule(){},active:()=>true,recover:()=>retries++,fallback:()=>falls++});
+ now=1000;tick();assert.equal(retries,1);now=9000;tick();assert.equal(retries,2);now=17000;tick();assert.equal(falls,1);
+ close();
+}
+console.log('PASS: ended live playlists recover despite browser pause, with bounded retries.');
