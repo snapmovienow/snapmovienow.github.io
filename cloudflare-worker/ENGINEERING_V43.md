@@ -1,5 +1,11 @@
 # SNAP v43: funcionamiento, validación y operación
 
+## Estado de publicación
+
+El código y sus comprobaciones Quality están publicados en GitHub. Cloudflare rechazó el despliegue de producción y la API pública seguía reportando versión 40 al verificarla el 9 de octubre. El resumen del check no incluye la causa y la conexión disponible no permite consultar el registro de la cuenta. [Registro del despliegue rechazado](https://dash.cloudflare.com/7c38999ef8b7043e5629eccdecd9a961/workers/services/view/snapmovienow-edge/production/builds/76bfeb14-7224-47df-8fed-2cb3ca7a0df1).
+
+MFA, copias automáticas, sincronización remota y métricas agregadas están implementados y probados, pero su activación en producción depende de desplegar el Worker v43. La web admite la API anterior: guarda favoritos/progreso localmente por usuario, conserva el reproductor corregido y muestra las funciones administrativas nuevas como pendientes de actualizar el servidor. No reintenta continuamente las operaciones que ese servidor no soporta. Tras publicar el Worker, recargar la web para habilitarlas.
+
 ## Cambios listos
 
 - Web y panel separados en scripts y módulos. Configuración de API central en `app-config.js`; la API pública es `https://api.snaptvnow.com`.

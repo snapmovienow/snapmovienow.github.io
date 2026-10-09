@@ -29,7 +29,8 @@
       "health dashboard",
       "MFA recovery-code retention",
       "logout secret cleanup",
-      "HLS integrity and CSP without JavaScript errors"
+      "HLS integrity and CSP without JavaScript errors",
+      "older backend keeps user administration usable and disables pending security operations"
     ]
   },
   "sqliteSafety": {
@@ -201,5 +202,14 @@
     "real concurrent video capacity or billing",
     "real-production backup restoration",
     "daily production snapshot before its first cron execution"
-  ]
+  ],
+  "deployment": {
+    "githubQuality": "success",
+    "qualityRun": "https://github.com/snapmovienow/snapmovienow.github.io/actions/runs/38002158177",
+    "cloudflareWorker": "failed; check summary does not expose build logs",
+    "observedPublicApiVersion": "40",
+    "serverSideV43Active": false,
+    "denoAuxiliaryDeployment": "organization suspended; billing reported by provider",
+    "fallback": "local profile works; unsupported synchronization/telemetry stops retrying; admin security shows pending server update"
+  }
 }
