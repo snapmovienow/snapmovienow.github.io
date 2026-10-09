@@ -5,7 +5,7 @@ async function sendPlaybackCancellation(url,attempt,lease,fetcher=fetch){
  for(let retry=0;retry<2;retry++){
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),8000);
   try{
-   const response=await fetcher(url,{method:'POST',headers:{'content-type':'application/json'},keepalive:true,signal:controller.signal,body:JSON.stringify({op:'playback_cancel',access_token:attempt.session.access_token,request_id:attempt.id,revision:attempt.revision,lease_id:lease})});
+   const response=await fetcher(url,{method:'POST',credentials:attempt.session.access_token==='cookie'?'include':'omit',headers:{'content-type':'application/json'},keepalive:true,signal:controller.signal,body:JSON.stringify({op:'playback_cancel',access_token:attempt.session.access_token==='cookie'?undefined:attempt.session.access_token,request_id:attempt.id,revision:attempt.revision,lease_id:lease})});
    if(response.status===401||response.status===410)return;
    if(response.ok&&(await response.json()).ok===true)return;
   }catch{}finally{clearTimeout(timer)}

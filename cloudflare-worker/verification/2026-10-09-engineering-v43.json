@@ -1,0 +1,205 @@
+{
+  "version": 43,
+  "verifiedAt": "2026-10-09T22:59:04.805243+00:00",
+  "regressionFiles": 25,
+  "frontendSyntax": "pass",
+  "workerProductionBuild": "pass",
+  "workerStagingBuild": "pass",
+  "actualWorkerdSQLite": {
+    "status": "pass",
+    "checks": [
+      "production/staging namespace isolation",
+      "authenticated per-customer profile storage",
+      "encrypted backup export and preview",
+      "atomic synthetic restoration and old-session revocation",
+      "MFA enrollment and admin-session revocation"
+    ]
+  },
+  "mobileChromium": {
+    "status": "pass",
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "api": "synthetic mock responses",
+    "checks": [
+      "login and menu",
+      "favorite synchronization",
+      "adult-permission editor",
+      "health dashboard",
+      "MFA recovery-code retention",
+      "logout secret cleanup",
+      "HLS integrity and CSP without JavaScript errors"
+    ]
+  },
+  "sqliteSafety": {
+    "timestamp": "2026-10-09T22:48:14.102Z",
+    "version": "38",
+    "scope": "local workerd SQLite reservation controller; synthetic users/accounts; no real video, upstream or production latency",
+    "runtime": "Miniflare/workerd",
+    "checks": [
+      "real SQLite migration preserves live lease IDs/tickets and removes expired rows",
+      "primary-key/session indexes used",
+      "SQL/KV atomic rollback",
+      "same-media retry reuses one reservation",
+      "old cleanup/heartbeat cannot affect replacement",
+      "renewed lease and ownership survive Durable Object eviction/restart",
+      "expired heartbeat cannot resurrect lease",
+      "30 duplicate concurrent starts allocate one lease",
+      "three-slot provider capacity enforced under simultaneous starts",
+      "foreign ownership denied",
+      "session close frees exactly its own slot"
+    ],
+    "scenarios": []
+  },
+  "audioRegression": {
+    "hlsVersion": "1.6.15",
+    "browserVersion": "153.0.8010.0",
+    "productionProgressive": false,
+    "signal": "generated H.264 720x480 with AAC or MPEG Layer III audio, six 10-second TS segments",
+    "observedSeconds": 12,
+    "results": [
+      {
+        "codec": "aac",
+        "progressive": true,
+        "position": 41.785533,
+        "firstPosition": 30.017295,
+        "ready": 4,
+        "seeking": false,
+        "decoded": 358,
+        "dropped": 0,
+        "audio": [
+          [
+            30.016,
+            60.010666
+          ]
+        ],
+        "video": [
+          [
+            30,
+            60
+          ]
+        ],
+        "audioContainer": "audio/mp4",
+        "errors": []
+      },
+      {
+        "codec": "aac",
+        "progressive": false,
+        "position": 41.565493,
+        "firstPosition": 30.017132,
+        "ready": 4,
+        "seeking": false,
+        "decoded": 352,
+        "dropped": 0,
+        "audio": [
+          [
+            30.016,
+            60.010666
+          ]
+        ],
+        "video": [
+          [
+            30,
+            60
+          ]
+        ],
+        "audioContainer": "audio/mp4",
+        "errors": []
+      },
+      {
+        "codec": "libmp3lame",
+        "progressive": true,
+        "position": 50.270072,
+        "firstPosition": 30.000695,
+        "ready": 2,
+        "seeking": false,
+        "decoded": 39,
+        "dropped": 0,
+        "audio": [
+          [
+            40,
+            40.336
+          ],
+          [
+            50,
+            50.336
+          ]
+        ],
+        "video": [
+          [
+            40,
+            59.999999
+          ]
+        ],
+        "audioContainer": "audio/mpeg",
+        "errors": [
+          {
+            "detail": "bufferStalledError",
+            "fatal": false
+          },
+          {
+            "detail": "bufferNudgeOnStall",
+            "fatal": false
+          },
+          {
+            "detail": "bufferSeekOverHole",
+            "fatal": false
+          },
+          {
+            "detail": "bufferStalledError",
+            "fatal": false
+          },
+          {
+            "detail": "bufferNudgeOnStall",
+            "fatal": false
+          },
+          {
+            "detail": "bufferSeekOverHole",
+            "fatal": false
+          },
+          {
+            "detail": "bufferStalledError",
+            "fatal": false
+          }
+        ]
+      },
+      {
+        "codec": "libmp3lame",
+        "progressive": false,
+        "position": 41.555204,
+        "firstPosition": 30.000891,
+        "ready": 4,
+        "seeking": false,
+        "decoded": 351,
+        "dropped": 0,
+        "audio": [
+          [
+            30,
+            60
+          ]
+        ],
+        "video": [
+          [
+            30,
+            59.999999
+          ]
+        ],
+        "audioContainer": "audio/mpeg",
+        "errors": []
+      }
+    ],
+    "limitations": [
+      "Synthetic fixtures reproduce the same audio-buffer failure; the authenticated customer channel and physical Android device are not exercised."
+    ]
+  },
+  "notVerified": [
+    "authenticated provider channels after v43",
+    "physical Android device or native app integration",
+    "remote staging activation",
+    "frontend custom domain and HttpOnly browser sessions on that domain",
+    "real concurrent video capacity or billing",
+    "real-production backup restoration",
+    "daily production snapshot before its first cron execution"
+  ]
+}

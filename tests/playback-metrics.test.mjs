@@ -1,0 +1,9 @@
+import assert from 'node:assert/strict';import {readFileSync} from 'node:fs';import vm from 'node:vm';
+const ctx=vm.createContext({performance});vm.runInContext(readFileSync(new URL('../playback-metrics.js',import.meta.url),'utf8'),ctx);
+let clock=0,tick,cancelled=0,hidden=false,reports=[];const listeners=new Map(),video={paused:true,seeking:false,addEventListener:(n,f)=>listeners.set(n,f),removeEventListener:n=>listeners.delete(n),getVideoPlaybackQuality:()=>({totalVideoFrames:100,droppedVideoFrames:2})};
+const tracker=ctx.createPlaybackMetrics(video,{now:()=>clock,send:async m=>reports.push(m),schedule:fn=>{tick=fn;return 1},cancel:()=>cancelled++,hidden:()=>hidden});
+clock=10000;await tracker.flush();assert.equal(reports.length,0);video.paused=false;clock=12000;listeners.get('playing')();
+for(let i=0;i<5;i++){clock+=1000;tick()}listeners.get('waiting')();for(let i=0;i<2;i++){clock+=1000;tick()}listeners.get('playing')();video.paused=true;listeners.get('pause')();clock+=1000;tick();await tracker.flush();
+assert.equal(reports[0].started,true,'a flush before playing cannot lose the startup sample');assert.equal(reports[0].startupMs,12000);assert.equal(reports[0].watchMs,7000);assert.equal(reports[0].stallMs,2000);assert.equal(reports[0].stalls,1);
+tracker.error();await tracker.flush();assert.equal(reports[1].started,false);assert.equal(reports[1].startupMs,null);assert.equal(reports[1].errors,1);tracker.stop();tracker.stop();assert.equal(cancelled,1);assert.equal(listeners.size,0);
+console.log('PASS: delayed startup, exact watch/stall counters, pause exclusion, one startup sample and idempotent cleanup.');

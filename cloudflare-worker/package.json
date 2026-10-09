@@ -1,1 +1,20 @@
-{"name":"snapmovienow-edge","private":true,"scripts":{"deploy":"wrangler deploy","dev":"wrangler dev"},"devDependencies":{"wrangler":"^4.0.0"},"cloudflare":{"bindings":{"TICKET_SECRET":{"description":"Use a long random secret (at least 32 characters) to sign temporary playback URLs."}}}}
+{
+  "name": "snapmovienow-edge",
+  "private": true,
+  "scripts": {
+    "deploy": "node ../scripts/verify.mjs && wrangler deploy --env=\"\"",
+    "dev": "wrangler dev",
+    "deploy:staging": "node ../scripts/verify.mjs && wrangler deploy --env staging"
+  },
+  "devDependencies": {
+    "wrangler": "4.149.0"
+  },
+  "cloudflare": {
+    "bindings": {
+      "TICKET_SECRET": {
+        "description": "Use a long random secret (at least 32 characters) to sign temporary playback URLs."
+      }
+    }
+  },
+  "type": "module"
+}

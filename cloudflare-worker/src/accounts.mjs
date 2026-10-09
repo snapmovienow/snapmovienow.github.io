@@ -3,6 +3,8 @@ import {contentPermissions} from './content-permissions.mjs';
 import {catalogCacheRoute} from './catalog-cache.mjs';
 import {providerDashboard} from './provider-dashboard.mjs';
 import {openLeaseStore} from './lease-store.mjs';
+import {securityRoute,checkFactor,writeAudit} from './security.mjs';
+import {backupRoute,automaticBackup} from './backups.mjs';
 const answer=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:{'content-type':'application/json'}});
 const normal=x=>String(x||'').trim().toLowerCase();
 const validName=x=>/^[a-z0-9_.@-]{3,80}$/.test(x);
@@ -18,6 +20,15 @@ export async function accountsFetch(state,env,req){
  const p=new URL(req.url).pathname.replace('/accounts','');const b=await req.json();const store=state.storage;
  try{
  const leases=await openLeaseStore(store);
+ if(p==='/audit-write'){await store.transaction(tx=>writeAudit(tx,b.actor,b.action,b.target));return answer({ok:true})}
+ if(p==='/audit')return answer((await store.get('security-audit')||[]).slice(-100).reverse());
+ if(p==='/backup-automatic')return answer(await automaticBackup(store,env));
+ if(p==='/backup-preview'||p==='/backup-list')return backupRoute(store,env,p,b,leases);
+ if(['/security-status','/mfa-begin','/mfa-confirm','/mfa-disable','/backup-export','/backup-restore','/backup-download'].includes(p)){
+  const result=await securityRoute(store,env,p,b,{passwordHash,audit:writeAudit});
+  if(result)return result;
+  return backupRoute(store,env,p,b,leases);
+ }
  if(p==='/xtream-cache-get'||p==='/xtream-cache-put')return await catalogCacheRoute(store,p,b);
  if(p==='/xtream-config')return answer(await store.get('xtream-config')||{enabled:true,version:1});
  if(p==='/xtream-save')return store.transaction(async tx=>{if(typeof b.enabled!=='boolean')return answer({error:'invalid_setting'},400);const old=await tx.get('xtream-config')||{enabled:true,version:1};const next={enabled:b.enabled,version:old.version+(old.enabled===b.enabled?0:1)};await tx.put('xtream-config',next);if(!next.enabled)await leases.in(tx).removeFor({xtream:true});return answer(next)});
@@ -49,6 +60,11 @@ export async function accountsFetch(state,env,req){
   const u=await store.get(p==='/admin-login'?'admin':'user:'+username);
   const hash=await passwordHash(String(b.password||'').slice(0,256),u?.salt||'missing-account-salt');
   if(!u||!await same(hash,u.hash)||(p==='/login'&&!alive(u)))return answer({error:'invalid_credentials'},401);
+  if(p==='/admin-login'){
+   const factor=await store.transaction(async tx=>{const current=await tx.get('admin');if(current?.version!==u.version)return {valid:false};const r=await checkFactor(env,current,b.code);if(r.valid&&current.mfa?.enabled)await tx.put('admin',r.admin);return r});
+   if(!factor.valid)return answer({error:b.code?'mfa_invalid':'mfa_required'},401);
+   await store.transaction(tx=>writeAudit(tx,u.username,'admin_login'));
+  }
   await store.delete(bucket);return answer({id:u.id,username:u.username,version:u.version,expiresAt:u.expiresAt,permissions:contentPermissions(u.permissions)});
  }
  if(p==='/check'){

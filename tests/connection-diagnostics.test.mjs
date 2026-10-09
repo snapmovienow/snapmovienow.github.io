@@ -33,14 +33,14 @@ console.log('PASS: Cloudflare text/challenges, application 403, HTML 502, transp
 // must not be retried, duplicate playback or clear an otherwise valid session.
 let requests=0;
 ctx.fetch=async()=>{requests++;return new Response('error code: 1010',{status:403,headers:trace})};
-const index=readFileSync(new URL('../index.html',import.meta.url),'utf8');
-const client=vm.createContext({SMNConnection:api,API:'https://example.test',creds:{access_token:'local-test-ticket'},authGeneration:1,performance});
+const index=readFileSync(new URL('../app.js',import.meta.url),'utf8');
+const client=vm.createContext({SMNConnection:api,API:'https://example.test',creds:{access_token:'local-test-ticket'},authGeneration:1,performance,AbortSignal});
 vm.runInContext(index.slice(index.indexOf('async function api('),index.indexOf('async function doLogin(')),client);
 await assert.rejects(client.api('stream_token',{request_id:'playback-test'}),error=>error.message==='edge_blocked');
 assert.equal(requests,1);assert.equal(client.creds.access_token,'local-test-ticket');
-const adminHTML=readFileSync(new URL('../admin.html',import.meta.url),'utf8');
+const adminHTML=readFileSync(new URL('../admin.js',import.meta.url),'utf8');
 let removed=0,logins=0;
-const panel=vm.createContext({SMNConnection:api,API:'https://example.test/admin',token:'admin-test-ticket',errors:{},AbortSignal,sessionStorage:{removeItem(){removed++}},showLogin(){logins++}});
+const panel=vm.createContext({SMNConnection:api,API:'https://example.test/admin',token:'admin-test-ticket',adminGeneration:0,errors:{},AbortSignal,sessionStorage:{removeItem(){removed++}},showLogin(){logins++}});
 vm.runInContext(adminHTML.slice(adminHTML.indexOf('async function api('),adminHTML.indexOf('\nfunction showLogin')),panel);
 await assert.rejects(panel.api('users'),error=>error.status===403&&error.message.includes('Cloudflare'));
 assert.equal(requests,2);assert.equal(removed,0);

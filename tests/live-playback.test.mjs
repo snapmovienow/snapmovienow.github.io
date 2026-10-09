@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
-const html=fs.readFileSync(new URL('../index.html',import.meta.url),'utf8');
+const html=(fs.readFileSync(new URL('../index.html',import.meta.url),'utf8')+'\n'+fs.readFileSync(new URL('../app.js',import.meta.url),'utf8'));
 const source=html.slice(html.indexOf('function liveFamily'),html.indexOf('document.getElementById("playBtn").addEventListener'));
 const original={stream_id:1,name:'DEPORTES - Espn 1 CHI (TV)(1080)',_server:'one'},low={stream_id:2,name:'DEPORTES - Espn 1 CHI (e)(720)',_server:'one'};
 const requested=[],played=[],status={textContent:''};let released=0;

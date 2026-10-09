@@ -1,0 +1,19 @@
+{
+  "name": "snaptvnow-quality",
+  "private": true,
+  "scripts": {
+    "test": "node scripts/verify.mjs",
+    "test:browser": "node tests/live-audio-runtime.mjs",
+    "test:storage": "node cloudflare-worker/tests/lease-runtime.mjs",
+    "build:worker": "wrangler deploy --dry-run --config cloudflare-worker/wrangler.jsonc --env=\"\"",
+    "build:staging": "wrangler deploy --dry-run --config cloudflare-worker/wrangler.jsonc --env staging",
+    "test:platform": "node tests/platform-runtime.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "hls.js": "1.6.15",
+    "playwright": "1.62.1",
+    "wrangler": "4.149.0"
+  },
+  "type": "module"
+}

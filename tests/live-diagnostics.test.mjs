@@ -71,14 +71,14 @@ function fixture() {
 // Phone clipboard restrictions fall back to selectable text; each channel starts
 // a fresh history and cleanup records the cut before destroying the HLS engine.
 {
- const html=fs.readFileSync(new URL('../index.html',import.meta.url),'utf8');
+ const html=(fs.readFileSync(new URL('../index.html',import.meta.url),'utf8')+'\n'+fs.readFileSync(new URL('../app.js',import.meta.url),'utf8'));
  const nodes=Object.fromEntries(['liveDiagnosticPanel','liveDiagnosticStatus','liveDiagnosticText','copyLiveDiagnostic'].map(id=>[id,{hidden:false,value:'',textContent:'',focus(){this.focused=true},select(){this.selected=true},addEventListener(){}}]));
  const code=html.slice(html.indexOf('let stopLiveWatchdog='),html.indexOf('function stopPlayback('));
  let copied;
  const ui={document:{getElementById:id=>nodes[id]},window:{Hls:{version:'1.6.15'}},navigator:{clipboard:{writeText:async t=>{copied=t}}}};
  vm.createContext(ui);vm.runInContext(code,ui);
  vm.runInContext('liveDiagnosticHistory=[{reason:"timeline_stall",state:{position:60}}]',ui);
- await ui.copyLiveDiagnostic();assert.equal(JSON.parse(copied).reports[0].state.position,60);assert.equal(JSON.parse(copied).webVersion,'42');
+ await ui.copyLiveDiagnostic();assert.equal(JSON.parse(copied).reports[0].state.position,60);assert.equal(JSON.parse(copied).webVersion,'43');
  ui.navigator.clipboard.writeText=async()=>{throw new Error('blocked')};
  await ui.copyLiveDiagnostic();assert.equal(nodes.liveDiagnosticText.hidden,false);assert(nodes.liveDiagnosticText.selected);assert.equal(nodes.liveDiagnosticText.value,copied);
  ui.resetLiveDiagnostics('live');assert.equal(nodes.liveDiagnosticPanel.hidden,false);assert.equal(nodes.liveDiagnosticText.value,'');

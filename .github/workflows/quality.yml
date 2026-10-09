@@ -1,0 +1,47 @@
+name: Quality
+on:
+  push:
+    branches: [main, engineering-v43]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: quality-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  regressions:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run test:platform
+      - run: npm run build:worker
+      - run: npm run build:staging
+      - name: Real SQLite invariants
+        run: npm run test:storage
+        env:
+          SMN_SAFETY_ONLY: '1'
+      - name: Install browser and media tools
+        run: |
+          npx playwright install --with-deps chromium
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+      - name: Chromium audio regression
+        run: npm run test:browser
+        env:
+          SMN_LIVE_AUDIO_REPORT: artifacts/live-audio.json
+      - name: Mobile web and admin integration
+        run: node tests/browser-ui-runtime.mjs
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: quality-evidence
+          path: artifacts/
+          if-no-files-found: ignore

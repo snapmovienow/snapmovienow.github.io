@@ -20,7 +20,7 @@ try{playwright=load('playwright')}catch{
 const hlsPath=modules?require.resolve(path.join(modules,'hls.js')):require.resolve('hls.js');
 const Hls= require(hlsPath);
 assert.equal(Hls.version,'1.6.15','this regression targets the pinned production engine');
-const html=fs.readFileSync(new URL('../index.html',import.meta.url),'utf8');
+const html=(fs.readFileSync(new URL('../index.html',import.meta.url),'utf8')+'\n'+fs.readFileSync(new URL('../app.js',import.meta.url),'utf8'));
 const expression=html.match(/hlsEngine=new Hls\((\{.*?\})\);const engine=hlsEngine/)[1];
 const liveConfig=JSON.parse(JSON.stringify(vm.runInNewContext('('+expression+')',{currentPlay:{type:'live'}})));
 assert.equal(liveConfig.progressive,false,'production must feed complete segments');
@@ -86,7 +86,7 @@ try{
  }
  assert(duration(fixed)>10*duration(broken));
  const report={hlsVersion:Hls.version,browserVersion:browser.version(),productionProgressive:liveConfig.progressive,signal:'generated H.264 720x480 with AAC or MPEG Layer III audio, six 10-second TS segments',observedSeconds:12,results,limitations:['Synthetic fixtures reproduce the same audio-buffer failure; the authenticated customer channel and physical Android device are not exercised.']};
- if(process.env.SMN_LIVE_AUDIO_REPORT)fs.writeFileSync(process.env.SMN_LIVE_AUDIO_REPORT,JSON.stringify(report,null,2)+'\n');
+ if(process.env.SMN_LIVE_AUDIO_REPORT){fs.mkdirSync(path.dirname(process.env.SMN_LIVE_AUDIO_REPORT),{recursive:true});fs.writeFileSync(process.env.SMN_LIVE_AUDIO_REPORT,JSON.stringify(report,null,2)+'\n')}
  console.log(JSON.stringify({status:'PASS',hlsVersion:Hls.version,browserVersion:browser.version(),results:results.map(r=>({codec:r.codec,progressive:r.progressive,position:r.position,audioSeconds:duration(r),errors:r.errors.length,decoded:r.decoded}))}));
 }finally{
  await browser?.close();server.close();fs.rmSync(root,{recursive:true,force:true});

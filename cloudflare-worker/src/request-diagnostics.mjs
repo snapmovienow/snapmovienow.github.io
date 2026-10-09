@@ -1,4 +1,4 @@
-export const SERVICE_VERSION = '40';
+export const SERVICE_VERSION = '43';
 
 const rayId = value => /^[a-f0-9]{8,32}-[a-z]{3}$/i.test(value || '') ? value : null;
 function routeGroup(path) {

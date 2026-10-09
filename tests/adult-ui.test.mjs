@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
-const html=readFileSync(new URL('../index.html',import.meta.url),'utf8');
+const html=(readFileSync(new URL('../index.html',import.meta.url),'utf8')+'\n'+readFileSync(new URL('../app.js',import.meta.url),'utf8'));
 const ctx=vm.createContext({permissions:{movies:true,series:true,tv:true,adults:false},allMovies:[{stream_id:5,_server:'one'}],allSeries:[{series_id:6,_server:'one'}],allLive:[{stream_id:7,_server:'one'}]});
 vm.runInContext(html.slice(html.indexOf('function favKey('),html.indexOf('function isFav(')),ctx);
-vm.runInContext(html.slice(html.indexOf('function catalogItemAllowed('),html.indexOf('let favorites=[];')),ctx);
+vm.runInContext(html.slice(html.indexOf('function catalogItemAllowed('),html.indexOf('let favorites=')),ctx);
 assert.equal(ctx.catalogItemAllowed({stream_id:5,_server:'one'},'movie'),true);
 assert.equal(ctx.catalogItemAllowed({stream_id:5,_server:'two'},'movie'),false,'cached items from another provider are not confused');
 assert.equal(ctx.catalogItemAllowed({stream_id:99,_server:'one'},'live'),false,'cached adult favorites and continue entries must be present in the allowed catalog');
@@ -12,7 +12,7 @@ assert.equal(ctx.catalogItemAllowed({series_id:6,_server:'one'},'series'),true);
 ctx.permissions.adults=true;assert.equal(ctx.catalogItemAllowed({stream_id:99,_server:'one'},'live'),true,'enabling adults preserves existing favorites');
 ctx.permissions.tv=false;assert.equal(ctx.catalogItemAllowed({stream_id:7,_server:'one'},'live'),false);
 
-const admin=readFileSync(new URL('../admin.html',import.meta.url),'utf8');
+const admin=(readFileSync(new URL('../admin.html',import.meta.url),'utf8')+'\n'+readFileSync(new URL('../admin.js',import.meta.url),'utf8'));
 let saved,closed=false,pending;const form={elements:{movies:{checked:true},series:{checked:true},tv:{checked:true},adults:{checked:false}},reset(){}};
 const elements={userForm:form,editor:{close(){closed=true}}};
 const editor=vm.createContext({$:id=>elements[id],creating:false,fields:()=>({username:'family-user',password:'',expiresAt:''}),submit:(form,fn)=>(pending=fn()),api:async(action,body)=>{saved={action,body}},refresh:async()=>{},notice(){},Date,Object});

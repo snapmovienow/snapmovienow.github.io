@@ -7,6 +7,33 @@
   ],
   "workers_dev": true,
   "preview_urls": true,
+  "vars": {
+    "ENVIRONMENT": "production",
+    "WEB_ORIGINS": "https://snapmovienow.github.io,https://app.snaptvnow.com,https://panel.snaptvnow.com"
+  },
+  "env": {
+    "staging": {
+      "name": "snapmovienow-edge-staging",
+      "workers_dev": true,
+      "preview_urls": false,
+      "routes": [],
+      "vars": {
+        "ENVIRONMENT": "staging",
+        "WEB_ORIGINS": "http://127.0.0.1:8788,http://localhost:8788"
+      },
+      "durable_objects": {
+        "bindings": [
+          {
+            "name": "PLAYBACK_SESSIONS",
+            "class_name": "PlaybackSession"
+          }
+        ]
+      },
+      "triggers": {
+        "crons": []
+      }
+    }
+  },
   "routes": [
     {
       "pattern": "api.snaptvnow.com",
@@ -35,5 +62,10 @@
     "logs": {
       "invocation_logs": false
     }
+  },
+  "triggers": {
+    "crons": [
+      "17 5 * * *"
+    ]
   }
 }

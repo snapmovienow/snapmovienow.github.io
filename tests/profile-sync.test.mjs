@@ -1,0 +1,16 @@
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import vm from 'node:vm';
+const ctx=vm.createContext({Date,setTimeout,clearTimeout});vm.runInContext(readFileSync(new URL('../profile-sync.js',import.meta.url),'utf8'),ctx);
+const base={kind:'favorite',key:'movie:ccf:42',type:'movie',id:'42',server:'ccf'};
+let now=Date.now(),local=[{...base,updatedAt:now}],out=[],sent=[],timers=new Set();
+const schedule=fn=>{timers.add(fn);return fn},cancel=fn=>timers.delete(fn);
+const sync=ctx.SMNProfiles.create({api:async(op,b)=>{if(op==='profile_get')return{records:[{...base,deleted:true,updatedAt:now-1}]};sent.push(b.patches);return{records:b.patches}},local:()=>local,onData:rows=>{out=rows;local=[]},schedule,cancel});
+await sync.initial;assert.equal(sent[0][0].deleted,undefined,'initial local data is captured before remote hydration');assert.equal(out[0].updatedAt,now);sync.stop();assert.equal(timers.size,0);
+let resolveGet,updates=0;
+const closed=ctx.SMNProfiles.create({api:()=>new Promise(r=>resolveGet=r),local:()=>[],onData:()=>updates++,schedule,cancel});await Promise.resolve();const beforeStop=updates;closed.stop();resolveGet({records:[base]});await closed.initial;assert.equal(updates,beforeStop,'a previous account cannot hydrate the next login');
+let offline=true,persisted=[];
+const saved=ctx.SMNProfiles.create({api:async(op,b)=>{if(offline)throw Error('offline');return{records:b?.patches||[]}},local:()=>[],onPersist:rows=>persisted=rows,onData:()=>{},schedule,cancel});await saved.initial;saved.rememberFavorites([base]);saved.favorites([]);assert.equal(persisted[0].deleted,true,'offline removals persist as tombstones');offline=false;await saved.flush();saved.stop();
+let releasePatch,patches=0;
+const racing=ctx.SMNProfiles.create({api:async(op,b)=>{if(op==='profile_get')return{records:[]};patches++;if(patches===1)await new Promise(r=>releasePatch=r);return{records:b.patches}},local:()=>[],onData:()=>{},schedule,cancel});await racing.initial;racing.progress({...base,time:10,duration:100});const first=racing.flush();await Promise.resolve();racing.progress({...base,time:20,duration:100});releasePatch();await first;await racing.flush();assert.equal(patches,2,'new progress survives an older in-flight acknowledgement');racing.stop();
+console.log('PASS: local/remote merge ordering, stopped-account isolation, persisted offline removals and concurrent progress acknowledgement.');
