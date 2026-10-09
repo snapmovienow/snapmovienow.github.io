@@ -59,3 +59,21 @@ allocating another connection, and only seeks into buffered segment boundaries.
 VOD seeking and native media transport are preserved. Regression tests include
 simulated providers and an ended live timeline; they do not establish the behavior
 of a real authenticated 1080p channel on a customer's device.
+
+## Web live diagnostics (frontend v41; Worker remains v40)
+
+**Copiar diagnóstico del corte** appears below the live player. The local trace
+records fatal/nonfatal HLS errors, HTTP status codes, playlist sequence movement,
+fragment timing and byte counts, parsed codecs, audio/video buffered ranges and
+decoded/dropped frame counts. It retains the first stalled timeline before the
+watchdog reconnects, plus the two most recent playback attempts. The clipboard
+fallback displays selectable text for browsers that deny clipboard access.
+
+Only allowlisted fields are recorded. URLs, signed tickets, credentials, channel
+titles, IP addresses, raw errors and media payloads are excluded. Nothing is sent
+automatically or stored on disk; changing titles or signing out clears the trace.
+The observer neither changes playback settings nor opens provider connections.
+This release supplies evidence for the reported browser-only 1080p stalls; it
+does not establish their cause or claim that the real signal is fixed. Prior
+30-second FFmpeg checks reported H.264 reference-frame warnings on ARG/CHI and
+slow response headers, so neither decoding nor delivery can yet be ruled out.

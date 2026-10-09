@@ -6,9 +6,10 @@ const stop=html.slice(html.indexOf('function stopPlayback('),html.indexOf('let h
 const calls=[];
 const movie={style:{},pause(){calls.push('movie-pause');throw Error('player failure')}};
 const live={style:{},pause(){calls.push('live-pause');throw Error('player failure')},removeAttribute(){calls.push('remove-source')},load(){calls.push('stop-loading')}};
-const ctx=vm.createContext({liveRequest:0,releasePlayback(){calls.push('release')},stopLiveWatchdog(){calls.push('watchdog')},hlsEngine:{destroy(){calls.push('destroy');throw Error('engine failure')}},moviePlayer:movie,gnulaPlayer:live});
+const ctx=vm.createContext({liveRequest:0,releasePlayback(){calls.push('release')},liveDiagnosticHistory:[],liveDiagnostics:{report(){calls.push('capture');return {reason:'timeline_stall'}},stop(){calls.push('diagnostic-stop');throw Error('observer failure')}},stopLiveWatchdog(){calls.push('watchdog')},hlsEngine:{destroy(){calls.push('destroy');throw Error('engine failure')}},moviePlayer:movie,gnulaPlayer:live});
 vm.runInContext(stop,ctx);ctx.stopPlayback();
-assert.deepEqual(calls,['release','watchdog','destroy','movie-pause','live-pause','remove-source','stop-loading']);
+assert.deepEqual(calls,['release','capture','diagnostic-stop','watchdog','destroy','movie-pause','live-pause','remove-source','stop-loading']);
+assert.equal(ctx.liveDiagnostics,null);assert.equal(ctx.liveDiagnosticHistory[0].reason,'timeline_stall');
 assert.equal(movie.src,null);assert.equal(ctx.hlsEngine,null);assert.equal(ctx.stopLiveWatchdog,null);
 assert.equal(movie.style.display,'none');assert.equal(live.style.display,'none');
 
