@@ -32,7 +32,7 @@ Las pruebas de v38 de 500/1.000 reservas sintéticas no se repitieron: v39 no
 modifica asignación, SQLite ni heartbeat. No se certifica aquí una capacidad de
 vídeo real ni estabilidad de señales 1080p del proveedor.
 
-## Estado externo
+## Estado externo inicial del despliegue v39
 
 El DNS público de `api.snaptvnow.com` devolvió NXDOMAIN; `snaptvnow.com` usa NS1/
 NSOne. El panel de Cloudflare no permitió acceso en esta sesión debido a un
@@ -45,3 +45,20 @@ demuestra acceso desde su conexión, no desde todas las redes.
 comprobaciones antes de cambiar clientes de hostname. Los archivos pendientes
 no forman parte del despliegue activo. La dirección actual sigue funcionando
 para los clientes que ya acceden a ella.
+
+## Actualización: dominio asociado el 9 de octubre de 2026 UTC
+
+La zona Cloudflare está activa según la captura aportada por el usuario.
+`api.snaptvnow.com` aparece asociado a `snapmovienow-edge` en Production.
+La asociación se declara en `cloudflare-worker/wrangler.jsonc`, conservando
+`workers_dev: true`, bindings y migraciones. Se elimina la copia pendiente.
+
+DNS público resuelve el nuevo hostname y mantiene `media.snaptvnow.com` en
+194.76.0.119. HTTPS validó TLS pero `/health` y `/player_api.php` sin credenciales
+devolvieron 403/1010 desde el entorno de pruebas. No se eludió el bloqueo ni se
+abrieron reproducciones. Los Ray ID y el estado exacto constan en
+`cloudflare-worker/CLOUDFLARE_ACCESS.md`.
+
+Siguen pendientes el evento de seguridad, la excepción selectiva si procede,
+y pruebas reales de autenticación/catálogo/reproducción en el nuevo hostname.
+Las URL de clientes continúan en `workers.dev`; no se ha migrado ningún cliente.

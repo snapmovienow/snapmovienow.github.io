@@ -7,6 +7,12 @@
   ],
   "workers_dev": true,
   "preview_urls": true,
+  "routes": [
+    {
+      "pattern": "api.snaptvnow.com",
+      "custom_domain": true
+    }
+  ],
   "durable_objects": {
     "bindings": [
       {

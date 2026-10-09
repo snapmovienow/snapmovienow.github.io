@@ -1,4 +1,4 @@
-# Acceso API: despliegue v39 y ajustes pendientes
+# Acceso API: dominio asociado y bloqueo pendiente de diagnóstico
 
 ## Aplicado en el código
 
@@ -18,7 +18,7 @@
 
 Con hora UTC y referencia del diagnóstico, consultar Cloudflare:
 
-1. En la zona correspondiente, **Security → Events**, buscar el Ray ID y la hora.
+1. En la zona `snaptvnow.com`, **Security → Analytics → Events**, buscar el Ray ID y la hora.
    Revisar el producto y la regla que produjo el bloqueo antes de modificarla.
 2. En **Workers & Pages → snapmovienow-edge → Observability**, filtrar
    `event=request_failed`, `ray_id` o `request_id`.
@@ -29,7 +29,8 @@ Con hora UTC y referencia del diagnóstico, consultar Cloudflare:
 
 No se pudo consultar estos eventos en esta sesión: el navegador del panel
 Cloudflare presentó un fallo persistente de verificación. El 1010 observado
-desde el entorno de pruebas no identifica por sí solo una regla concreta.
+es compatible con un rechazo por firma del cliente según la documentación
+oficial; todavía no se ha observado el producto/regla concreto en los eventos.
 
 ## 2. Excepción selectiva preparada, sin activar
 
@@ -43,39 +44,52 @@ de BIC en los eventos. Si el bloqueo pertenece a otro producto/regla, esta
 excepción no lo corrige y debe permanecer deshabilitada. No puede aplicarse
 una regla de zona propia al dominio compartido `workers.dev`.
 
-## 3. Dominio propio preparado, sin activar
+## 3. Dominio propio asociado; clientes pendientes de migración
 
-Destino propuesto: `https://api.snaptvnow.com` (puerto 443).
+Destino: `https://api.snaptvnow.com` (puerto 443).
 
-La consulta DNS pública del 8 de octubre de 2026 devolvió servidores NS de
-NS1/NSOne para `snaptvnow.com` y NXDOMAIN para `api.snaptvnow.com`. No se ha
-creado el registro, asociado el hostname al Worker ni emitido su certificado.
+El usuario confirmó en el panel la zona activa, los servidores de nombres
+`rommy.ns.cloudflare.com` y `zainab.ns.cloudflare.com`, y la asociación de
+`api.snaptvnow.com` al Worker existente `snapmovienow-edge` en Production.
+El flujo observado es **Domains → Add Domain → seleccionar `snaptvnow.com`
+→ Subdomain `api` → Production → Add domain**. El primer campo busca zonas;
+no se debe incorporar una segunda zona ni asociar el dominio raíz al Worker.
 
-Cloudflare Custom Domains requiere una zona activa en esa cuenta. Antes de
-activar una zona o cambiar servidores NS, conservar y revisar los registros
-existentes para evitar afectar la web y otros servicios. También puede usarse
-otro dominio propio que ya tenga una zona activa en la cuenta.
+`wrangler.jsonc` declara ahora esa misma asociación (`custom_domain: true`).
+Conserva `workers_dev: true`, identidad del Worker, bindings y migraciones.
+Se retiró el archivo de configuración pendiente para evitar dos fuentes
+distintas. Este cambio no migra las URL de la web, panel ni apps.
 
-Cuando exista la zona activa:
+Comprobación pública del 9 de octubre de 2026, aproximadamente 04:03 UTC
+(8 de octubre, 23:03 America/Chicago):
 
-1. Abrir **Workers & Pages → snapmovienow-edge → Settings → Domains & Routes
-   → Add → Custom Domain**. Añadir el hostname exacto `api.snaptvnow.com`.
-   Cloudflare administra su DNS y certificado. No utilizar una ruta de panel
-   XUI ni una URL de GitHub Pages como servidor Xtream.
-2. Tras confirmar la asociación, añadir al `wrangler.jsonc` principal la ruta
-   que está preparada en `wrangler.custom-domain.pending.jsonc` para que los
-   siguientes despliegues conserven el dominio. No cambiar Durable Objects,
-   migraciones ni secretos: se mantiene el mismo Worker y sus usuarios.
-3. Validar HTTPS, `/health`, rechazo sin credenciales en `/player_api.php`,
+| Prueba | Resultado |
+| --- | --- |
+| DNS A `api.snaptvnow.com` | 172.67.201.227 y 104.21.85.36, TTL 300 |
+| DNS A `media.snaptvnow.com` | 194.76.0.119, TTL 300 |
+| HTTPS GET `/health` | TLS validado; HTTP 403, cuerpo `error code: 1010`; Ray `a47a80eebdd06aeb-DFW` |
+| HTTPS GET `/player_api.php` sin credenciales | TLS validado; HTTP 403, cuerpo `error code: 1010`; Ray `a47a80efa8f36aeb-DFW` |
+
+No se reintentó el bloqueo con otra firma de cliente, IP o transporte.
+Estas peticiones no abren señales ni reservan cupos. HTTPS pudo completarse,
+pero no se verificó aún la respuesta v39 ni el 401 esperado a través del nuevo
+hostname. Un fallo desde este entorno no prueba que todos los clientes fallen.
+
+Pasos pendientes:
+
+1. Consultar el evento de seguridad del nuevo hostname y verificar el producto
+   y la regla. La excepción BIC sigue deshabilitada hasta identificar un falso
+   positivo de ese producto en esta zona propia.
+2. Validar `/health`, rechazo sin credenciales en `/player_api.php`,
    login de un usuario SNAP de prueba, catálogos y una reproducción con una
    cuenta autorizada. Cerrar/cambiar contenido y verificar liberación de cupos.
-4. Solo entonces cambiar la dirección de la web, panel y apps al dominio
+3. Solo entonces cambiar la dirección de la web, panel y apps al dominio
    validado. Conservar temporalmente `workers.dev` para los clientes actuales.
    Actualizar también la lista de hosts admitidos en
    `media-tools/package_tracks.py` si se usa esa herramienta.
 
-El frontend de v39 sigue usando el hostname que funciona actualmente. Los
-archivos `*.pending.*` son preparación revisable, no cambios activos de DNS/WAF.
+El frontend de v39 sigue usando el hostname actual. El archivo
+`bic-api-rule.pending.json` es preparación revisable, no una regla WAF activa.
 
 ## Fuentes oficiales
 
@@ -83,3 +97,5 @@ archivos `*.pending.*` son preparación revisable, no cambios activos de DNS/WAF
 - https://developers.cloudflare.com/workers/configuration/routing/custom-domains/
 - https://developers.cloudflare.com/waf/custom-rules/skip/options/
 - https://developers.cloudflare.com/waf/tools/browser-integrity-check/
+- https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloudflare-1xxx-errors/error-1010/
+- https://developers.cloudflare.com/waf/analytics/security-events/
