@@ -46,8 +46,9 @@ function createLiveDiagnostics(video, options = {}) {
  on('BUFFER_CODECS', data => {
   for (const key of ['video', 'audio', 'audiovideo']) {
    const track = data[key]; if (!track) continue;
-   const codec = /^(?:avc1|avc3|hvc1|hev1|av01|vp09|mp4a)\.[a-fA-F0-9.]{1,32}$/.test(track.codec || '') ? track.codec : 'unknown';
-   codecs[key] = {codec, width: num(track.metadata?.width), height: num(track.metadata?.height)};
+   const container = ['audio/mpeg','audio/mp4','video/mp4'].includes(track.container) ? track.container : 'unknown';
+   const codec = container === 'audio/mpeg' ? 'mpeg-audio' : /^(?:avc1|avc3|hvc1|hev1|av01|vp09|mp4a)\.[a-fA-F0-9.]{1,32}$/.test(track.codec || '') ? track.codec : 'unknown';
+   codecs[key] = {container, codec, width: num(track.metadata?.width), height: num(track.metadata?.height)};
   }
  });
  on('LEVEL_LOADED', data => {

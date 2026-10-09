@@ -73,7 +73,36 @@ Only allowlisted fields are recorded. URLs, signed tickets, credentials, channel
 titles, IP addresses, raw errors and media payloads are excluded. Nothing is sent
 automatically or stored on disk; changing titles or signing out clears the trace.
 The observer neither changes playback settings nor opens provider connections.
-This release supplies evidence for the reported browser-only 1080p stalls; it
-does not establish their cause or claim that the real signal is fixed. Prior
-30-second FFmpeg checks reported H.264 reference-frame warnings on ARG/CHI and
-slow response headers, so neither decoding nor delivery can yet be ruled out.
+The trace separates delivery, decoding and audio-buffer failures without
+requiring playback URLs or customer credentials.
+
+## Complete live audio segments (frontend v42; Worker remains v40)
+
+The customer trace shows complete 1.96–2.40 MB fragments arriving in 0.54–0.61
+seconds, continuous video buffers and no dropped frames, but only 0.3–1.0 seconds
+of audio per 9–12 second fragment. HLS repeatedly seeks over those audio holes.
+The web player now disables progressive parsing and feeds complete segments to
+the pinned HLS.js 1.6.15 engine. Its Chromium raw MPEG-audio path handles later
+progressive chunks with a different timestamp offset from the first chunk,
+which reproduces this buffer pattern. The diagnostics also record an allowlisted
+container and identify raw `audio/mpeg` rather than reporting an empty codec as
+unknown. Download deadlines and the existing live recovery remain in place.
+
+An actual Chromium/MSE A/B test with generated H.264 and MPEG Layer III audio
+produced only 0.67 seconds of buffered audio and seven stall/seek errors with
+progressive parsing; complete segments produced 30 seconds of audio, continuous
+playback and zero HLS errors. Both AAC cases also played without errors. Results
+are in `verification/2026-10-09-live-audio-v42.json`. The test uses synthetic
+signals; the authenticated customer channel and physical Android device still
+require confirmation.
+
+To repeat the optional browser regression, install `hls.js@1.6.15` and
+`playwright`, provide FFmpeg and Chromium, then run from the repository root:
+
+```sh
+SMN_BROWSER_EXECUTABLE=/absolute/path/chromium node tests/live-audio-runtime.mjs
+```
+
+`SMN_QA_MODULES` can point to a separate `node_modules` directory and
+`SMN_LIVE_AUDIO_REPORT` saves the four case results. Fixtures are generated and
+deleted locally; no provider content or credentials are needed.

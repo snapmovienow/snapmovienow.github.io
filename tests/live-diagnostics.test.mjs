@@ -37,6 +37,16 @@ function fixture() {
 }
 {
  const f=fixture();
+ f.fire('BUFFER_CODECS',{audio:{container:'audio/mpeg',codec:''},video:{container:'video/mp4',codec:'avc1.64001e'}});
+ const r=f.diag.report();
+ assert.equal(r.codecs.audio.container,'audio/mpeg');assert.equal(r.codecs.audio.codec,'mpeg-audio');
+ assert.equal(r.codecs.video.container,'video/mp4');
+ f.fire('BUFFER_CODECS',{audio:{container:'https://private.test/?ticket=secret',codec:''}});
+ assert.equal(f.diag.report().codecs.audio.container,'unknown');
+ assert(!JSON.stringify(f.diag.report()).includes('secret'));f.diag.stop();
+}
+{
+ const f=fixture();
  for(let i=0;i<250;i++){
   f.video.currentTime++;
   f.fire('LEVEL_LOADED',{details:{live:true,startSN:i,endSN:i+5,targetduration:10}});
@@ -68,7 +78,7 @@ function fixture() {
  const ui={document:{getElementById:id=>nodes[id]},window:{Hls:{version:'1.6.15'}},navigator:{clipboard:{writeText:async t=>{copied=t}}}};
  vm.createContext(ui);vm.runInContext(code,ui);
  vm.runInContext('liveDiagnosticHistory=[{reason:"timeline_stall",state:{position:60}}]',ui);
- await ui.copyLiveDiagnostic();assert.equal(JSON.parse(copied).reports[0].state.position,60);assert.equal(JSON.parse(copied).webVersion,'41');
+ await ui.copyLiveDiagnostic();assert.equal(JSON.parse(copied).reports[0].state.position,60);assert.equal(JSON.parse(copied).webVersion,'42');
  ui.navigator.clipboard.writeText=async()=>{throw new Error('blocked')};
  await ui.copyLiveDiagnostic();assert.equal(nodes.liveDiagnosticText.hidden,false);assert(nodes.liveDiagnosticText.selected);assert.equal(nodes.liveDiagnosticText.value,copied);
  ui.resetLiveDiagnostics('live');assert.equal(nodes.liveDiagnosticPanel.hidden,false);assert.equal(nodes.liveDiagnosticText.value,'');

@@ -37,10 +37,15 @@ heartbeat.playbackLifecycle.current=null;heartbeat.playbackLease=null;heartbeat.
 await tick();assert.equal(stops,1);assert.equal(logouts,1,'idle authenticated users still receive access revocation');
 console.log('PASS: old heartbeat cannot close a new channel; idle access revocation is preserved.');
 
-// Feature detection preserves playback on devices lacking streaming Fetch APIs.
+// TV and Gnula use complete segments; live load deadlines remain independent
+// of parsing mode, so slow provider responses are still tolerated.
 {
- const code=html.slice(html.indexOf('function supportsProgressiveLive'),html.indexOf('function ensureHls'));
- const modern=vm.createContext({fetch(){},AbortController,ReadableStream,Request});vm.runInContext(code,modern);assert.equal(modern.supportsProgressiveLive(),true);
- const legacy=vm.createContext({fetch(){},AbortController,Request});vm.runInContext(code,legacy);assert.equal(legacy.supportsProgressiveLive(),false);
+ const config=html.match(/hlsEngine=new Hls\((\{.*?\})\);const engine=hlsEngine/)[1];
+ for(const type of ['live','movie']){
+  const setup=vm.createContext({currentPlay:{type}});
+  const options=vm.runInContext('('+config+')',setup);
+  assert.equal(options.progressive,false);
+  assert.equal(options.fragLoadPolicy.default.maxLoadTimeMs,type==='live'?90000:15000);
+ }
 }
-console.log('PASS: progressive live streaming feature detection preserves legacy loading.');
+console.log('PASS: complete-segment HLS parsing preserves live and VOD load deadlines.');
