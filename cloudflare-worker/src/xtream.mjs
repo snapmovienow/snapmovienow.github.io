@@ -1,4 +1,5 @@
 import {isAdult} from './content-permissions.mjs';
+import {normaliseSeries} from './xtream-series.mjs';
 // Xtream player compatibility. Provider passwords and playback origins stay private.
 const ACTIONS = {
   get_live_categories: ['tv', 'live_category'], get_live_streams: ['tv', 'live'],
@@ -85,22 +86,20 @@ async function details(params, kind, auth, deps, base) {
     if (row.category_id != null) row.category_id = String((await deps.register([entry('movie_category', record.server, row.category_id)]))[0]);
     return deps.json({...data, movie_data: row});
   }
+  const series = normaliseSeries(data, auth.user.permissions.adults !== false);
   const episodes = {}, flat = [];
-  for (const [season, rows] of Object.entries(data.episodes || {})) {
+  for (const [season, rows] of Object.entries(series.episodes)) {
     episodes[season] = [];
-    for (const row of Array.isArray(rows) ? rows : []) {
-      if (numeric(row.id) && (auth.user.permissions.adults !== false || (!isAdult(row) && !isAdult(row.info)))) flat.push({season, row});
-    }
+    for (const row of rows) flat.push({season, row});
   }
   const ids = await deps.register(flat.map(({row}) => entry('episode', record.server, row.id, {parentId:record.upstreamId, ext: EXTENSIONS.has(row.container_extension) ? row.container_extension : 'mp4'})));
   flat.forEach(({season, row}, i) => {
     const ext = EXTENSIONS.has(row.container_extension) ? row.container_extension : 'mp4';
     episodes[season].push({...row, smn_profile:{type:'series',id:record.upstreamId,server:record.server,episodeId:String(row.id)}, id: String(ids[i]), container_extension: ext, direct_source: playbackURL(base, auth, 'series', ids[i], ext)});
   });
-  for (const season of Object.keys(episodes)) if (!episodes[season].length) delete episodes[season];
-  const info = {...data.info};
+  const info = series.info;
   if (info.category_id != null) info.category_id = String((await deps.register([entry('series_category', record.server, info.category_id)]))[0]);
-  return deps.json({...data, info, episodes, seasons:(data.seasons||[]).filter(season=>auth.user.permissions.adults!==false||Object.hasOwn(episodes,String(season.season_number)))});
+  return deps.json({...data, info, episodes, seasons:series.seasons});
 }
 
 export async function handleXtream(req, deps) {
