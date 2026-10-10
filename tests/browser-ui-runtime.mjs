@@ -3,13 +3,20 @@ const root=process.cwd(),errors=[],requests=[];let browser;const server=http.cre
 try{
  await new Promise(r=>server.listen(0,'127.0.0.1',r));const base='http://127.0.0.1:'+server.address().port;
  browser=await chromium.launch({headless:true,...(process.env.SMN_BROWSER_EXECUTABLE?{executablePath:process.env.SMN_BROWSER_EXECUTABLE}:{}),args:['--no-sandbox','--disable-dev-shm-usage','--disable-gpu']});
- const context=await browser.newContext({viewport:{width:390,height:844}}),profile=new Map();let legacy=false;
+ const context=await browser.newContext({viewport:{width:390,height:844}}),profile=new Map();let legacy=false,malformedCatalog=false;
  await context.route('http://127.0.0.1:8787/**',async route=>{
   const request=route.request();if(request.method()==='OPTIONS'){await route.fulfill({status:204,headers:{'Access-Control-Allow-Origin':base,'Access-Control-Allow-Methods':'POST,GET,OPTIONS','Access-Control-Allow-Headers':'content-type'}});return}
   const b=request.postDataJSON()||{},op=b.op||b.action;requests.push(op);let value=[];
   if(legacy&&['security-status','backup-list','playback-health'].includes(op)){await route.fulfill({status:403,contentType:'application/json',headers:{'Access-Control-Allow-Origin':base},body:JSON.stringify({error:'operation_not_allowed'})});return}
   if(op==='auth'||op==='session_info')value={user_info:{auth:1,username:'testuser'},access_token:'synthetic-ui-token',permissions:{movies:true,series:true,tv:true,adults:false},server_time:Date.now(),session_expires_at:Date.now()+3600000};
   if(op==='vod')value=[{stream_id:42,name:'Película de prueba',_server:'ccf'}];
+  if(malformedCatalog){
+   if(op==='vod')value=null;
+   if(op==='series')value=[null,{series_id:7,name:'Serie disponible',_server:'ccf'},42];
+   if(op==='live')value=[null,{stream_id:8,name:'Canal disponible',_server:'ccf'}];
+   if(op==='live_categories')value={error:'invalid provider response'};
+   if(op==='gnula_catalog')value={error:'provider unavailable'};
+  }
   if(op==='vod_info')value={info:{plot:'Descripción de prueba'}};
   if(op==='profile_get')value={records:[...profile.values()]};
   if(op==='profile_patch'){for(const p of b.patches)profile.set(p.kind+':'+p.key,p);value={records:[...profile.values()]}}
@@ -35,6 +42,19 @@ try{
  await panel.locator('#exit').click();assert.equal(await panel.locator('#mfaSeed').textContent(),'');assert.equal(await panel.locator('#mfaEnrollment').isVisible(),false);
  await panel.locator('#loginForm [name="username"]').fill('owner');await panel.locator('#loginForm [name="password"]').fill('owner-password-test');await panel.locator('#loginForm button').click();await panel.locator('#securityState').filter({hasText:'desactivado'}).waitFor();await panel.locator('#securityForm [name="password"]').fill('owner-password-test');await panel.locator('#mfaBegin').click();await panel.locator('#mfaConfirm').waitFor();await panel.locator('#securityForm [name="code"]').fill('123456');await panel.locator('#mfaConfirm').click();await panel.locator('#mfaRecovery').waitFor();assert.equal(await panel.evaluate(()=>sessionStorage.getItem('smn_admin_token')),null);assert.equal((await panel.locator('#mfaCodes').inputValue()).split('\n').length,8);await panel.locator('#mfaSaved').click();assert.equal(await panel.locator('#mfaCodes').inputValue(),'');
  legacy=true;await panel.locator('#loginForm [name="username"]').fill('owner');await panel.locator('#loginForm [name="password"]').fill('owner-password-test');await panel.locator('#loginForm button').click();await panel.locator('#securityState').filter({hasText:'pendientes'}).waitFor();await panel.locator('#healthStatus').filter({hasText:'pendientes'}).waitFor();assert.equal(await panel.locator('#mfaBegin').isDisabled(),true);await panel.locator('#rows button').filter({hasText:'Editar'}).click();assert.equal(await panel.locator('#userForm [name="adults"]').isChecked(),false);await panel.locator('#cancel').click();assert.equal(await panel.locator('#notice').textContent(),'Sesión iniciada.');
+
+ malformedCatalog=true;
+ const degraded=await context.newPage();degraded.on('pageerror',e=>errors.push(e.message));
+ await degraded.goto(base);await degraded.locator('#welcome').filter({hasText:'Parte del catálogo'}).waitFor();
+ assert.equal(await degraded.locator('body').evaluate(e=>e.classList.contains('authenticated')),true,'partial catalog keeps the restored session');
+ assert.equal(await degraded.locator('#movieStatus').textContent(),'0 títulos');
+ assert.equal(await degraded.locator('#seriesRow .card b').first().textContent(),'Serie disponible');
+ assert.equal(await degraded.locator('#liveStatus').textContent(),'1 canales');
+ assert.equal(await degraded.locator('#liveCategory option').count(),1);
+ await degraded.evaluate(()=>localStorage.removeItem('smn_session'));await degraded.reload();
+ await degraded.locator('#heroLogin').click();await degraded.locator('#user').fill('testuser');await degraded.locator('#pass').fill('customer-password-test');await degraded.locator('#submit').click();
+ await degraded.locator('#welcome').filter({hasText:'Parte del catálogo'}).waitFor();
+ assert.equal(await degraded.locator('body').evaluate(e=>e.classList.contains('authenticated')),true,'partial catalog keeps a new login');
  assert.deepEqual(errors,[],'frontend has no script or CSP errors');assert.ok(requests.includes('profile_patch')&&requests.includes('playback-health'));
- console.log('PASS: mobile Chromium login/menu, isolated favorite sync, adult editor, health dashboard, MFA enrollment, secret cleanup and older-backend fallback; no JavaScript/CSP errors.');
+ console.log('PASS: mobile Chromium login/menu, isolated favorite sync, adult editor, health dashboard, MFA enrollment, secret cleanup, older-backend fallback and partial-catalog new/restored sessions; no JavaScript/CSP errors.');
 }finally{await browser?.close();server.close()}
