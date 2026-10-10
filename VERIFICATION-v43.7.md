@@ -8,6 +8,8 @@ Validación local del 10 de octubre de 2026: 34 archivos de regresiones y sintax
 
 Activación administrativa pendiente: en Settings > Pages > Build and deployment > Source seleccionar GitHub Actions, mantener el dominio y Enforce HTTPS, y ejecutar Pages after Quality en main. No necesita PAGES_ACTIONS_ENABLED ni otro token del propietario. No crear un segundo workflow sugerido por GitHub. Hasta cambiar Source, la publicación nativa continúa y este flujo muestra el pendiente sin desplegar. Después verificar el job Publish tested frontend y la ausencia de publicación nativa paralela. La conexión actual no administra ese ajuste.
 
+La primera ejecución de CI aprobó Quality completo y Workers Builds, pero detectó que la validación del token temporal suponía un formato y longitud demasiado restringidos. Se corrigió para aceptar tokens opacos largos con caracteres ASCII seguros para la cabecera, rechazando espacios, controles y valores vacíos/excesivos. Se añadieron regresiones de tokens largos y prohibición de inyección de cabeceras. No se muestra ni conserva el token.
+
 La consulta final reduce publicaciones obsoletas, pero no constituye una transacción atómica entre el API de GitHub y un push simultáneo. Si main cambia después de la consulta, la revisión nueva tendrá su propia ejecución Quality y publicación posterior. Un arranque manual no certifica cambios aún sin pruebas.
 
 Recuperación: el propietario confirmó con captura un ensayo real de una copia del servidor: 3 usuarios, 1 servidor y almacenamiento de ensayo limpiado. El ensayo de archivo externo, la primera ejecución diaria registrada y PITR físico siguen separados y pendientes de evidencia.

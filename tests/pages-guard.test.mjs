@@ -13,14 +13,14 @@ const pages = {build_type: 'workflow', cname: 'app.snaptvnow.com', https_enforce
 const head = {ref: 'refs/heads/main', object: {type: 'commit', sha}};
 const options = {eventName: 'workflow_run', event, ref: 'refs/heads/main', checkoutSha: sha, token};
 
-function fixture({site = pages, main = head, runs = [run], fresh = run, failure} = {}) {
+function fixture({site = pages, main = head, runs = [run], fresh = run, failure, credential = token} = {}) {
   const requests = [];
   return {requests, fetchImpl: async (url, request) => {
     const endpoint = new URL(url);
     assert.equal(endpoint.origin, 'https://api.github.com');
     assert.equal(request.method, 'GET');
     assert.equal(request.redirect, 'error');
-    assert.equal(request.headers.Authorization, `Bearer ${token}`);
+    assert.equal(request.headers.Authorization, `Bearer ${credential}`);
     assert.ok(endpoint.pathname.startsWith(`/repos/${repository}/`));
     requests.push(endpoint);
     if (failure instanceof Error) throw failure;
@@ -38,7 +38,7 @@ function fixture({site = pages, main = head, runs = [run], fresh = run, failure}
   }};
 }
 const approve = (settings = {}, context = {}) => {
-  const test = fixture(settings);
+  const test = fixture({...settings, credential: context.token ?? token});
   return approvePages({...options, ...context, fetchImpl: test.fetchImpl});
 };
 
@@ -111,5 +111,10 @@ for (const failure of [new Error(`secret ${token}`), 401, 403, 429, 500]) {
 }
 await assert.rejects(approvePages({...options, fetchImpl: async () => ({ok: true,
   json: async () => {throw new Error(token);}})}), /Invalid GitHub response/);
-await assert.rejects(approve({}, {token: `${token}\n`}), /Actions token/);
+for (const credential of [`ghs_${'a'.repeat(1800)}`, `v1.${'a'.repeat(900)}.${'b'.repeat(900)}=/+`]) {
+  assert.equal((await approve({}, {token: credential})).ready, true);
+}
+for (const credential of ['', 'short', `${token}\n`, `${token}\rInjected: value`, `${token} space`, 'a'.repeat(8193)]) {
+  await assert.rejects(approve({}, {token: credential}), /Actions token/);
+}
 console.log('PASS: Pages source, domain/HTTPS, exact Quality attempt, manual activation, stale/fork rejection and secret isolation.');

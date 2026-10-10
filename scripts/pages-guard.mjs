@@ -38,7 +38,9 @@ export async function approvePages({eventName, event, ref, checkoutSha, token,
       !positive(expectedRunId) || !positive(expectedAttempt))) {
     throw new PagesError('Invalid Pages approval reference.');
   }
-  if (typeof token !== 'string' || !/^[A-Za-z0-9_-]{20,512}$/.test(token)) {
+  // Installation tokens are opaque and can exceed 512 characters. Validate
+  // header safety, not a guessed token format; never print the credential.
+  if (typeof token !== 'string' || !/^[\x21-\x7e]{20,8192}$/.test(token)) {
     throw new PagesError('An Actions token is required to verify Pages.');
   }
   const get = async endpoint => {
