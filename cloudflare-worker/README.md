@@ -11,10 +11,13 @@ user editor remain usable; unsupported synchronization/metrics are not retried
 repeatedly, and security/recovery shows a pending-server-update message.
 
 The v43 code passes GitHub Quality, including real workerd/SQLite and Chromium.
-The production Cloudflare build failed on 2026-10-09 and the public API still
-reported v40 during verification. Server-side v43 features and its daily cron
-are **not confirmed active**. Inspect the Cloudflare build log and redeploy before
-enrolling MFA or relying on automatic backups. Do not change server secrets.
+The 2026-10-09 Cloudflare installation failure was traced to a missing lockfile
+in its configured root, `cloudflare-worker`. That directory now has its own
+`package-lock.json`, retaining the existing pinned Wrangler dependencies.
+Quality also runs the clean installation and production dry build from that root.
+After publication, require a successful Cloudflare build and v43 from `/health`
+before relying on the new server features. Check the first daily backup after its
+cron runs; MFA enrollment remains a deliberate owner action. Keep server secrets unchanged.
 
 ## Deploy
 

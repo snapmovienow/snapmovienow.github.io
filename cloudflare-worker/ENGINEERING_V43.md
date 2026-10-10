@@ -2,9 +2,11 @@
 
 ## Estado de publicación
 
-El código y sus comprobaciones Quality están publicados en GitHub. Cloudflare rechazó el despliegue de producción y la API pública seguía reportando versión 40 al verificarla el 9 de octubre. El resumen del check no incluye la causa y la conexión disponible no permite consultar el registro de la cuenta. [Registro del despliegue rechazado](https://dash.cloudflare.com/7c38999ef8b7043e5629eccdecd9a961/workers/services/view/snapmovienow-edge/production/builds/76bfeb14-7224-47df-8fed-2cb3ca7a0df1).
+El fallo de Cloudflare del 9 de octubre se identificó en las capturas del build `52032803-3f33-4501-bfc0-645e1aaf8e4c`: la instalación ejecutaba `npm clean-install --progress=false` desde `cloudflare-worker`, donde faltaba `package-lock.json`. El lockfile de la raíz servía para Quality, pero no para esa carpeta de despliegue.
 
-MFA, copias automáticas, sincronización remota y métricas agregadas están implementados y probados, pero su activación en producción depende de desplegar el Worker v43. La web admite la API anterior: guarda favoritos/progreso localmente por usuario, conserva el reproductor corregido y muestra las funciones administrativas nuevas como pendientes de actualizar el servidor. No reintenta continuamente las operaciones que ese servidor no soporta. Tras publicar el Worker, recargar la web para habilitarlas.
+Se añade el lockfile propio del Worker, conservando Wrangler 4.149.0 y las versiones e integridades ya fijadas en la raíz. Quality instala y compila también desde la carpeta de Cloudflare para detectar este problema antes de futuras publicaciones. Comprobar el resultado del build y `https://api.snaptvnow.com/health` después del commit: la API debe reportar v43. Al iniciar esta corrección aún reportaba v40.
+
+MFA, copias automáticas, sincronización remota y métricas agregadas requieren que ese despliegue termine correctamente. El frontend conserva el funcionamiento local mientras espera y habilita las nuevas operaciones al recargar después de actualizar el servidor. La publicación del Worker no inscribe MFA en el teléfono del propietario; debe configurarse desde el panel. La primera copia automática queda por comprobar después de ejecutarse el cron.
 
 ## Cambios listos
 
