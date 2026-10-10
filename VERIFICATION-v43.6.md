@@ -17,4 +17,6 @@ Evidencia del motor local: `verification/2026-10-10-recovery-runtime.json`, úni
 
 Cierre operativo: crear una copia en el panel, esperar restauración aislada correcta, descargarla y ensayar el archivo guardado fuera del servidor. Verificar la ejecución automática después del cron de las 05:17 UTC. Conservar por separado la clave original del servidor. Guía completa: `cloudflare-worker/ENGINEERING_V43.md`.
 
-Confirmación del propietario, 10 de octubre de 2026: la captura del panel informa restauración aislada correcta de 3 usuarios y 1 servidor, con almacenamiento de ensayo limpiado. Quedan por comprobar el archivo guardado fuera del servidor y el cron; esta captura no certifica PITR físico.
+Confirmación del propietario, 10 de octubre de 2026: la primera captura del panel informa restauración aislada correcta de una copia del servidor, con 3 usuarios y 1 servidor y almacenamiento de ensayo limpiado. A las 16:01 America/Chicago, una nueva captura confirma también «Archivo guardado comprobado», con los mismos conteos y limpieza. El archivo descargado y reimportado pasó el ensayo lógico aislado. Evidencia agregada: `verification/2026-10-10-recovery-owner-confirmation.json`; no conserva el archivo, identidades, claves ni códigos.
+
+Quedan por comprobar la primera ejecución diaria registrada, la custodia privada de la clave original del servidor y PITR físico en un entorno separado. El ensayo del archivo no certifica estos pasos ni constituye una restauración de producción.

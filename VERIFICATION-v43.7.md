@@ -12,6 +12,8 @@ La primera ejecución de CI aprobó Quality completo y Workers Builds, pero dete
 
 La consulta final reduce publicaciones obsoletas, pero no constituye una transacción atómica entre el API de GitHub y un push simultáneo. Si main cambia después de la consulta, la revisión nueva tendrá su propia ejecución Quality y publicación posterior. Un arranque manual no certifica cambios aún sin pruebas.
 
-Recuperación: el propietario confirmó con captura un ensayo real de una copia del servidor: 3 usuarios, 1 servidor y almacenamiento de ensayo limpiado. El ensayo de archivo externo, la primera ejecución diaria registrada y PITR físico siguen separados y pendientes de evidencia.
+Publicación automática confirmada: Quality 38084936117 y Pages after Quality 38085078945 completaron correctamente la revisión 5530068. Esta ejecución fue activada por workflow_run; prepare, comprobación final y publicación terminaron correctamente. Workers Builds también pasó. No apareció el flujo nativo paralelo para esa revisión; el panel respondió por HTTPS y coincide con el checkout.
+
+Recuperación: el propietario confirmó con capturas un ensayo real de una copia del servidor y después del archivo descargado y reimportado: 3 usuarios, 1 servidor y almacenamiento de ensayo limpiado. La primera ejecución diaria registrada, la custodia privada de la clave original y PITR físico siguen separados y pendientes de evidencia. Ver verification/2026-10-10-recovery-owner-confirmation.json; recovery_scope en el registro inicial de activación refleja el estado anterior a esta confirmación.
 
 Guía: cloudflare-worker/ENGINEERING_V43.md. Fuente para Source: https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site.

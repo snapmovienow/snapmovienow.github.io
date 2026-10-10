@@ -1,0 +1,21 @@
+{
+  "repository": "snapmovienow/snapmovienow.github.io",
+  "reported_at": "2026-10-10T21:01:18Z",
+  "source": "owner-provided panel screenshot",
+  "panel_host": "app.snaptvnow.com",
+  "evidence_type": "aggregate visual confirmation; not a direct authenticated API inspection",
+  "logical_recovery": {
+    "server_copy_confirmed_by_owner": true,
+    "downloaded_file_reimport_confirmed_by_owner": true,
+    "users": 3,
+    "servers": 1,
+    "isolated_storage_cleanup_confirmed": true,
+    "production_restore_performed_by_agent": false
+  },
+  "separate_pending_checks": {
+    "daily_cron_execution": "not confirmed",
+    "private_custody_of_original_server_key": "not confirmed",
+    "cloudflare_physical_pitr": "not confirmed"
+  },
+  "privacy": "No backup contents, identities, credentials, authenticator keys or recovery codes are included."
+}
