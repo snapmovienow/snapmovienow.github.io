@@ -1,0 +1,45 @@
+{
+  "repository": "snapmovienow/snapmovienow.github.io",
+  "commit": "deebdb09a5ab689bd5986eac967eafd2dc880191",
+  "activation_run": {
+    "id": 38084677032,
+    "event": "workflow_dispatch",
+    "created_at": "2026-10-10T20:40:41Z",
+    "completed_at": "2026-10-10T20:41:09Z",
+    "conclusion": "success",
+    "url": "https://github.com/snapmovienow/snapmovienow.github.io/actions/runs/38084677032"
+  },
+  "prepare_job": {
+    "id": 114308614033,
+    "conclusion": "success"
+  },
+  "deploy_job": {
+    "id": 114308641402,
+    "conclusion": "success",
+    "final_guard": "success",
+    "publish_tested_frontend": "success"
+  },
+  "quality_run": {
+    "id": 38083182576,
+    "event": "push",
+    "conclusion": "success"
+  },
+  "pages_settings_verified_by_guard": {
+    "build_type": "workflow",
+    "cname": "app.snaptvnow.com",
+    "https_enforced": true
+  },
+  "live_checks": {
+    "admin_html_status": 200,
+    "admin_html_matches_checkout": true,
+    "api_health_status": 200
+  },
+  "recovery_scope": {
+    "isolated_server_copy_confirmed_by_owner": true,
+    "users": 3,
+    "servers": 1,
+    "external_file_confirmed": false,
+    "daily_cron_confirmed": false,
+    "cloudflare_pitr_confirmed": false
+  }
+}
