@@ -15,3 +15,15 @@ Después de Quality y Workers Builds, actualizar el catálogo de series de Smart
 Referencia del formato de temporadas y episodios: documentación del proyecto BUI, https://github.com/bluchip-studio-official/BUI/blob/main/docs/en/api/xtreamcodes_api.md. Esa referencia no documenta el parser interno de Smarters ni certifica la respuesta real de nuestro proveedor.
 
 El cron diario de copias continúa pendiente por decisión del propietario. Esta corrección no certifica pruebas físicas completas de Android/Fire TV, capacidad simultánea ni costes.
+
+## Seguimiento: ficha vacía de El Halcón
+
+El propietario confirmó que el cambio inicial no resolvió Smarters y mostró El Halcón (2026) sin episodios. Se mantuvo abierto el incidente: no se dispone del catálogo autenticado de marvin2006 ni del binario del reproductor externo. La captura prueba el síntoma, no el formato exacto de la respuesta del proveedor.
+
+Se reprodujeron otros dos fallos antes de corregirlos: una respuesta HTTP 200 con `user_info.auth: 0` se saneaba a `{}` y se aceptaba como detalle, sin probar otra cuenta autorizada; y una lista plana de episodios era descartada por el normalizador aunque el catálogo de SNAP puede leerla. Las regresiones fallaron, respectivamente, con «HTTP 200 authentication errors must fall back» y «flat episode lists must be grouped». Ahora se rechazan errores/malformaciones, se busca una respuesta con episodios en las cuentas configuradas del mismo servidor, y se agrupan listas planas por el campo de temporada. Una serie realmente vacía permanece vacía; los IDs de episodios siguen registrándose y la reproducción continúa protegida.
+
+Los detalles se renuevan después de 30 segundos y no utilizan el mecanismo de snapshots de listas de hasta doce horas. Las categorías y los catálogos conservan ese mecanismo. Se añadió una lectura forzada para el diagnóstico autenticado.
+
+En Panel → Acceso desde Smarters → Comprobar episodios de una serie, el administrador puede seleccionar el usuario y escribir El Halcón o Lucky. La comprobación ejecuta el formateador público y las restricciones de series/adultos de ese usuario; informa HTTP, ID público, temporadas y episodios. No inicia vídeos ni consume reservas de reproducción. No devuelve credenciales, URLs de vídeo, datos de cuentas del proveedor ni excepciones privadas. Requiere una sesión de administrador; la vista se limpia al salir. La búsqueda admite tildes y comprueba como máximo dos coincidencias. Esto verifica el servidor, no el parser interno de Smarters ni una reproducción física.
+
+Validación de esta revisión: 38 archivos de regresiones y sintaxis, compilación de producción, runtime SQLite para autorización del diagnóstico y prueba móvil de envío/renderizado/limpieza. El runtime móvil se ejecuta en Quality con Chromium; su éxito y la publicación de la revisión exacta deben verificarse antes de comunicar que el cambio está activo. La aceptación específica de El Halcón en el dispositivo sigue pendiente hasta observar el resultado del diagnóstico y del cliente.

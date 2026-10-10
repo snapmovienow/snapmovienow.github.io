@@ -57,8 +57,8 @@ export function createAdultPolicy(catalog) {
       if (!parent || parent._adult) return false;
       const details = await catalog('get_series_info', record.server, {series_id:record.parentId});
       if (isAdult(details.info)) return false;
-      return Object.values(details.episodes || {}).some(rows => Array.isArray(rows) && rows.some(ep =>
-        String(ep.id) === String(record.upstreamId) && !isAdult(ep) && !isAdult(ep.info)));
+      return Object.values(details.episodes || {}).flatMap(rows=>Array.isArray(rows)?rows:rows&&typeof rows==='object'?[rows]:[]).some(ep =>
+        ep&&String(ep.id) === String(record.upstreamId) && !isAdult(ep) && !isAdult(ep.info));
     }
     const row = await inspect(record.kind, record.server, record.upstreamId);
     return !!row && !row._adult;

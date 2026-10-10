@@ -1,4 +1,5 @@
 import {encodeCatalog,decodeCatalog} from './catalog-cache.mjs';
+import {countSeriesEpisodes} from './xtream-series.mjs';
 const catalogs = new WeakMap();
 const MAX_CACHE_BYTES = 16 * 1024 * 1024;
 const encoder = new TextEncoder();
@@ -26,8 +27,16 @@ export function publicMetadata(value, credentials) {
   return value;
 }
 
+const object=value=>value!==null&&typeof value==='object'&&!Array.isArray(value);
+export function validProviderReply(action,raw){
+  if(raw?.user_info&&String(raw.user_info.auth)!=='1'||raw?.error)return false;
+  if(action==='get_series_info')return object(raw)&&(raw.info===undefined||object(raw.info)||Array.isArray(raw.info)&&raw.info.length===0)&&(object(raw.episodes)||Array.isArray(raw.episodes));
+  if(action==='get_vod_info')return object(raw)&&object(raw.movie_data);
+  return true;
+}
+
 export function createProviderCatalog(deps, env, ctx) {
-  return async (action, server, params={}) => {
+  return async (action, server, params={}, options={}) => {
       const providers = await (await deps.directory(env,'/providers')).json();
       if (!providers.length) throw Error('provider_not_configured');
       // Changing or removing a connection changes this scope. A cached catalog
@@ -49,12 +58,13 @@ export function createProviderCatalog(deps, env, ctx) {
         try{const response=await deps.registry(env,'/xtream-cache-get',{key});if(response.ok){const savedAt=Number(response.headers.get('x-catalog-saved-at'));const data=await decodeCatalog(response);remember(data,savedAt);saved={data,savedAt,until:savedAt+12*3600000}}}catch{}
       }
       const freshFor=persist?300000:30000;
-      if(saved&&saved.savedAt>Date.now()-freshFor)return saved.data;
+      if(!options.fresh&&saved&&saved.savedAt>Date.now()-freshFor)return saved.data;
       const refresh=async()=>{
         const credentials=await deps.catalogCredentials(env,server,ctx);
         if(!credentials.length)throw Error('server_unavailable');
         const groups=new Map();for(const account of credentials){if(!groups.has(account.server))groups.set(account.server,[]);groups.get(account.server).push(account)}
         let fresh=0;const replies=await Promise.all([...groups].map(async([id,accounts])=>{
+          let emptySeries=null;
           for(const account of accounts){
             const url=new URL(account.origin+'/player_api.php');
             url.searchParams.set('username',account.username);url.searchParams.set('password',account.password);url.searchParams.set('action',action);
@@ -64,11 +74,14 @@ export function createProviderCatalog(deps, env, ctx) {
               if(!response.ok){await response.body?.cancel();continue}
               const raw=await response.json();
               // Authentication/error objects are never mistaken for lists.
-              if(persist&&!Array.isArray(raw))continue;
-              const safe=publicMetadata(raw,account);fresh++;
+              if(persist&&!Array.isArray(raw)||!validProviderReply(action,raw))continue;
+              const safe=publicMetadata(raw,account);
+              if(action==='get_series_info'&&!countSeriesEpisodes(safe)){emptySeries??=safe;continue}
+              fresh++;
               return Array.isArray(safe)?safe.map(item=>({...item,_server:id})):safe;
             }catch{}
           }
+          if(emptySeries){fresh++;return emptySeries}
           const retained=Array.isArray(saved?.data)?saved.data.filter(row=>row._server===id):null;
           return retained?.length?retained:null;
         }));
@@ -81,7 +94,7 @@ export function createProviderCatalog(deps, env, ctx) {
       const run=()=>{if(!cache.pending.has(key)){const work=refresh().finally(()=>cache.pending.delete(key));cache.pending.set(key,work)}return cache.pending.get(key)};
       // Old-but-valid snapshots are immediate while refresh runs in the
       // background. Local user permissions were already checked by handleXtream.
-      if(saved&&ctx?.waitUntil){ctx.waitUntil(run().catch(()=>{}));return saved.data}
+      if(!options.fresh&&saved&&persist&&ctx?.waitUntil){ctx.waitUntil(run().catch(()=>{}));return saved.data}
       try{return await run()}catch(error){if(saved&&persist)return saved.data;throw error}
     };
 }

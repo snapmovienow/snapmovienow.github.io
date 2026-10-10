@@ -59,7 +59,8 @@ globalThis.fetch = async (url, opts = {}) => {
     }
     if (action === 'get_series_info') {
       assert.equal(u.searchParams.get('series_id'), '22');
-      return Response.json({info:{name:'Series '+provider, category_id:'7'}, seasons:provider===0?[]:[{season_number:1}], episodes:{'1':[{id:'88', episode_num:1, title:'Episode one', container_extension:'mkv', direct_source:leaked, info:{movie_image:image}}]}});
+      const episode={id:'88',season:1,episode_num:1,title:'Episode one',container_extension:'mkv',direct_source:leaked,info:{movie_image:image}};
+      return Response.json({info:{name:'Series '+provider, category_id:'7'}, seasons:provider===0?[]:[{season_number:1}], episodes:provider===0?[episode]:{'1':[episode]}});
     }
     if (action === 'get_short_epg' || action === 'get_simple_data_table') {
       assert.equal(u.searchParams.get('stream_id'), '55');

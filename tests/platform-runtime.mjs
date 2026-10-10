@@ -18,6 +18,7 @@ try{
  let activeToken=token;const admin=(action,b={})=>call(prod,{action,access_token:activeToken,...b});
  await admin('save',{create:true,username:'customer',password:'customer-password-test',permissions:{movies:true,series:false,tv:true,adults:false},expiresAt:Date.now()+86400000,status:'active'});
  const customer=(await call(prod,{op:'auth',username:'customer',password:'customer-password-test'},'/')).data.access_token;assert.ok(customer);
+ assert.equal((await call(prod,{action:'xtream-series-check',username:'customer',query:'Test'})).status,401,'series diagnostics require an administrator session');
  const patch={kind:'progress',key:'movie:ccf:42',type:'movie',id:'42',server:'ccf',time:100,duration:1000,updatedAt:Date.now()};
  assert.equal((await call(prod,{op:'profile_patch',access_token:customer,patches:[patch]},'/')).data.records[0].time,100);
  assert.equal((await call(stage,{op:'profile_get',access_token:customer},'/')).status,401);

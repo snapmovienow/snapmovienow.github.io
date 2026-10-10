@@ -84,6 +84,15 @@ result=await details();assertContract(result);assert.deepEqual(Object.keys(resul
 assert.equal(result.seasons[1].id,600);
 
 // Permission filtering happens before constructing season metadata/counts.
+data={info:{name:'Flat episodes'},episodes:[
+  {id:970,title:'Season one',season:'1',episode_num:1},
+  {id:971,title:'Season two',season:2,episode_num:1},
+  {id:972,title:'Season one two',info:{season:1},episode_num:2}
+]};
+result=await details();assertContract(result);
+assert.deepEqual(result.seasons.map(s=>s.season_number),[1,2],'flat episode lists must be grouped by their season, not discarded');
+assert.deepEqual(result.episodes['1'].map(e=>e.episode_num),[1,2]);
+
 user.permissions.adults=false;
 data={info:{name:'Family series'},seasons:[{season_number:1,episode_count:5},{season_number:2,name:'Adult season'}],episodes:{
   '1':[{id:960,title:'Family episode',episode_num:1,container_extension:'mp4'},{id:961,title:'XXX',episode_num:2}],

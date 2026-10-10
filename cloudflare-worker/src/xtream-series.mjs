@@ -8,6 +8,8 @@ const integer = value => {
   return Number.isInteger(n) && n <= 2147483647 ? n : null;
 };
 const text = (value, fallback = '') => typeof value === 'string' && value.trim() ? value : fallback;
+const episodeRow=row=>object(row)&&/^\d{1,16}$/.test(String(row.id))&&Number.isSafeInteger(Number(row.id));
+export const countSeriesEpisodes=data=>Object.values(data?.episodes||{}).reduce((sum,rows)=>sum+(Array.isArray(rows)?rows.filter(episodeRow).length:episodeRow(rows)?1:0),0);
 
 // SNAP reads the episode groups directly. Other Xtream players first select a
 // season from `seasons`, then use its number to read `episodes`. Build both from
@@ -17,13 +19,14 @@ export function normaliseSeries(data, adults = true) {
   const info = object(data.info) ? {...data.info} : {};
   const groups = new Map();
   for (const [key, rows] of Object.entries(data.episodes || {})) {
-    if (!Array.isArray(rows)) continue;
-    for (const [index, row] of rows.entries()) {
-      if (!object(row) || !/^\d{1,16}$/.test(String(row.id)) || !Number.isSafeInteger(Number(row.id))) continue;
+    const grouped=Array.isArray(rows);
+    if (!grouped&&!episodeRow(rows)) continue;
+    for (const [index, row] of (grouped?rows:[rows]).entries()) {
+      if (!episodeRow(row)) continue;
       if (!adults && (isAdult(row) || isAdult(row.info))) continue;
-      const season = integer(key) ?? integer(row.season) ?? integer(row.info?.season);
+      const season = (grouped?integer(key):null) ?? integer(row.season) ?? integer(row.info?.season) ?? (!grouped?1:null);
       if (season === null) continue;
-      const episode = integer(row.episode_num) || index + 1;
+      const episode = integer(row.episode_num) || (grouped?index+1:(groups.get(season)?.length||0)+1);
       if (!groups.has(season)) groups.set(season, []);
       groups.get(season).push({...row,season,episode_num:episode,
         title:text(row.title, `Episode ${episode}`),info:object(row.info) ? {...row.info} : {}});

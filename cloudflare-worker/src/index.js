@@ -9,6 +9,7 @@ export {BackupRecovery} from './backup-recovery.mjs';
 import {matchesXtream} from './xtream.mjs';
 import {contentPermissions,createAdultPolicy,isAdult} from './content-permissions.mjs';
 import {createProviderCatalog} from './provider-catalog.mjs';
+import {diagnoseSeries} from './series-diagnostic.mjs';
 import {createXtreamBridge,guardXtreamResponse} from './xtream-bridge.mjs';
 import {fetchMedia,recoverMedia} from './media-fetch.mjs';
 import {guardPlaybackExpiry} from './playback-expiry.mjs';
@@ -98,6 +99,13 @@ async function adminRequest(req,env,ctx){
  if(action==="logout"){await sessionCall(env,s.sid,"/logout");return withSessionCookie(json({ok:true}),req,env,"admin","",0)}
  if(action==='xtream-settings'||action==='xtream-save'){const r=await directory(env,action==='xtream-save'?'/xtream-save':'/xtream-config',b);if(r.ok&&action==='xtream-save')await directory(env,'/audit-write',{actor:s.username,action:'xtream_changed'});return json({...await r.json(),url:new URL(req.url).origin,host:new URL(req.url).hostname,port:new URL(req.url).port||'443'},r.status)}
  if(action==='xtream-check'){const target=new URL('/player_api.php',req.url);const response=await xtreamRequest(new Request(target,{headers:{'User-Agent':'SnapMovieNow/1.0'}}),env);const body=await response.json();const config=await (await directory(env,'/xtream-config')).json();return json({compatible:response.status===401&&body.error==='credentials_required',enabled:config.enabled,url:new URL(req.url).origin,version:SERVICE_VERSION})}
+ if(action==='xtream-series-check'){
+  const config=await (await directory(env,'/xtream-config')).json();if(!config.enabled)return json({error:'xtream_disabled'},403);
+  return diagnoseSeries({json,users:await (await directory(env,'/users')).json(),catalog:createProviderCatalog(catalogDeps,env,ctx),
+   register:async entries=>{const r=await registry(env,'/xtream-register',{entries});if(!r.ok)throw Error('catalog_registration_failed');return r.json()},
+   resolve:async id=>(await registry(env,'/xtream-resolve',{id})).json()
+  },b,new URL(req.url).origin);
+ }
  const security={"admin-password":"/admin-password","mfa-replace-begin":"/mfa-replace-begin","security-status":"/security-status","mfa-begin":"/mfa-begin","mfa-confirm":"/mfa-confirm","mfa-disable":"/mfa-disable","mfa-recovery-renew":"/mfa-recovery-renew","audit":"/audit","backup-list":"/backup-list","backup-status":"/backup-status","backup-verify":"/backup-verify","backup-create":"/backup-create","backup-drill":"/backup-drill","backup-download":"/backup-download","backup-export":"/backup-export","backup-preview":"/backup-preview","backup-restore":"/backup-restore"};
  if(security[action]){const r=await directory(env,security[action],{...b,actor:s.username});return json(await r.json(),r.status)}
  if(action==='playback-health'){const r=await env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_operations_v1')).fetch('https://private/operations/read',{method:'POST',body:'{}'});return json(await r.json(),r.status)}
