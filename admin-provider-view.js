@@ -7,7 +7,7 @@ export function selectAccounts(accounts,{query='',status='all',source='all'}={})
 }
 const labels={active:'Activa',expired:'Vencida',suspended:'Suspendida',unavailable:'No disponible'};
 const kinds={live:'TV en vivo',movie:'Película',series:'Serie',unknown:'Reproducción'};
-export function createProviderView({document:doc,api,notice}){
+export function createProviderView({document:doc,api,notice,onInventory=()=>{}}){
  const $=id=>doc.getElementById(id),size=25;
  let data=null,page=0,pending=null,epoch=0;
  const node=(tag,text,className)=>{const e=doc.createElement(tag);if(text!==undefined)e.textContent=text;if(className)e.className=className;return e};
@@ -41,13 +41,14 @@ export function createProviderView({document:doc,api,notice}){
   const times=data.accounts.map(a=>a.syncedAt).filter(Boolean),synced=times.length?Math.min(...times):null;
   $('providerUpdated').textContent=synced?'Inventario comprobado: '+new Date(synced).toLocaleString():'Inventario pendiente de comprobar.';
   const warning=$('providerWarning');warning.textContent=data.refreshError||(data.stale?'El proveedor no confirmó la última actualización. Se muestran datos guardados; los cupos pueden haber cambiado.':'');warning.hidden=!warning.textContent;
+  onInventory({summary:data.summary,generatedAt:data.generatedAt,stale:data.stale,refreshError:data.refreshError});
   render();
  }
  async function load(refresh=false){
   if(pending)return pending;
   refresh=refresh||!data;
   const current=epoch,button=$('providerRefresh');button.disabled=true;button.textContent=refresh?'Comprobando…':'Actualizando…';
-  const work=(async()=>{try{const next=await api('provider-dashboard',{refresh});if(epoch!==current)return;show(next)}catch(error){if(epoch!==current)return;const warning=$('providerWarning');warning.textContent=data?'No se pudo actualizar. Conservamos la última vista; sus cupos pueden haber cambiado.':'No se pudo cargar el inventario. Pulsa Actualizar para intentarlo de nuevo.';warning.hidden=false;if(!data)notice(error.message)}finally{if(epoch===current){pending=null;button.disabled=false;button.textContent='Actualizar'}}})();
+  const work=(async()=>{try{const next=await api('provider-dashboard',{refresh});if(epoch!==current)return;show(next)}catch(error){if(epoch!==current)return;const warning=$('providerWarning');warning.textContent=data?'No se pudo actualizar. Conservamos la última vista; sus cupos pueden haber cambiado.':'No se pudo cargar el inventario. Pulsa Actualizar para intentarlo de nuevo.';warning.hidden=false;onInventory(data?{summary:data.summary,generatedAt:data.generatedAt,stale:true}:null);if(!data)notice(error.message)}finally{if(epoch===current){pending=null;button.disabled=false;button.textContent='Actualizar'}}})();
   pending=work;return work;
  }
  function clear(){epoch++;pending=null;data=null;page=0;for(const id of ['providerRows','providerCards','providerAssignments'])$(id).replaceChildren();for(const id of ['providerActive','providerCapacity','providerReported','providerReserved','providerAvailable'])$(id).textContent='—';$('providerRefresh').disabled=false;$('providerRefresh').textContent='Actualizar';$('providerSearch').value='';$('providerState').value='all';sources([]);$('providerTotal').textContent='Cargando cuentas…';$('providerUpdated').textContent='Inventario pendiente de comprobar.';$('providerWarning').textContent='';$('providerWarning').hidden=true;$('providerNoAssignments').hidden=false;$('providerPage').textContent='0 cuentas';$('providerPrevious').disabled=true;$('providerNext').disabled=true}

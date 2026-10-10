@@ -48,6 +48,8 @@ jobs:
           SMN_LIVE_AUDIO_REPORT: artifacts/live-audio.json
       - name: Mobile web and admin integration
         run: node tests/browser-ui-runtime.mjs
+        env:
+          SMN_CAPACITY_SCREENSHOT: artifacts/capacity-mobile.png
       - name: Real video concurrency smoke
         run: node tests/video-capacity-runtime.mjs
         env:

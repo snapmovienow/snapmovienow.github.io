@@ -3,7 +3,7 @@ const root=process.cwd(),errors=[],requests=[];let browser;const server=http.cre
 try{
  await new Promise(r=>server.listen(0,'127.0.0.1',r));const base='http://127.0.0.1:'+server.address().port;
  browser=await chromium.launch({headless:true,...(process.env.SMN_BROWSER_EXECUTABLE?{executablePath:process.env.SMN_BROWSER_EXECUTABLE}:{}),args:['--no-sandbox','--disable-dev-shm-usage','--disable-gpu']});
- const context=await browser.newContext({viewport:{width:390,height:844}}),profile=new Map();let legacy=false,malformedCatalog=false,mfaEnabled=false,mfaError=null,backups=[],replacing=false,recoveryProof={status:"unknown"};
+ const context=await browser.newContext({viewport:{width:390,height:844}}),profile=new Map();let legacy=false,malformedCatalog=false,mfaEnabled=false,mfaError=null,backups=[],replacing=false,recoveryProof={status:"unknown"},inventoryStale=false;
  await context.route('http://127.0.0.1:8787/**',async route=>{
   const request=route.request();if(request.method()==='OPTIONS'){await route.fulfill({status:204,headers:{'Access-Control-Allow-Origin':base,'Access-Control-Allow-Methods':'POST,GET,OPTIONS','Access-Control-Allow-Headers':'content-type'}});return}
   const b=request.postDataJSON()||{},op=b.op||b.action;requests.push(op);let value=[];
@@ -23,7 +23,7 @@ try{
   if(op==='status')value={configured:true};if(op==='login')value={access_token:'synthetic-admin-token'};
   if(op==='users')value=[{username:'testuser',name:'Prueba',status:'active',permissions:{movies:true,series:true,tv:true,adults:false}}];
   if(op==='overview')value={provider:null,connections:0};if(op==='xtream-settings')value={enabled:true,url:'https://api.snaptvnow.com',port:'443'};
-  if(op==='provider-dashboard')value={sources:[],accounts:[],assignments:[],summary:{accounts:0,activeAccounts:0,totalCapacity:0,reported:0,reserved:0,available:0}};
+  if(op==='provider-dashboard')value={sources:[],accounts:[],assignments:[],generatedAt:Date.now(),stale:inventoryStale,summary:{accounts:1,activeAccounts:1,totalCapacity:3,reported:0,reserved:1,available:2}};
   if(op==='security-status')value={mfaEnabled,recoveryRemaining:mfaEnabled?8:0};if(op==='playback-health')value={groups:[],alerts:[]};
   if(op==='mfa-confirm'&&mfaError){await route.fulfill({status:401,contentType:'application/json',headers:{'Access-Control-Allow-Origin':base},body:JSON.stringify({error:mfaError})});return}
   if(op==='mfa-confirm'||op==='mfa-recovery-renew'){mfaEnabled=true;value={replaced:op==='mfa-confirm'&&replacing,recoveryCodes:Array.from({length:8},(_,i)=>(op==='mfa-recovery-renew'?'SYNTHETIC-NEW-':'SYNTHETIC-RECOVERY-')+i)}};
@@ -44,6 +44,21 @@ try{
  await page.locator('#movieRow .card').first().click();await page.locator('#heartBtn').click();await page.waitForTimeout(1500);assert.ok([...profile.values()].some(p=>p.kind==='favorite'&&!p.deleted));
  await page.locator('#detailClose').click();await page.locator('header [data-action="menu"]').click();await page.locator('#favoritesMenu').click();assert.equal(await page.locator('#favoritesResults .card').count(),1);await page.locator('#favoritesClose').click();
  const panel=await context.newPage();panel.on('pageerror',e=>errors.push(e.message));await panel.goto(base+'/admin.html');await panel.locator('#loginForm [name="username"]').fill('owner');await panel.locator('#loginForm [name="password"]').fill('owner-password-test');await panel.locator('#loginForm button').click();await panel.locator('#securityState').filter({hasText:'desactivado'}).waitFor();
+ await panel.locator('#capacityInventory').filter({hasText:'3 cupos totales'}).waitFor();
+ await panel.locator('#capacityExample').click();await panel.locator('#capacityResults').waitFor();
+ assert.match(await panel.locator('#capacityNumbers').textContent(),/1[.,]?620 GB/);assert.match(await panel.locator('#capacityCost').textContent(),/Introduce ambos costes/);
+ await panel.locator('#capacityForm [name="viewers"]').fill('5');
+ await panel.locator('#capacityForm [name="providerCost"]').fill('30');assert.match(await panel.locator('#capacityCost').textContent(),/Introduce ambos costes/);
+ await panel.locator('#capacityForm [name="hostingCost"]').fill('20');
+ assert.match(await panel.locator('#capacitySlots').textContent(),/Faltan 2 cupos totales/);
+ const costs=await panel.locator('#capacityNumbers dd').allTextContents();assert.equal(costs[3],'50 USD');assert.equal(costs[4],'10 USD');assert.match(costs[5],/0[.,]1667 USD/);
+ await panel.locator('#capacityForm [name="viewers"]').fill('3');assert.match(await panel.locator('#capacitySlots').textContent(),/ahora faltan 1 cupos libres/);
+ inventoryStale=true;await panel.locator('#providerRefresh').click();await panel.locator('#capacityInventory').filter({hasText:'sin confirmar'}).waitFor();assert.match(await panel.locator('#capacitySlots').textContent(),/Cupos pendientes de confirmar/);
+ inventoryStale=false;await panel.locator('#providerRefresh').click();await panel.locator('#capacityInventory').filter({hasText:'Última consulta'}).waitFor();
+ await panel.locator('#capacityForm [name="viewers"]').fill('2');assert.match(await panel.locator('#capacitySlots').textContent(),/asignables actuales cubren/);
+ if(process.env.SMN_CAPACITY_SCREENSHOT){await panel.locator('#capacityPlanning').screenshot({path:process.env.SMN_CAPACITY_SCREENSHOT});}
+ assert.equal(await panel.locator('#capacityPlanning').evaluate(e=>e.scrollWidth>e.clientWidth),false,'capacity panel fits a phone');
+ await panel.locator('#capacityForm [name="hostingCost"]').fill('');assert.match(await panel.locator('#capacityCost').textContent(),/Introduce ambos costes/);
  await panel.locator('#backupStatus').filter({hasText:'sin copia creada'}).waitFor();await panel.locator('#securityForm [name="password"]').fill('owner-password-test');await panel.locator('#backupCreate').click();await panel.locator('#securityNotice').filter({hasText:'Copia creada en el servidor'}).waitFor();assert.equal(await panel.locator('#securityForm [name="password"]').inputValue(),'');
  await panel.locator('#backupVerify').click();await panel.locator('#securityNotice').filter({hasText:'Integridad comprobada: 2 usuarios y 1 servidores'}).waitFor();assert.match(await panel.locator('#automaticBackups option:checked').textContent(),/verificada/);
  assert.match(await panel.locator('#backupStatus').textContent(),/Aún no hay una ejecución diaria confirmada/);
@@ -59,6 +74,7 @@ try{
  await panel.locator('#securityNotice').filter({hasText:'La configuración venció'}).waitFor();assert.equal(await panel.locator('#mfaSeed').textContent(),'');assert.equal(await panel.locator('#mfaConfirm').isVisible(),false);assert.equal(await panel.locator('#securityForm [name="code"]').inputValue(),'');
  await panel.evaluate(()=>{Date.now=window.realSecurityNow});await panel.locator('#mfaBegin').click();await panel.locator('#mfaSeed').filter({hasText:'AAAA'}).waitFor();
  await panel.locator('#exit').click();assert.equal(await panel.locator('#mfaSeed').textContent(),'');assert.equal(await panel.locator('#mfaEnrollment').isVisible(),false);
+ assert.equal(await panel.locator('#capacityForm [name="providerCost"]').inputValue(),'');assert.equal(await panel.locator('#capacityResults').isVisible(),false);assert.equal(await panel.locator('#capacityNumbers').textContent(),'','logout removes private cost results');
  await panel.locator('#loginForm [name="username"]').fill('owner');await panel.locator('#loginForm [name="password"]').fill('owner-password-test');await panel.locator('#loginForm button').click();await panel.locator('#securityState').filter({hasText:'desactivado'}).waitFor();await panel.locator('#securityForm [name="password"]').fill('owner-password-test');await panel.locator('#mfaBegin').click();await panel.locator('#mfaConfirm').waitFor();await panel.locator('#securityForm [name="code"]').fill('123456');await panel.locator('#mfaConfirm').click();await panel.locator('#mfaRecovery').waitFor();assert.match(await panel.locator('#securityState').textContent(),/Segundo factor activado/);assert.equal(await panel.evaluate(()=>sessionStorage.getItem('smn_admin_token')),null);assert.equal((await panel.locator('#mfaCodes').inputValue()).split('\n').length,8);await panel.locator('#mfaSaved').click();assert.equal(await panel.locator('#mfaCodes').inputValue(),'');
  await panel.locator('#loginForm [name="username"]').fill('owner');await panel.locator('#loginForm [name="password"]').fill('owner-password-test');await panel.locator('#loginForm [name="code"]').fill('234567');await panel.locator('#loginForm button').click();await panel.locator('#securityState').filter({hasText:'activado'}).waitFor();assert.equal(await panel.locator('#mfaBegin').isVisible(),false);assert.equal(await panel.locator('#mfaRenew').isVisible(),true);
  await panel.locator('#securityForm [name="password"]').fill('owner-password-test');await panel.locator('#securityForm [name="code"]').fill('SYNTHETIC-RECOVERY-0');const callsBefore=requests.filter(op=>op==='mfa-recovery-renew').length;await panel.locator('#mfaRenew').click();await panel.locator('#securityNotice').filter({hasText:'seis dígitos nuevos'}).waitFor();assert.equal(requests.filter(op=>op==='mfa-recovery-renew').length,callsBefore,'recovery codes do not authorize renewal');
@@ -80,5 +96,5 @@ try{
  await degraded.locator('#welcome').filter({hasText:'Parte del catálogo'}).waitFor();
  assert.equal(await degraded.locator('body').evaluate(e=>e.classList.contains('authenticated')),true,'partial catalog keeps a new login');
  assert.deepEqual(errors,[],'frontend has no script or CSP errors');assert.ok(requests.includes('profile_patch')&&requests.includes('playback-health'));
- console.log('PASS: mobile Chromium login/menu, isolated favorite sync, adult editor, health dashboard, MFA enrollment, inline errors, countdown expiry, recovery renewal, mobile recovery dialog, authenticator replacement, password rotation, secret cleanup, older-backend fallback and partial-catalog new/restored sessions; no JavaScript/CSP errors.');
+ console.log('PASS: mobile Chromium login/menu, isolated favorite sync, adult editor, health dashboard, capacity traffic/costs/inventory, MFA enrollment, inline errors, countdown expiry, recovery renewal, mobile recovery dialog, authenticator replacement, password rotation, secret cleanup, older-backend fallback and partial-catalog new/restored sessions; no JavaScript/CSP errors.');
 }finally{await browser?.close();server.close()}

@@ -100,7 +100,9 @@ Las reservas, los vídeos y las cuentas del proveedor son mediciones diferentes.
 
 El panel aporta cifras de uso y problemas de la web. Los bytes HLS incluyen segmentos precargados/reintentados; excluyen Android, Movi, playlists, claves y otras peticiones. Android aporta tiempos/cortes/errores por separado, sin bytes medidos. No equivalen al ancho de banda facturado por Cloudflare ni a un bitrate exacto del programa.
 
-Para planificar un escenario, usar `node scripts/capacity-plan.mjs --viewers 100 --mbps 6 --hours 2 --provider-slots 90`. Presenta tráfico estimado decimal y plazas faltantes. Comparar con mediciones reales y la factura de Cloudflare antes de dimensionar costes. No hay precios ni tarifas supuestos.
+El panel añade **Capacidad y coste por espectador**: espectadores, Mbps, horas al día y días del período. Reutiliza el inventario existente para distinguir cupos totales de cupos asignables ahora y avisa cuando no se han confirmado. Estima tráfico decimal y demanda simultánea. Calcula costes por espectador y hora únicamente si se indican proveedor y alojamiento del mismo período; los importes desconocidos no aparecen como cero y se borran al cerrar la sesión. No consulta facturas ni aplica tarifas automáticas.
+
+Para planificar desde CLI, usar `node scripts/capacity-plan.mjs --viewers 100 --mbps 6 --hours 2 --provider-slots 90`. Las opciones `--provider-available`, `--provider-cost` y `--hosting-cost` añaden cupos libres y reparto de costes. Panel y CLI comparten `capacity-plan.js`; la integración móvil de Quality comprueba inventario, cálculo y limpieza de importes. Ver `VERIFICATION-capacity.md`. Comparar con mediciones y facturas reales antes de dimensionar costes.
 
 Queda pendiente una prueba gradual con señales y cuentas de prueba autorizadas, presupuesto de tráfico y acceso a métricas/facturación del alojamiento. No se lanzó carga contra producción ni se ocuparon conexiones reales del proveedor.
 
