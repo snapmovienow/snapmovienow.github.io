@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';import fs from 'node:fs';import http from 'node:http';import path from 'node:path';import {chromium} from 'playwright';
-const root=process.cwd(),errors=[],requests=[];let browser;const server=http.createServer((req,res)=>{const pathname=new URL(req.url,'http://localhost').pathname,file=path.join(root,pathname==='/'?'index.html':pathname.slice(1));if(!file.startsWith(root+path.sep)||!fs.existsSync(file)||fs.statSync(file).isDirectory()){res.writeHead(404);res.end();return}res.setHeader('content-type',file.endsWith('.html')?'text/html':file.endsWith('.js')?'text/javascript':'text/plain');res.end(fs.readFileSync(file))});
+const root=process.cwd(),errors=[],requests=[];let browser;const server=http.createServer((req,res)=>{const pathname=new URL(req.url,'http://localhost').pathname,file=path.join(root,pathname==='/'?'index.html':pathname.slice(1));if(!file.startsWith(root+path.sep)||!fs.existsSync(file)||fs.statSync(file).isDirectory()){res.writeHead(404);res.end();return}res.setHeader('content-type',file.endsWith('.html')?'text/html':file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':file.endsWith('.svg')?'image/svg+xml':'text/plain');res.end(fs.readFileSync(file))});
 try{
  await new Promise(r=>server.listen(0,'127.0.0.1',r));const base='http://127.0.0.1:'+server.address().port;
  browser=await chromium.launch({headless:true,...(process.env.SMN_BROWSER_EXECUTABLE?{executablePath:process.env.SMN_BROWSER_EXECUTABLE}:{}),args:['--no-sandbox','--disable-dev-shm-usage','--disable-gpu']});
@@ -57,7 +57,8 @@ try{
  inventoryStale=false;await panel.locator('#providerRefresh').click();await panel.locator('#capacityInventory').filter({hasText:'Última consulta'}).waitFor();
  await panel.locator('#capacityForm [name="viewers"]').fill('2');assert.match(await panel.locator('#capacitySlots').textContent(),/asignables actuales cubren/);
  if(process.env.SMN_CAPACITY_SCREENSHOT){await panel.locator('#capacityPlanning').screenshot({path:process.env.SMN_CAPACITY_SCREENSHOT});}
- assert.equal(await panel.locator('#capacityPlanning').evaluate(e=>e.scrollWidth>e.clientWidth),false,'capacity panel fits a phone');
+ assert.equal(await panel.locator('#capacityNumbers').evaluate(e=>getComputedStyle(e).display),'grid','capacity stylesheet is applied');
+ assert.equal(await panel.locator('#capacityPlanning').evaluate(e=>e.scrollWidth>e.clientWidth||e.getBoundingClientRect().right>innerWidth),false,'capacity panel fits the phone viewport');
  await panel.locator('#capacityForm [name="hostingCost"]').fill('');assert.match(await panel.locator('#capacityCost').textContent(),/Introduce ambos costes/);
  await panel.locator('#backupStatus').filter({hasText:'sin copia creada'}).waitFor();await panel.locator('#securityForm [name="password"]').fill('owner-password-test');await panel.locator('#backupCreate').click();await panel.locator('#securityNotice').filter({hasText:'Copia creada en el servidor'}).waitFor();assert.equal(await panel.locator('#securityForm [name="password"]').inputValue(),'');
  await panel.locator('#backupVerify').click();await panel.locator('#securityNotice').filter({hasText:'Integridad comprobada: 2 usuarios y 1 servidores'}).waitFor();assert.match(await panel.locator('#automaticBackups option:checked').textContent(),/verificada/);
