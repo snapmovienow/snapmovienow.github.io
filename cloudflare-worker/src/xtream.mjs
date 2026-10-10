@@ -95,7 +95,13 @@ async function details(params, kind, auth, deps, base) {
   const ids = await deps.register(flat.map(({row}) => entry('episode', record.server, row.id, {parentId:record.upstreamId, ext: EXTENSIONS.has(row.container_extension) ? row.container_extension : 'mp4'})));
   flat.forEach(({season, row}, i) => {
     const ext = EXTENSIONS.has(row.container_extension) ? row.container_extension : 'mp4';
-    episodes[season].push({...row, smn_profile:{type:'series',id:record.upstreamId,server:record.server,episodeId:String(row.id)}, id: String(ids[i]), container_extension: ext, direct_source: playbackURL(base, auth, 'series', ids[i], ext)});
+    // The provider's custom_sid is private and has already been removed by
+    // publicMetadata. Strict Xtream clients still require the key: their
+    // JSONObject.getString("custom_sid") aborts the whole episode list if it
+    // is absent. Restore a safe empty string, never the upstream value.
+    episodes[season].push({...row, smn_profile:{type:'series',id:record.upstreamId,server:record.server,episodeId:String(row.id)}, id: String(ids[i]),
+      added:typeof row.added==='string'?row.added:Number.isFinite(row.added)?String(row.added):'',custom_sid:'',
+      container_extension: ext, direct_source: playbackURL(base, auth, 'series', ids[i], ext)});
   });
   const info = series.info;
   if (info.category_id != null) info.category_id = String((await deps.register([entry('series_category', record.server, info.category_id)]))[0]);

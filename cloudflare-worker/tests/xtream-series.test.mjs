@@ -29,6 +29,17 @@ const deps = {
 const request = (method='GET') => new Request(origin+'/player_api.php'+(method==='GET'?'?username=customer&password=customer-test-password&action=get_series_info&series_id=20':''),
   method==='GET'?{}:{method,body:new URLSearchParams({username:'customer',password:'customer-test-password',action:'get_series_info',series_id:'20'})});
 const details = async method => {const response=await handleXtream(request(method),deps);assert.equal(response.status,200);return response.json()};
+// Legacy Smarters reads these with JSONObject.getString/getInt, without has()
+// or optString(). An absent custom_sid throws before the episode/season lists
+// are published. Counting rows alone cannot detect this client failure.
+const readLegacyEpisodes = result => Object.values(result.episodes).flat().map(row => {
+  for (const key of ['id','title','direct_source','added','custom_sid','container_extension']) {
+    assert.ok(Object.hasOwn(row,key),`legacy episode reader: missing ${key}`);
+    assert.equal(typeof row[key],'string',`legacy episode reader: ${key} must be a string`);
+  }
+  assert.ok(Number.isInteger(row.season));
+  return row.id;
+});
 const assertContract = result => {
   assert.ok(Array.isArray(result.seasons));assert.equal(Array.isArray(result.episodes),false);
   assert.deepEqual(result.seasons.map(s=>String(s.season_number)),Object.keys(result.episodes));
@@ -42,16 +53,20 @@ const assertContract = result => {
     }
   }
   for (const secret of Object.values(credentials)) assert.equal(JSON.stringify(result).includes(secret),false);
+  assert.equal(readLegacyEpisodes(result).length,Object.values(result.episodes).flat().length);
+  for (const row of Object.values(result.episodes).flat()) assert.equal(row.custom_sid,'');
 };
 
 // Missing season metadata and explicit episode season: the old API returns []
 // for seasons, although SNAP's tolerant parser can play these episodes.
 data = {info:{name:'Test series',cover:'https://images.example.test/series.jpg'},seasons:[],episodes:{'1':[
-  {id:'880',title:'First episode',container_extension:'mkv',info:{plot:'Story'},direct_source:credentials.origin+'/series/private-provider/private-provider-password/880.mkv'}
+  {id:'880',title:'First episode',container_extension:'mkv',added:'1784413462',custom_sid:credentials.password,info:{plot:'Story'},direct_source:credentials.origin+'/series/private-provider/private-provider-password/880.mkv'}
 ]}};
 let result = await details();
 assert.equal(result.seasons.length,1,'playable episodes must have a selectable season');
 assertContract(result);
+assert.equal(readLegacyEpisodes(result).length,1,'strict clients must finish reading every episode');
+assert.equal(result.episodes['1'][0].custom_sid,'','never forward the provider custom_sid');
 const firstId = result.episodes['1'][0].id;
 assert.deepEqual(result.episodes['1'][0].smn_profile,{type:'series',id:'220',server:'test',episodeId:'880'});
 const played = await handleXtream(new Request(result.episodes['1'][0].direct_source,{headers:{range:'bytes=0-6'}}),deps);
@@ -85,13 +100,14 @@ assert.equal(result.seasons[1].id,600);
 
 // Permission filtering happens before constructing season metadata/counts.
 data={info:{name:'Flat episodes'},episodes:[
-  {id:970,title:'Season one',season:'1',episode_num:1},
+  {id:970,title:'Season one',season:'1',episode_num:1,added:0},
   {id:971,title:'Season two',season:2,episode_num:1},
   {id:972,title:'Season one two',info:{season:1},episode_num:2}
 ]};
 result=await details();assertContract(result);
 assert.deepEqual(result.seasons.map(s=>s.season_number),[1,2],'flat episode lists must be grouped by their season, not discarded');
 assert.deepEqual(result.episodes['1'].map(e=>e.episode_num),[1,2]);
+assert.equal(result.episodes['1'][0].added,'0');assert.equal(result.episodes['1'][1].added,'');
 
 user.permissions.adults=false;
 data={info:{name:'Family series'},seasons:[{season_number:1,episode_count:5},{season_number:2,name:'Adult season'}],episodes:{
