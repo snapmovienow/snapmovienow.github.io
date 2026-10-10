@@ -1,6 +1,6 @@
 # SNAPMOVIENOW Edge
 
-Cloudflare Worker backend for authentication/catalog requests and temporary playback URLs. The public frontend remains on GitHub Pages.
+Cloudflare Worker backend for authentication/catalog requests and temporary playback URLs. The public frontend runs on GitHub Pages at https://app.snaptvnow.com with enforced HTTPS.
 
 ## Administration, recovery and operations (v43)
 
@@ -17,7 +17,7 @@ in its configured root, `cloudflare-worker`. That directory now has its own
 Quality also runs the clean installation and production dry build from that root.
 After publication, require a successful Cloudflare build and v43 from `/health`
 before relying on the new server features. Check the first daily backup after its
-cron runs; MFA enrollment remains a deliberate owner action. Keep server secrets unchanged.
+cron runs. The owner confirmed SNAP administrator MFA enrollment and a new login on 2026-10-09. Recovery renewal remains a private owner action: it requires the password and a fresh authenticator code, invalidates old recovery codes and sessions, preserves the factor, and shows eight new codes once. Keep server secrets unchanged.
 
 Workers Builds dependency installation now waits for GitHub Quality to approve
 the exact checked-out commit and branch before the existing `npx wrangler deploy`

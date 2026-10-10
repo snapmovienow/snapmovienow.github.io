@@ -14,7 +14,7 @@ try{
  assert.equal((await call(stage,{action:'status'})).data.configured,false,'staging never reads production administrator storage');
  assert.equal((await call(stage,{action:'login',username:'owner',password:'owner-password-test'})).status,401);
  const login=await call(prod,{action:'login',username:'owner',password:'owner-password-test'});const token=login.data.access_token;assert.ok(token);
- const admin=(action,b={})=>call(prod,{action,access_token:token,...b});
+ let activeToken=token;const admin=(action,b={})=>call(prod,{action,access_token:activeToken,...b});
  await admin('save',{create:true,username:'customer',password:'customer-password-test',permissions:{movies:true,series:true,tv:true,adults:false},status:'active'});
  const customer=(await call(prod,{op:'auth',username:'customer',password:'customer-password-test'},'/')).data.access_token;assert.ok(customer);
  const patch={kind:'progress',key:'movie:ccf:42',type:'movie',id:'42',server:'ccf',time:100,duration:1000,updatedAt:Date.now()};
@@ -27,5 +27,11 @@ try{
  const begin=await admin('mfa-begin',{password:'owner-password-test'});assert.equal(begin.status,200);
  const confirmed=await admin('mfa-confirm',{password:'owner-password-test',code:await totp(begin.data.seed,Math.floor(Date.now()/30000))});assert.equal(confirmed.status,200);assert.equal(confirmed.data.recoveryCodes.length,8);
  assert.equal((await admin('users')).status,401);
- console.log('PASS: actual workerd/SQLite production modules; isolated staging, protected profile storage, encrypted export, atomic restoration, old-session revocation and MFA enrollment.');
+ const afterMfa=await call(prod,{action:'login',username:'owner',password:'owner-password-test',code:confirmed.data.recoveryCodes[0]});assert.equal(afterMfa.status,200);activeToken=afterMfa.data.access_token;
+ const renewed=await admin('mfa-recovery-renew',{password:'owner-password-test',code:await totp(begin.data.seed,Math.floor(Date.now()/30000)+1)});assert.equal(renewed.status,200);assert.equal(renewed.data.recoveryCodes.length,8);assert.equal(renewed.data.signInAgain,true);
+ assert.equal((await admin('users')).status,401,'real SQLite recovery renewal revokes the prior session');
+ assert.equal((await call(prod,{action:'login',username:'owner',password:'owner-password-test',code:confirmed.data.recoveryCodes[1]})).status,401,'SQLite rejects a superseded recovery code');
+ const afterRenew=await call(prod,{action:'login',username:'owner',password:'owner-password-test',code:renewed.data.recoveryCodes[0]});assert.equal(afterRenew.status,200);activeToken=afterRenew.data.access_token;
+ assert.equal((await admin('security-status')).data.recoveryRemaining,7,'a new recovery code still works exactly once');
+ console.log('PASS: actual workerd/SQLite production modules; isolated staging, protected profile storage, encrypted export, atomic restoration, old-session revocation, MFA enrollment and authenticated recovery renewal.');
 }finally{await mf.dispose()}

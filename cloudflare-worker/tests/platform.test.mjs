@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {automaticBackup} from '../src/backups.mjs';
-import {totp,unseal,seal} from '../src/security.mjs';
+import {totp,unseal,seal,checkFactor,hashSecret} from '../src/security.mjs';
 import worker,{PlaybackSession} from '../src/index.js';
 class Store {
  constructor(){this.data=new Map();this.queue=Promise.resolve()}
@@ -47,7 +47,8 @@ try{
  for(let i=0;i<5;i++){clock+=30000;assert.equal((await alice('playback_metric',{metric})).status,200)}
  const health=(await admin('playback-health')).data;assert.equal(health.groups[0].starts,5);assert.equal(health.groups[0].stallPercent,10);assert.equal(health.groups[0].startupP95UpperMs,5000);assert.equal(health.alerts.length,1);assert.ok(!JSON.stringify(health).includes('alice'));
  assert.equal((await alice('playback_metric',{metric:{...metric,server:'unknown'}})).status,400);
- const begin=await admin('mfa-begin',{password:'owner-password-test'});assert.equal(begin.status,200);assert.equal(begin.data.seed.length,32);assert.match(begin.data.uri,/otpauth:\/\/totp/);
+ assert.equal((await admin('mfa-recovery-renew',{password:'owner-password-test',code:'123456'})).status,409,'recovery renewal cannot bypass enrollment');
+ const begin=await admin('mfa-begin',{password:'owner-password-test'});assert.equal(begin.status,200);assert.equal(begin.data.seed.length,32);assert.equal(begin.data.expiresInSeconds,600);assert.match(begin.data.uri,/otpauth:\/\/totp/);
  assert.equal((await admin('mfa-confirm',{password:'owner-password-test',code:'bad'})).status,401);assert.equal((await admin('users')).status,200,'a bad reauthentication code does not revoke the valid session');
  const code=await totp(begin.data.seed,Math.floor(clock/30000));const confirm=await admin('mfa-confirm',{password:'owner-password-test',code});assert.equal(confirm.status,200);assert.equal(confirm.data.recoveryCodes.length,8);
  assert.equal((await admin('users')).status,401,'enabling MFA revokes previous administrator sessions');
@@ -55,7 +56,24 @@ try{
  assert.equal((await call({action:'login',username:'owner',password:'owner-password-test',code})).status,401,'the enrollment code cannot be replayed');
  clock+=30000;const newLogin=await call({action:'login',username:'owner',password:'owner-password-test',code:await totp(begin.data.seed,Math.floor(clock/30000)),browser_cookie:true});assert.equal(newLogin.status,200);cookie=newLogin.response.headers.get('Set-Cookie').split(';')[0];
  const state=objects.get('__smn_accounts_v1').state.storage;assert.ok(!JSON.stringify(await state.get('admin')).includes(begin.data.seed),'stored authenticator seed is encrypted');
- const recovery=confirm.data.recoveryCodes;
+ const originalRecovery=confirm.data.recoveryCodes,priorAdmin=await state.get('admin');
+ clock+=30000;const renewCode=await totp(begin.data.seed,Math.floor(clock/30000));
+ assert.equal((await admin('mfa-recovery-renew',{password:'wrong-password',code:renewCode})).status,401);
+ assert.equal((await admin('mfa-recovery-renew',{password:'owner-password-test',code:originalRecovery[0]})).data.error,'mfa_authenticator_required','an exposed recovery code cannot authorize renewal');
+ assert.equal((await admin('mfa-recovery-renew',{password:'owner-password-test',code:await totp(begin.data.seed,Math.floor(clock/30000)-1)})).status,401,'a used authenticator code cannot renew recovery');
+ assert.deepEqual(await state.get('admin'),priorAdmin,'failed renewals leave the factor and recovery codes unchanged');
+ const renewals=await Promise.all([admin('mfa-recovery-renew',{password:'owner-password-test',code:renewCode}),admin('mfa-recovery-renew',{password:'owner-password-test',code:renewCode})]);
+ assert.equal(renewals.filter(r=>r.status===200).length,1,'concurrent renewal accepts the authenticator code only once');
+ const renewed=renewals.find(r=>r.status===200);assert.equal(renewed.data.signInAgain,true);
+ const recovery=renewed.data.recoveryCodes;assert.equal(new Set(recovery).size,8);assert.ok(recovery.every(c=>/^[A-F0-9]{20}$/.test(c)&&!originalRecovery.includes(c)));
+ const renewedAdmin=await state.get('admin');assert.equal(renewedAdmin.mfa.secret,priorAdmin.mfa.secret,'renewal preserves the enrolled authenticator');assert.equal(renewedAdmin.version,priorAdmin.version+1);
+ assert.deepEqual(renewedAdmin.mfa.recovery,await Promise.all(recovery.map(hashSecret)),'only recovery hashes are stored');
+ for(const old of originalRecovery)assert.equal((await checkFactor(env,renewedAdmin,old,clock)).valid,false,'all old recovery codes are invalid');
+ assert.equal((await admin('users')).status,401,'renewal revokes old administrator sessions');
+ assert.equal((await call({action:'login',username:'owner',password:'owner-password-test',code:renewCode})).status,401,'the renewal code cannot be replayed at login');
+ clock+=30000;const renewedLogin=await call({action:'login',username:'owner',password:'owner-password-test',code:await totp(begin.data.seed,Math.floor(clock/30000)),browser_cookie:true});assert.equal(renewedLogin.status,200);cookie=renewedLogin.response.headers.get('Set-Cookie').split(';')[0];
+ assert.equal((await admin('security-status')).data.recoveryRemaining,8);
+
  const exported=await admin('backup-export',{password:'owner-password-test',code:recovery[0]});assert.equal(exported.status,200);assert.ok(!JSON.stringify(exported.data).includes('customer-password-test'));assert.ok(!JSON.stringify(exported.data).includes('alice'));
  assert.equal((await admin('backup-export',{password:'owner-password-test',code:recovery[0]})).status,401,'recovery codes are one-time');
  const plain=await unseal(env,exported.data.blob);assert.equal(plain.users.length,2);assert.equal(plain.admin,undefined);assert.equal(plain.users[0].permissions.adults,false);
@@ -68,11 +86,11 @@ try{
  assert.equal((await admin('delete',{username:'bob'})).status,200);
  const priorId=(await state.get('user:alice')).id;
  const restored=await admin('backup-restore',{blob:exported.data.blob,password:'owner-password-test',code:recovery[2],confirmation:preview.data.confirmation,confirmText:'RESTAURAR'});assert.equal(restored.status,200);assert.equal((await admin('users')).data.length,2);assert.notEqual((await state.get('user:alice')).id,priorId);assert.equal((await alice('session_info')).status,401,'restore invalidates prior customer identities');assert.equal((await admin('security-status')).data.mfaEnabled,true,'restore preserves administrator MFA');
- const audit=(await admin('audit')).data;assert.ok(audit.some(e=>e.action==='backup_restored'));assert.ok(audit.some(e=>e.action==='user_deleted'));assert.ok(!JSON.stringify(audit).includes('password'));
+ const audit=(await admin('audit')).data;assert.ok(audit.some(e=>e.action==='mfa_recovery_renewed'));assert.ok(!JSON.stringify(audit).includes(recovery[0]));assert.ok(audit.some(e=>e.action==='backup_restored'));assert.ok(audit.some(e=>e.action==='user_deleted'));assert.ok(!JSON.stringify(audit).includes('password'));
  const big={payload:'x'.repeat(500000)};assert.deepEqual(await unseal(env,await seal(env,big)),big,'large backups do not overflow the JavaScript argument stack');
  const automatic=new Store();await automatic.put('admin',{username:'owner'});for(const u of plain.users)await automatic.put('user:'+u.username,u);
  for(let i=0;i<4;i++){clock+=86400000;assert.equal((await automaticBackup(automatic,env)).ok,true)}
  assert.equal((await automatic.list({prefix:'auto-backup-index:'})).size,3);assert.ok([...(await automatic.list({prefix:'auto-backup:'})).values()].every(chunk=>chunk.length<=16000));assert.equal((await automaticBackup(automatic,{...env,ENVIRONMENT:'staging'})).skipped,true);
  const oversized=await worker.fetch(new Request('https://api.snaptvnow.com/admin',{method:'POST',headers:{'Content-Length':'4000001'},body:'{}'}),env);assert.equal(oversized.status,413);
- console.log('PASS: RFC TOTP, trusted HttpOnly cookies, legacy/native compatibility, per-user synchronization, stale deletes, aggregate health, encrypted MFA, replay protection, one-time recovery, tampered/foreign backups, confirmed restoration and session revocation.');
+ console.log('PASS: RFC TOTP, trusted HttpOnly cookies, legacy/native compatibility, per-user synchronization, stale deletes, aggregate health, encrypted MFA, replay protection, atomic recovery renewal, old-code rejection, one-time recovery, tampered/foreign backups, confirmed restoration and session revocation.');
 }finally{Date.now=realNow;globalThis.fetch=upstream}

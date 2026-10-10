@@ -32,7 +32,7 @@ await media.body.cancel();assert.equal(cancels,1,'closing the wrapped stream mus
 assert.equal(events.length,2,'successful media requests do not create log events');
 
 const health = await worker.fetch(new Request('https://example.test/health'),{});
-assert.equal((await health.json()).version,SERVICE_VERSION);
+const healthInfo=await health.json();assert.equal(healthInfo.version,SERVICE_VERSION);assert.ok(healthInfo.capabilities.includes('admin-recovery-renewal'),'public deployment health identifies support without returning any private data');
 assert.ok(health.headers.get('X-SMN-Request-ID'));
 const unauthorised = await worker.fetch(new Request('https://example.test/player_api.php'),{});
 assert.equal(unauthorised.status,401); assert.equal((await unauthorised.json()).error,'credentials_required');

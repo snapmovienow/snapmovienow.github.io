@@ -19,6 +19,7 @@ async function key(env){if(!env.TICKET_SECRET)throw Error('secret_missing');cons
 export async function seal(env,data){const iv=crypto.getRandomValues(new Uint8Array(12)),plain=encoder.encode(JSON.stringify(data)),cipher=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv},await key(env),plain));const out=new Uint8Array(iv.length+cipher.length);out.set(iv);out.set(cipher,iv.length);return base64(out)}
 export async function unseal(env,text){try{if(typeof text!=='string'||text.length>4000000)return null;const bytes=unbase64(text);if(bytes.length<29)return null;return JSON.parse(new TextDecoder().decode(await crypto.subtle.decrypt({name:'AES-GCM',iv:bytes.slice(0,12)},await key(env),bytes.slice(12))))}catch{return null}}
 export async function hashSecret(text){return base64(new Uint8Array(await crypto.subtle.digest('SHA-256',encoder.encode(text))))}
+function recoveryCodes(){return Array.from({length:8},()=>Array.from(crypto.getRandomValues(new Uint8Array(10)),x=>x.toString(16).padStart(2,'0')).join('').toUpperCase())}
 export async function checkFactor(env,admin,code,now=Date.now()){
  if(!admin.mfa?.enabled)return {valid:true,admin};
  const secret=await unseal(env,admin.mfa.secret);if(!secret?.seed)return {valid:false};
@@ -32,7 +33,7 @@ export async function securityRoute(store,env,path,b,{passwordHash,audit}){
  const answer=(data,status=200)=>Response.json(data,{status});
  const admin=await store.get('admin');if(!admin)return answer({error:'admin_required'},401);
  if(path==='/security-status')return answer({mfaEnabled:admin.mfa?.enabled===true,recoveryRemaining:admin.mfa?.recovery?.length||0});
- // Reauthenticate before enrollment, disabling MFA or exporting private data.
+ // Reauthenticate before changing MFA/recovery or exporting private data.
  const attempt='security-attempt:'+String(b.actor||admin.id),now=Date.now();
  const allowed=await store.transaction(async tx=>{let a=await tx.get(attempt);if(!a||a.until<now)a={count:0,until:now+15*60000};a.count++;await tx.put(attempt,a);return a.count<=10});
  if(!allowed)return answer({error:'try_later'},429);
@@ -41,16 +42,29 @@ export async function securityRoute(store,env,path,b,{passwordHash,audit}){
   if(admin.mfa?.enabled)return answer({error:'mfa_already_enabled'},409);
   const seed=base32(crypto.getRandomValues(new Uint8Array(20)));
   await store.put('mfa-pending',{actor:b.actor,secret:await seal(env,{seed}),until:now+10*60000});
-  return answer({seed,uri:'otpauth://totp/'+encodeURIComponent('SNAPTVNOW:'+admin.username)+'?'+new URLSearchParams({secret:seed,issuer:'SNAPTVNOW',algorithm:'SHA1',digits:'6',period:'30'})});
+  return answer({seed,expiresInSeconds:600,uri:'otpauth://totp/'+encodeURIComponent('SNAPTVNOW:'+admin.username)+'?'+new URLSearchParams({secret:seed,issuer:'SNAPTVNOW',algorithm:'SHA1',digits:'6',period:'30'})});
  }
  if(path==='/mfa-confirm')return store.transaction(async tx=>{
   const pending=await tx.get('mfa-pending'),current=await tx.get('admin');
   if(current.mfa?.enabled||!pending||pending.until<=now||pending.actor!==b.actor)return answer({error:'mfa_setup_expired'},409);
   const secret=await unseal(env,pending.secret),step=secret&&await verifyTotp(secret.seed,String(b.code||''),now);
   if(step===null||step===false||step===undefined)return answer({error:'mfa_invalid'},401);
-  const codes=Array.from({length:8},()=>Array.from(crypto.getRandomValues(new Uint8Array(10)),x=>x.toString(16).padStart(2,'0')).join('').toUpperCase());
+  const codes=recoveryCodes();
   await tx.put('admin',{...current,version:current.version+1,mfa:{enabled:true,secret:pending.secret,lastStep:step,recovery:await Promise.all(codes.map(hashSecret))}});
   await tx.delete('mfa-pending');await tx.delete(attempt);await audit(tx,b.actor,'mfa_enabled');return answer({ok:true,recoveryCodes:codes,signInAgain:true});
+ });
+ if(path==='/mfa-recovery-renew')return store.transaction(async tx=>{
+  const current=await tx.get('admin');
+  if(!current?.mfa?.enabled)return answer({error:'mfa_not_enabled'},409);
+  if(current.version!==admin.version||current.hash!==admin.hash)return answer({error:'admin_required'},401);
+  // A leaked recovery code must never authorize replacing all recovery codes.
+  if(!/^\d{6}$/.test(String(b.code||'')))return answer({error:'mfa_authenticator_required'},401);
+  const secret=await unseal(env,current.mfa.secret),step=secret&&await verifyTotp(secret.seed,String(b.code),now,current.mfa.lastStep??-1);
+  if(!Number.isInteger(step))return answer({error:'mfa_invalid'},401);
+  const codes=recoveryCodes();
+  await tx.put('admin',{...current,version:current.version+1,mfa:{...current.mfa,lastStep:step,recovery:await Promise.all(codes.map(hashSecret))}});
+  await tx.delete(attempt);await audit(tx,b.actor,'mfa_recovery_renewed');
+  return answer({ok:true,recoveryCodes:codes,signInAgain:true});
  });
  const factor=await store.transaction(async tx=>{const current=await tx.get('admin');const r=await checkFactor(env,current,b.code,now);if(r.valid&&current.mfa?.enabled)await tx.put('admin',r.admin);return r});
  if(!factor.valid)return answer({error:'mfa_invalid'},401);

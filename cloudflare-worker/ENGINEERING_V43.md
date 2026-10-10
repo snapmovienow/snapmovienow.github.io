@@ -12,7 +12,7 @@ MFA, copias automáticas, sincronización remota y métricas agregadas están di
 
 - Web y panel separados en scripts y módulos. Configuración de API central en `app-config.js`; la API pública es `https://api.snaptvnow.com`.
 - La adquisición del catálogo está separada en `catalog-loader.js`, con API/permisos de entrada y listas/avisos de salida, sin acceso al DOM, sesiones o reproductor. Respuestas nulas, objetos de error y elementos inválidos de un proveedor ya no interrumpen el inicio ni la recuperación de sesión: se conserva el catálogo válido y se muestra un aviso parcial. El resto de autenticación/presentación/reproducción todavía comparte parte de `app.js`; la separación completa sigue pendiente.
-- MFA TOTP para el administrador, semilla cifrada AES-GCM y ocho códigos de recuperación de un solo uso. Activar o desactivar MFA revoca las sesiones administrativas anteriores. Una ventana conserva los códigos hasta que el administrador confirma que los guardó; el sondeo del panel se detiene mientras tanto.
+- MFA TOTP para el administrador, semilla cifrada AES-GCM y ocho códigos de recuperación de un solo uso. Activar, desactivar MFA o renovar recuperación revoca las sesiones administrativas anteriores. Renovar exige contraseña actual y un código TOTP nuevo; los códigos de recuperación no autorizan esta operación. El reemplazo es transaccional, conserva el autenticador, invalida los ocho códigos anteriores, almacena solo hashes y registra el cambio sin secretos. La inscripción muestra un contador de diez minutos, borra la clave vencida y presenta los errores junto al formulario. Una ventana adaptada al móvil conserva los códigos hasta que el administrador confirma que los guardó; el sondeo del panel se detiene mientras tanto.
 - Historial administrativo acotado: inicios, usuarios, servidores, configuración Xtream, MFA y copias. No guarda contraseñas, tokens, URLs de reproducción ni diagnósticos completos.
 - Copias lógicas cifradas de usuarios/permisos/vencimientos y conexiones. Exportación y restauración requieren contraseña actual y MFA cuando está activado. Una copia alterada, de otra clave o de otro entorno es rechazada. Vista previa y texto RESTAURAR antes de reemplazar datos. La restauración cambia las identidades de clientes y cierra sus accesos anteriores; mantiene el administrador y su MFA.
 - Cron diario a las 05:17 UTC: últimas tres copias cifradas en el servidor, divididas en bloques pequeños para respetar el límite por valor de almacenamiento. Descarga externa desde Seguridad y recuperación. No se incluyen sesiones, reservas, progreso ni configuración MFA en estas copias.
@@ -23,11 +23,21 @@ MFA, copias automáticas, sincronización remota y métricas agregadas están di
 
 ## Activación por el propietario
 
-MFA se ofrece en el panel y permanece apagado hasta que el propietario lo configura, confirma un código y guarda los ocho códigos de recuperación. El proceso no inscribe automáticamente el teléfono del propietario ni cambia sus credenciales.
+El propietario confirmó la activación TOTP y un nuevo inicio de sesión con Google Authenticator el 9 de octubre de 2026. Esa confirmación corresponde al panel SNAP; no demuestra que las cuentas de GitHub o Cloudflare tengan MFA. La renovación de recuperación exige una acción privada del propietario en el panel y un nuevo inicio de sesión posterior.
 
-Las sesiones HttpOnly/Secure/SameSite=Strict se utilizan desde `app.snaptvnow.com` y `panel.snaptvnow.com`. GitHub Pages mantiene la sesión por token porque es un dominio diferente; los clientes Xtream mantienen el protocolo existente. La conexión actual no permite modificar DNS/hosting ni iniciar sesión en Cloudflare. No se ha activado un dominio de frontend ni el Worker remoto de pruebas durante esta entrega.
+`app.snaptvnow.com` está configurado en GitHub Pages con `CNAME` en la raíz. DNS público, certificado HTTPS, redirección HTTP → HTTPS, portada, panel y configuración de API se comprobaron el 9 de octubre. El TXT de verificación de la organización GitHub debe conservarse. El panel se abre en `https://app.snaptvnow.com/admin.html`; `panel.snaptvnow.com` no tiene hosting confirmado y no debe anunciarse como disponible.
 
-Para migrar el frontend: configurar `app.snaptvnow.com` como dominio personalizado de GitHub Pages y su DNS, esperar certificado HTTPS y comprobar reproducción/inicio/cierre. El panel puede abrirse en `https://app.snaptvnow.com/admin.html`; un hostname `panel.snaptvnow.com` necesita hosting/DNS que sirva el mismo panel. No publicar un archivo CNAME antes de que el dominio y certificado estén preparados. `WEB_ORIGINS` ya contempla ambos hosts.
+En el dominio propio la web y el panel solicitan sesiones mediante cookies `HttpOnly; Secure; SameSite=Strict`, con cookies host-only en `api.snaptvnow.com`. El almacenamiento del navegador conserva el marcador `cookie`, sin token secreto. Se comprobaron CORS para el origen permitido y el rechazo de la lectura sin sesión; el propietario confirmó acceso real. La inspección de cookies de una sesión real del propietario no se realizó. El dominio antiguo de GitHub Pages redirige al nuevo; los clientes nativos/Xtream conservan el protocolo existente.
+
+Para renovar códigos expuestos o perdidos sin retirar MFA:
+
+1. Abrir **Seguridad y recuperación** desde una sesión válida.
+2. Introducir contraseña actual y los seis dígitos nuevos del autenticador. Un código usado para entrar ya no sirve; esperar al siguiente.
+3. Pulsar **Renovar códigos de recuperación**. Los códigos anteriores quedan invalidados inmediatamente; el autenticador se conserva y las sesiones se revocan.
+4. Guardar los ocho códigos nuevos de forma privada. No fotografiarlos para compartirlos ni enviarlos por chat. Pulsar **Ya guardé los códigos; iniciar sesión**.
+5. Volver a entrar con el siguiente código del autenticador y comprobar que aparece **Segundo factor activado**. Reemplazar el respaldo de recuperación anterior.
+
+Para una nueva migración de Pages, verificar primero la propiedad del dominio, guardar el dominio personalizado en GitHub Pages (esto publica `CNAME`), configurar después el CNAME DNS hacia `snapmovienow.github.io`, esperar el certificado y activar **Enforce HTTPS**. `WEB_ORIGINS` ya contempla el hostname actual. No cambiar ni retirar el dominio API durante este procedimiento.
 
 Para el entorno remoto de pruebas, desde `cloudflare-worker`:
 
