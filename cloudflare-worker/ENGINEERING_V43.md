@@ -6,7 +6,7 @@ El fallo de Cloudflare del 9 de octubre se identificó en las capturas del build
 
 Se añadió el lockfile propio del Worker, conservando Wrangler 4.149.0 y las versiones e integridades ya fijadas en la raíz. Quality instala y compila también desde la carpeta de Cloudflare para detectar este problema antes de futuras publicaciones. El commit `ac15bf8bf39832c4b831e9b57412cefce54a969d` pasó Quality y Cloudflare; `https://api.snaptvnow.com/health` ya responde con v43.
 
-MFA, copias automáticas, sincronización remota y métricas agregadas están disponibles en ese servidor. La publicación del Worker no inscribe MFA en el teléfono del propietario; debe configurarse desde el panel. La primera copia automática queda por comprobar después de ejecutarse el cron; la validación local de cifrado/restauración no certifica esa ejecución en producción.
+MFA, copias automáticas, sincronización remota y métricas agregadas están disponibles en ese servidor. La publicación del Worker no inscribe MFA en el teléfono del propietario; debe configurarse desde el panel. El panel v43.3 muestra la última copia y el estado del intento, permite crear una copia con reautenticación y comprobar su integridad sin restaurar. La primera ejecución automática en producción queda por comprobar después del cron; la validación local de cifrado/restauración no certifica esa ejecución en producción.
 
 ## Cambios listos
 
@@ -77,7 +77,7 @@ La evidencia de navegador se puede generar con `SMN_LIVE_AUDIO_REPORT=artifacts/
 
 ## Recuperación
 
-1. Mantener una descarga cifrada fuera del servidor y la clave TICKET_SECRET en almacenamiento seguro separado. Rotar o perder la clave impide leer copias antiguas y la semilla MFA; no rotarla sin plan de migración.
+1. Revisar «Copia cifrada» en el panel: crear una copia si hace falta con contraseña y código nuevo MFA, seleccionar y verificarla, y comprobar la fecha de la tarea diaria (05:17 UTC). La verificación comprueba integridad, formato y entorno; no es un ensayo de restauración. Mantener una descarga cifrada fuera del servidor y la clave TICKET_SECRET en almacenamiento seguro separado. Rotar o perder la clave impide leer copias antiguas y la semilla MFA; no rotarla sin plan de migración.
 2. En el panel, seleccionar archivo, revisar fecha/cantidad de usuarios/servidores, introducir contraseña y un nuevo código MFA o recuperación y escribir RESTAURAR.
 3. Los clientes deben volver a iniciar sesión. Revisar usuarios/permisos, actualizar el inventario del proveedor y probar catálogo y una señal autorizada.
 4. Las copias contienen el estado lógico a su fecha. No restauran el administrador, códigos MFA, historial, progreso o reservas. Las conexiones guardadas necesitan que el proveedor siga activo; el inventario y sus tickets expiran y deben revalidarse.

@@ -23,8 +23,8 @@ export async function accountsFetch(state,env,req){
  if(p==='/audit-write'){await store.transaction(tx=>writeAudit(tx,b.actor,b.action,b.target));return answer({ok:true})}
  if(p==='/audit')return answer((await store.get('security-audit')||[]).slice(-100).reverse());
  if(p==='/backup-automatic')return answer(await automaticBackup(store,env));
- if(p==='/backup-preview'||p==='/backup-list')return backupRoute(store,env,p,b,leases);
- if(['/security-status','/mfa-begin','/mfa-confirm','/mfa-disable','/mfa-recovery-renew','/backup-export','/backup-restore','/backup-download'].includes(p)){
+ if(['/backup-preview','/backup-list','/backup-status','/backup-verify'].includes(p))return backupRoute(store,env,p,b,leases);
+ if(['/security-status','/mfa-begin','/mfa-confirm','/mfa-disable','/mfa-recovery-renew','/backup-export','/backup-restore','/backup-download','/backup-create'].includes(p)){
   const result=await securityRoute(store,env,p,b,{passwordHash,audit:writeAudit});
   if(result)return result;
   return backupRoute(store,env,p,b,leases);

@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import {build} from 'esbuild';
 import {Miniflare,convertV4MiniflareOptions} from 'miniflare';
-import {totp} from '../cloudflare-worker/src/security.mjs';
+import {totp,unseal,seal} from '../cloudflare-worker/src/security.mjs';
 const bundled=await build({entryPoints:['cloudflare-worker/src/index.js'],bundle:true,format:'esm',platform:'browser',external:['cloudflare:sockets'],write:false});
 const common={modules:true,script:bundled.outputFiles[0].text,compatibilityDate:'2026-10-03',compatibilityFlags:['enable_request_signal'],durableObjects:{PLAYBACK_SESSIONS:{className:'PlaybackSession',useSQLite:true}},bindings:{TICKET_SECRET:'local-runtime-secret-never-deployed-123456',ADMIN_SETUP_SECRET:'local-runtime-setup-secret-never-deployed-123456',WEB_ORIGINS:'http://127.0.0.1:8788'}};
 const options={workers:[{...common,name:'production-test',bindings:{...common.bindings,ENVIRONMENT:'production'}},{...common,name:'staging-test',bindings:{...common.bindings,ENVIRONMENT:'staging'}}],durableObjectsPersist:false};
@@ -15,7 +15,7 @@ try{
  assert.equal((await call(stage,{action:'login',username:'owner',password:'owner-password-test'})).status,401);
  const login=await call(prod,{action:'login',username:'owner',password:'owner-password-test'});const token=login.data.access_token;assert.ok(token);
  let activeToken=token;const admin=(action,b={})=>call(prod,{action,access_token:activeToken,...b});
- await admin('save',{create:true,username:'customer',password:'customer-password-test',permissions:{movies:true,series:true,tv:true,adults:false},status:'active'});
+ await admin('save',{create:true,username:'customer',password:'customer-password-test',permissions:{movies:true,series:false,tv:true,adults:false},expiresAt:Date.now()+86400000,status:'active'});
  const customer=(await call(prod,{op:'auth',username:'customer',password:'customer-password-test'},'/')).data.access_token;assert.ok(customer);
  const patch={kind:'progress',key:'movie:ccf:42',type:'movie',id:'42',server:'ccf',time:100,duration:1000,updatedAt:Date.now()};
  assert.equal((await call(prod,{op:'profile_patch',access_token:customer,patches:[patch]},'/')).data.records[0].time,100);
@@ -33,5 +33,20 @@ try{
  assert.equal((await call(prod,{action:'login',username:'owner',password:'owner-password-test',code:confirmed.data.recoveryCodes[1]})).status,401,'SQLite rejects a superseded recovery code');
  const afterRenew=await call(prod,{action:'login',username:'owner',password:'owner-password-test',code:renewed.data.recoveryCodes[0]});assert.equal(afterRenew.status,200);activeToken=afterRenew.data.access_token;
  assert.equal((await admin('security-status')).data.recoveryRemaining,7,'a new recovery code still works exactly once');
+ const backupCreated=await admin('backup-create',{password:'owner-password-test',code:renewed.data.recoveryCodes[1]});assert.equal(backupCreated.status,200);
+ assert.equal((await admin('backup-status')).data.status,'success');
+ const verification=await admin('backup-verify',{id:backupCreated.data.id});assert.equal(verification.data.verified,true);assert.equal(verification.data.users,1);
+ const downloaded=await admin('backup-download',{id:backupCreated.data.id,password:'owner-password-test',code:renewed.data.recoveryCodes[2]});assert.equal(downloaded.status,200);
+ const snapshot=await unseal(common.bindings,downloaded.data.blob);const expiry=snapshot.users[0].expiresAt;
+ snapshot.settings.provider={username:'synthetic-provider',encrypted:'isolated-test-data',maxConnections:3};
+ snapshot.settings['xtream-config']={enabled:false,version:2};
+ const drill=await seal(common.bindings,snapshot),drillPlan=(await admin('backup-preview',{blob:drill})).data;
+ const oldCustomer=(await call(prod,{op:'auth',username:'customer',password:'customer-password-test'},'/')).data.access_token;
+ await admin('delete',{username:'customer'});assert.equal((await admin('users')).data.length,0);
+ const recovered=await admin('backup-restore',{password:'owner-password-test',code:renewed.data.recoveryCodes[3],blob:drill,confirmation:drillPlan.confirmation,confirmText:'RESTAURAR'});assert.equal(recovered.status,200);
+ const recoveredUser=(await admin('users')).data[0];assert.equal(recoveredUser.expiresAt,expiry);assert.deepEqual(recoveredUser.permissions,{movies:true,series:false,tv:true,adults:false});
+ assert.equal((await admin('overview')).data.provider.username,'synthetic-provider');assert.equal((await admin('xtream-settings')).data.enabled,false);
+ assert.equal((await call(prod,{op:'session_info',access_token:oldCustomer},'/')).status,401);assert.equal((await admin('security-status')).data.mfaEnabled,true);
+ assert.equal((await call(prod,{op:'auth',username:'customer',password:'customer-password-test'},'/')).status,200,'recovered credentials still work');
  console.log('PASS: actual workerd/SQLite production modules; isolated staging, protected profile storage, encrypted export, atomic restoration, old-session revocation, MFA enrollment and authenticated recovery renewal.');
 }finally{await mf.dispose()}

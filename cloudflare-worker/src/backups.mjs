@@ -1,7 +1,12 @@
 import {seal,unseal,hashSecret,writeAudit} from './security.mjs';
 const format='SNAP-encrypted-backup-v1';
 const keys=['provider','providers','source-pools','pool','xtream-config'];
-const validUser=u=>u&&/^[a-z0-9_.@-]{3,80}$/.test(u.username)&&typeof u.hash==='string'&&/^[a-f0-9]{64}$/.test(u.hash)&&typeof u.salt==='string'&&['active','suspended'].includes(u.status)&&Number.isSafeInteger(u.version);
+const statusKey='backup-status',chunkSize=16000;
+const validUser=u=>u&&/^[a-z0-9_.@-]{3,80}$/.test(u.username)&&typeof u.hash==='string'&&/^[a-f0-9]{64}$/.test(u.hash)&&typeof u.salt==='string'&&u.salt.length>0&&['active','suspended'].includes(u.status)&&Number.isSafeInteger(u.version)&&u.version>=1&&u.version<Number.MAX_SAFE_INTEGER&&(u.expiresAt==null||Number.isFinite(u.expiresAt)&&u.expiresAt>0)&&(u.permissions===undefined||u.permissions&&typeof u.permissions==='object'&&['movies','series','tv','adults'].every(k=>u.permissions[k]===undefined||typeof u.permissions[k]==='boolean'));
+function validSnapshot(snapshot,env){
+ return snapshot?.format===format&&snapshot.environment===(env.ENVIRONMENT||'production')&&Array.isArray(snapshot.users)&&snapshot.users.length<=10000&&snapshot.users.every(validUser)&&new Set(snapshot.users.map(u=>u.username)).size===snapshot.users.length&&snapshot.settings&&typeof snapshot.settings==='object'&&!Array.isArray(snapshot.settings)&&Object.keys(snapshot.settings).every(k=>keys.includes(k))&&Number.isSafeInteger(snapshot.createdAt)&&snapshot.createdAt>0&&snapshot.createdAt<=Date.now()+60000;
+}
+const planFor=snapshot=>({users:snapshot.users.length,providers:snapshot.settings.providers?.length||(snapshot.settings.provider?1:0),createdAt:snapshot.createdAt});
 async function exportSnapshot(store,env){
  const snapshot=await store.transaction(async tx=>{
   const users=[...(await tx.list({prefix:'user:'})).values()],settings={};
@@ -11,38 +16,79 @@ async function exportSnapshot(store,env){
  if(JSON.stringify(snapshot).length>2000000||snapshot.users.length>10000)return null;
  return {format,createdAt:snapshot.createdAt,blob:await seal(env,snapshot)};
 }
-export async function automaticBackup(store,env){
- if(env.ENVIRONMENT==='staging'||!await store.get('admin'))return {skipped:true};
- const exported=await exportSnapshot(store,env);if(!exported)return {error:'backup_too_large'};
- const id=new Date(exported.createdAt).toISOString().slice(0,10),prefix='auto-backup:'+id+':';
- await store.transaction(async tx=>{
-  // Small chunks fit the Durable Object KV per-value limit.
-  const parts=Math.ceil(exported.blob.length/16000);
-  for(let i=0;i<parts;i++)await tx.put(prefix+i,exported.blob.slice(i*16000,(i+1)*16000));
-  await tx.put('auto-backup-index:'+id,{id,format,createdAt:exported.createdAt,parts});
-  const saved=[...(await tx.list({prefix:'auto-backup-index:'})).values()].sort((a,b)=>b.createdAt-a.createdAt);
-  for(const old of saved.slice(3)){for(let i=0;i<old.parts;i++)await tx.delete('auto-backup:'+old.id+':'+i);await tx.delete('auto-backup-index:'+old.id)}
-  await writeAudit(tx,'system','backup_automatic');
- });return {ok:true,id};
+async function deleteChunks(tx,id){for(const key of (await tx.list({prefix:'auto-backup:'+id+':'})).keys())await tx.delete(key)}
+export async function automaticBackup(store,env,{manual=false,actor='system'}={}){
+ if((!manual&&env.ENVIRONMENT==='staging')||!await store.get('admin'))return {skipped:true};
+ const runId=crypto.randomUUID(),attemptAt=Date.now();
+ const claimed=await store.transaction(async tx=>{
+  const old=await tx.get(statusKey)||{};
+  if(old.status==='running'&&old.attemptAt>attemptAt-10*60000)return false;
+  await tx.put(statusKey,{...old,status:'running',runId,attemptAt,reason:null});return true;
+ });
+ if(!claimed)return {error:'backup_in_progress'};
+ try{
+  const exported=await exportSnapshot(store,env);
+  if(!exported)throw Error('backup_too_large');
+  const id=new Date(exported.createdAt).toISOString().slice(0,10),checksum=await hashSecret(exported.blob);
+  return await store.transaction(async tx=>{
+   const status=await tx.get(statusKey);if(status?.runId!==runId)return {error:'backup_in_progress'};
+   // Replace every chunk atomically, including leftovers from older, larger copies.
+   await deleteChunks(tx,id);
+   const parts=Math.ceil(exported.blob.length/chunkSize);
+   for(let i=0;i<parts;i++)await tx.put('auto-backup:'+id+':'+i,exported.blob.slice(i*chunkSize,(i+1)*chunkSize));
+   await tx.put('auto-backup-index:'+id,{id,format,createdAt:exported.createdAt,parts,checksum});
+   const saved=[...(await tx.list({prefix:'auto-backup-index:'})).values()].sort((a,b)=>b.createdAt-a.createdAt);
+   for(const old of saved.slice(3)){await deleteChunks(tx,old.id);await tx.delete('auto-backup-index:'+old.id)}
+   await tx.put(statusKey,{status:'success',attemptAt,completedAt:Date.now(),lastSuccessAt:exported.createdAt,lastSuccessId:id,reason:null});
+   await writeAudit(tx,actor,manual?'backup_created':'backup_automatic');return {ok:true,id,createdAt:exported.createdAt};
+  });
+ }catch(error){
+  const reason=error.message==='backup_too_large'?'backup_too_large':'backup_failed';
+  // Persist only an allowlisted reason; provider credentials and exception text stay private.
+  await store.transaction(async tx=>{const current=await tx.get(statusKey);if(current?.runId===runId){const {runId:unused,...status}=current;await tx.put(statusKey,{...status,status:'failed',completedAt:Date.now(),reason});await writeAudit(tx,actor,'backup_failed')}});
+  return {error:reason};
+ }
+}
+async function savedCopy(store,id){
+ if(!/^\d{4}-\d{2}-\d{2}$/.test(id||''))return {error:'not_found'};
+ return store.transaction(async tx=>{
+  const saved=await tx.get('auto-backup-index:'+id);if(!saved)return {error:'not_found'};
+  if(saved.id!==id||saved.format!==format||!Number.isSafeInteger(saved.parts)||saved.parts<1||saved.parts>250)return {error:'invalid_backup'};
+  let blob='';for(let i=0;i<saved.parts;i++){const chunk=await tx.get('auto-backup:'+id+':'+i);if(typeof chunk!=='string'||chunk.length>chunkSize)return {error:'invalid_backup'};blob+=chunk}
+  if(saved.checksum&&await hashSecret(blob)!==saved.checksum)return {error:'invalid_backup'};
+  return {...saved,blob};
+ });
 }
 export async function backupRoute(store,env,path,b,leases){
  const answer=(data,status=200)=>Response.json(data,{status});
+ if(path==='/backup-create'){const result=await automaticBackup(store,env,{manual:true,actor:b.actor});return answer(result,result.error?(result.error==='backup_in_progress'?409:500):200)}
  if(path==='/backup-export'){
   const exported=await exportSnapshot(store,env);if(!exported)return answer({error:'backup_too_large'},413);
   await store.transaction(tx=>writeAudit(tx,b.actor,'backup_exported'));return answer(exported);
  }
- if(path==='/backup-list')return answer([...(await store.list({prefix:'auto-backup-index:'})).values()].map(({id,createdAt})=>({id,createdAt})).sort((a,b)=>b.createdAt-a.createdAt));
- if(path==='/backup-download'){
-  if(!/^\d{4}-\d{2}-\d{2}$/.test(b.id||''))return answer({error:'not_found'},404);
-  const saved=await store.get('auto-backup-index:'+b.id);if(!saved)return answer({error:'not_found'},404);
-  let blob='';for(let i=0;i<saved.parts;i++){const chunk=await store.get('auto-backup:'+saved.id+':'+i);if(typeof chunk!=='string')return answer({error:'invalid_backup'},400);blob+=chunk}
-  await store.transaction(tx=>writeAudit(tx,b.actor,'backup_downloaded'));return answer({format,createdAt:saved.createdAt,blob});
+ if(path==='/backup-list')return answer([...(await store.list({prefix:'auto-backup-index:'})).values()].map(({id,createdAt,verifiedAt})=>({id,createdAt,verifiedAt:verifiedAt||null})).sort((a,b)=>b.createdAt-a.createdAt));
+ if(path==='/backup-status')return store.transaction(async tx=>{
+  const latest=[...(await tx.list({prefix:'auto-backup-index:'})).values()].sort((a,b)=>b.createdAt-a.createdAt)[0],stored=await tx.get(statusKey)||{};
+  const lastSuccessAt=stored.lastSuccessAt||latest?.createdAt||null;
+  return answer({status:stored.status||'unknown',attemptAt:stored.attemptAt||null,completedAt:stored.completedAt||null,reason:stored.reason||null,lastSuccessAt,lastSuccessId:stored.lastSuccessId||latest?.id||null,latestVerifiedAt:latest?.verifiedAt||null,stale:!lastSuccessAt||Date.now()-lastSuccessAt>36*3600000,scheduleUTC:'05:17',retainedCopies:3});
+ });
+ if(path==='/backup-download'||path==='/backup-verify'){
+  const saved=await savedCopy(store,b.id);if(saved.error)return answer(saved,saved.error==='not_found'?404:400);
+  const snapshot=await unseal(env,saved.blob);if(!validSnapshot(snapshot,env)||snapshot.createdAt!==saved.createdAt)return answer({error:'invalid_backup'},400);
+  if(path==='/backup-download'){await store.transaction(tx=>writeAudit(tx,b.actor,'backup_downloaded'));return answer({format,createdAt:saved.createdAt,blob:saved.blob})}
+  const verifiedAt=Date.now(),checksum=await hashSecret(saved.blob);
+  const current=await store.transaction(async tx=>{
+   const index=await tx.get('auto-backup-index:'+b.id);
+   // Verification of an overwritten copy must not certify the replacement.
+   if(!index||index.createdAt!==saved.createdAt||index.checksum&&index.checksum!==checksum)return false;
+   await tx.put('auto-backup-index:'+b.id,{...index,checksum,verifiedAt});await writeAudit(tx,b.actor,'backup_verified');return true;
+  });
+  if(!current)return answer({error:'backup_changed'},409);
+  return answer({...planFor(snapshot),verified:true,verifiedAt});
  }
  const snapshot=await unseal(env,b.blob);
- if(snapshot?.format!==format||snapshot.environment!==(env.ENVIRONMENT||'production')||!Array.isArray(snapshot.users)||snapshot.users.length>10000||!snapshot.users.every(validUser)||new Set(snapshot.users.map(u=>u.username)).size!==snapshot.users.length||!snapshot.settings||typeof snapshot.settings!=='object'||Object.keys(snapshot.settings).some(k=>!keys.includes(k)))return answer({error:'invalid_backup'},400);
- if(snapshot.createdAt>Date.now()+60000||!Number.isSafeInteger(snapshot.createdAt))return answer({error:'invalid_backup'},400);
- const confirmation=await hashSecret(b.blob);
- const plan={users:snapshot.users.length,providers:snapshot.settings.providers?.length||(snapshot.settings.provider?1:0),createdAt:snapshot.createdAt,confirmation};
+ if(!validSnapshot(snapshot,env))return answer({error:'invalid_backup'},400);
+ const confirmation=await hashSecret(b.blob),plan={...planFor(snapshot),confirmation};
  if(path==='/backup-preview')return answer(plan);
  if(b.confirmation!==confirmation||b.confirmText!=='RESTAURAR')return answer({error:'restore_confirmation_required'},409);
  return store.transaction(async tx=>{
