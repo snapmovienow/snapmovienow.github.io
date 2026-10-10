@@ -185,7 +185,7 @@ async function handleRequest(req,env,ctx){const u=new URL(req.url);
 if(req.method==='POST'&&req.headers.get('Cookie')?.includes('__Host-smn_')&&!canUseCookie(req,env))return json({error:'origin_not_allowed'},403);
 if(req.headers.get('Origin')&&!allowedOrigins(env).has(req.headers.get('Origin'))&&req.method==='POST')return json({error:'origin_not_allowed'},403);
 if(req.method==="OPTIONS")return new Response(null,{status:204,headers:cors});
-if(u.pathname==="/health")return json({ok:true,service:"snapmovienow-edge",version:SERVICE_VERSION,capabilities:['xtream','admin-recovery-renewal','backup-integrity']});
+if(u.pathname==="/health")return json({ok:true,service:"snapmovienow-edge",version:SERVICE_VERSION,capabilities:['xtream','admin-recovery-renewal','backup-integrity','native-profile','metric-retry']});
 if(matchesXtream(u.pathname))return xtreamRequest(req,env,ctx);
 if(u.pathname==="/admin"&&req.method==="POST"){try{return await adminRequest(req,env,ctx)}catch(e){return json({error:["body_too_large","invalid_json"].includes(e.message)?e.message:"admin_unavailable"},e.message==="body_too_large"?413:e.message==="invalid_json"?400:502)}}
 if(u.pathname==="/gnula-media"&&["GET","HEAD"].includes(req.method)){try{return await gnulaMedia(req,env,u,ctx)}catch{return json({error:"media_unavailable"},502)}}
@@ -241,7 +241,7 @@ if(session.managed){
  if(op==='live_epg'&&!/^\d+$/.test(String(b.stream_id||'')))return json({error:'invalid_stream'},400);
  const kind=op==='live_epg'?'live':op==='series_info'?'series_list':op==='vod_info'?'movie':null;
  if(kind&&!permissions.adults&&!await adultPolicy.allowed({kind,server:b.server||'ccf',upstreamId:b.series_id||b.vod_id||b.stream_id}))return json({error:'adult_content_disabled'},403);
- const params=op==='series_info'?{series_id:b.series_id}:op==='vod_info'?{vod_id:b.vod_id}:op==='live_epg'?{stream_id:b.stream_id,limit:4}:{};
+ const params=op==='series_info'?{series_id:b.series_id}:op==='vod_info'?{vod_id:b.vod_id}:op==='live_epg'?{stream_id:b.stream_id,limit:24}:{};
  let data=await catalog(actions[op],b.server,params);
  if(!permissions.adults){
   if(Array.isArray(data))data=await adultPolicy.filter(actions[op],data);
@@ -255,7 +255,7 @@ if(session.managed){
  }
  return json(data);
 }
-const x=new URL(ORIGIN+"/player_api.php");x.searchParams.set("username",String(b.username));x.searchParams.set("password",String(b.password));if(op!=="auth")x.searchParams.set("action",actions[op]);if(op==="series_info"&&b.series_id)x.searchParams.set("series_id",String(b.series_id));if(op==="vod_info"&&b.vod_id)x.searchParams.set("vod_id",String(b.vod_id));if(op==="live_epg"){x.searchParams.set("stream_id",String(b.stream_id));x.searchParams.set("limit","4")}const up=await fetch(x,{headers:{"User-Agent":"SnapMovieNow/1.0"},redirect:"follow"});return new Response(await up.text(),{status:up.status,headers:{...cors,"content-type":up.headers.get("content-type")||"application/json"}})}catch(e){return json({error:["body_too_large","invalid_json"].includes(e.message)?e.message:"upstream_unavailable"},e.message==="body_too_large"?413:e.message==="invalid_json"?400:502)}}
+const x=new URL(ORIGIN+"/player_api.php");x.searchParams.set("username",String(b.username));x.searchParams.set("password",String(b.password));if(op!=="auth")x.searchParams.set("action",actions[op]);if(op==="series_info"&&b.series_id)x.searchParams.set("series_id",String(b.series_id));if(op==="vod_info"&&b.vod_id)x.searchParams.set("vod_id",String(b.vod_id));if(op==="live_epg"){x.searchParams.set("stream_id",String(b.stream_id));x.searchParams.set("limit","24")}const up=await fetch(x,{headers:{"User-Agent":"SnapMovieNow/1.0"},redirect:"follow"});return new Response(await up.text(),{status:up.status,headers:{...cors,"content-type":up.headers.get("content-type")||"application/json"}})}catch(e){return json({error:["body_too_large","invalid_json"].includes(e.message)?e.message:"upstream_unavailable"},e.message==="body_too_large"?413:e.message==="invalid_json"?400:502)}}
 export default {scheduled(event,env,ctx){if(env.ENVIRONMENT!=="staging")ctx.waitUntil(directory(env,"/backup-automatic").then(async r=>{const result=await r.json();if(result.error)console.error({event:"backup_failed",reason:result.error})}).catch(()=>console.error({event:"backup_failed",reason:"backup_service_unavailable"})))},async fetch(req, env, ctx) {const response=await traceRequest(req, () => handleRequest(req, env, ctx), {allowedOrigin: SITE});return browserResponse(response,req,env);}};
 
 

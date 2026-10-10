@@ -26,6 +26,7 @@ jobs:
       - name: Install from Cloudflare deployment root
         run: npm ci
         working-directory: cloudflare-worker
+      - run: node scripts/build-pages.mjs
       - run: npm test
       - run: npm run test:platform
       - name: Build from Cloudflare deployment root
@@ -47,6 +48,11 @@ jobs:
           SMN_LIVE_AUDIO_REPORT: artifacts/live-audio.json
       - name: Mobile web and admin integration
         run: node tests/browser-ui-runtime.mjs
+      - name: Real video concurrency smoke
+        run: node tests/video-capacity-runtime.mjs
+        env:
+          SMN_VIDEO_LEVELS: '1,5'
+          SMN_VIDEO_REPORT: artifacts/video-capacity.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:

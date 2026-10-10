@@ -29,13 +29,13 @@ await assert.rejects(api.check('https://example.test'),error=>error.message==='i
 for(const file of ['../index.html','../admin.html']) assert.ok(readFileSync(new URL(file,import.meta.url),'utf8').includes('connection-diagnostics.js?v=39'));
 console.log('PASS: Cloudflare text/challenges, application 403, HTML 502, transport errors and malformed replies are distinguished; checks send no credentials, reserve no playback and require unauthenticated rejection.');
 
-// Exercise the actual API functions embedded in both pages. A failed request
+// Exercise the production session transport and administrator API. A failed request
 // must not be retried, duplicate playback or clear an otherwise valid session.
 let requests=0;
 ctx.fetch=async()=>{requests++;return new Response('error code: 1010',{status:403,headers:trace})};
-const index=readFileSync(new URL('../app.js',import.meta.url),'utf8');
-const client=vm.createContext({SMNConnection:api,API:'https://example.test',creds:{access_token:'local-test-ticket'},authGeneration:1,performance,AbortSignal});
-vm.runInContext(index.slice(index.indexOf('async function api('),index.indexOf('async function doLogin(')),client);
+const sessionSource=readFileSync(new URL('../session-client.js',import.meta.url),'utf8');
+const client=vm.createContext({SMNConnection:api,API:'https://example.test',creds:{username:'synthetic-customer',access_token:'local-test-ticket'},authGeneration:1,performance,AbortSignal});
+vm.runInContext(sessionSource,client);vm.runInContext("globalThis.api=SMNSessionClient.transport({url:API,cookieMode:false,getSession:()=>creds,getGeneration:()=>authGeneration,request:SMNConnection.requestJSON})",client);
 await assert.rejects(client.api('stream_token',{request_id:'playback-test'}),error=>error.message==='edge_blocked');
 assert.equal(requests,1);assert.equal(client.creds.access_token,'local-test-ticket');
 const adminHTML=readFileSync(new URL('../admin.js',import.meta.url),'utf8');

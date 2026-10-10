@@ -134,6 +134,7 @@ assert.equal(movies.length, 2); assert.equal(new Set(movies.map(m => m.stream_id
 assert.notEqual(movieCategories[0].category_id, movieCategories[1].category_id);
 for (let i=0;i<2;i++) {
   assert.equal(movies[i].category_id, movieCategories[i].category_id);
+  assert.equal(movies[i].smn_profile.type,'movie');assert.equal(movies[i].smn_profile.id,'123');assert.ok(movies[i].smn_profile.server);assert.notEqual(String(movies[i].stream_id),movies[i].smn_profile.id,'web identity remains independent of the mapped Xtream ID');
   assert.equal(new URL(movies[i].direct_source).origin, origin);
   const filtered = await (await api('get_vod_streams',{category_id:movieCategories[i].category_id})).json();
   assert.deepEqual(filtered.map(m => m.name), ['Movie '+i]);
@@ -152,6 +153,7 @@ for (let i=0;i<2;i++) {
   const details = await (await api('get_series_info',{series_id:series[i].series_id})).json();
   assert.equal(details.info.name, 'Series '+i); assert.equal(details.episodes['1'].length, 1);
   const episode = details.episodes['1'][0]; episodes.push(episode);
+  assert.equal(episode.smn_profile.type,'series');assert.equal(episode.smn_profile.episodeId,'88');assert.equal(episode.smn_profile.id,series[i].smn_profile.id);assert.equal(episode.smn_profile.server,series[i].smn_profile.server);
   assert.equal(new URL(episode.direct_source).origin, origin); noProviderSecrets(details);
 }
 assert.notEqual(episodes[0].id, episodes[1].id);

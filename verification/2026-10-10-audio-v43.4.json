@@ -1,0 +1,141 @@
+{
+  "hlsVersion": "1.6.15",
+  "browserVersion": "153.0.8010.0",
+  "productionProgressive": false,
+  "signal": "generated H.264 720x480 with AAC or MPEG Layer III audio, six 10-second TS segments",
+  "observedSeconds": 12,
+  "results": [
+    {
+      "codec": "aac",
+      "progressive": true,
+      "position": 41.762293,
+      "firstPosition": 30.016937,
+      "ready": 4,
+      "seeking": false,
+      "decoded": 358,
+      "dropped": 0,
+      "audio": [
+        [
+          30.016,
+          60.010666
+        ]
+      ],
+      "video": [
+        [
+          30,
+          60
+        ]
+      ],
+      "audioContainer": "audio/mp4",
+      "errors": []
+    },
+    {
+      "codec": "aac",
+      "progressive": false,
+      "position": 41.577502,
+      "firstPosition": 30.017607,
+      "ready": 4,
+      "seeking": false,
+      "decoded": 352,
+      "dropped": 0,
+      "audio": [
+        [
+          30.016,
+          60.010666
+        ]
+      ],
+      "video": [
+        [
+          30,
+          60
+        ]
+      ],
+      "audioContainer": "audio/mp4",
+      "errors": []
+    },
+    {
+      "codec": "libmp3lame",
+      "progressive": true,
+      "position": 50.270102,
+      "firstPosition": 30.001971,
+      "ready": 2,
+      "seeking": false,
+      "decoded": 39,
+      "dropped": 0,
+      "audio": [
+        [
+          40,
+          40.336
+        ],
+        [
+          50,
+          50.336
+        ]
+      ],
+      "video": [
+        [
+          40,
+          59.999999
+        ]
+      ],
+      "audioContainer": "audio/mpeg",
+      "errors": [
+        {
+          "detail": "bufferStalledError",
+          "fatal": false
+        },
+        {
+          "detail": "bufferNudgeOnStall",
+          "fatal": false
+        },
+        {
+          "detail": "bufferSeekOverHole",
+          "fatal": false
+        },
+        {
+          "detail": "bufferStalledError",
+          "fatal": false
+        },
+        {
+          "detail": "bufferNudgeOnStall",
+          "fatal": false
+        },
+        {
+          "detail": "bufferSeekOverHole",
+          "fatal": false
+        },
+        {
+          "detail": "bufferStalledError",
+          "fatal": false
+        }
+      ]
+    },
+    {
+      "codec": "libmp3lame",
+      "progressive": false,
+      "position": 41.52845,
+      "firstPosition": 30.001885,
+      "ready": 4,
+      "seeking": false,
+      "decoded": 351,
+      "dropped": 0,
+      "audio": [
+        [
+          30,
+          60
+        ]
+      ],
+      "video": [
+        [
+          30,
+          59.999999
+        ]
+      ],
+      "audioContainer": "audio/mpeg",
+      "errors": []
+    }
+  ],
+  "limitations": [
+    "Synthetic fixtures reproduce the same audio-buffer failure; the authenticated customer channel and physical Android device are not exercised."
+  ]
+}

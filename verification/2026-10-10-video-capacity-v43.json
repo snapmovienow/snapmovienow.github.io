@@ -1,0 +1,57 @@
+{
+  "at": "2026-10-10T03:31:29.234Z",
+  "scope": "generated H.264/AAC, Chromium/MSE, loopback HTTP; excludes Cloudflare/provider production, real spectators and billing",
+  "width": 320,
+  "height": 180,
+  "fps": 15,
+  "scenarios": [
+    {
+      "viewers": 1,
+      "startupP95Ms": 164.7,
+      "seconds": 4.36,
+      "requests": 16,
+      "bytes": 1305421,
+      "failedRequests": 0,
+      "cuts": 0,
+      "decoded": 65,
+      "dropped": 0,
+      "fatalErrors": 0
+    },
+    {
+      "viewers": 5,
+      "startupP95Ms": 158.2,
+      "seconds": 4.46,
+      "requests": 80,
+      "bytes": 6527105,
+      "failedRequests": 0,
+      "cuts": 0,
+      "decoded": 325,
+      "dropped": 0,
+      "fatalErrors": 0
+    },
+    {
+      "viewers": 10,
+      "startupP95Ms": 206.5,
+      "seconds": 4.66,
+      "requests": 160,
+      "bytes": 13054210,
+      "failedRequests": 0,
+      "cuts": 0,
+      "decoded": 650,
+      "dropped": 0,
+      "fatalErrors": 0
+    },
+    {
+      "viewers": 20,
+      "startupP95Ms": 295,
+      "seconds": 5.08,
+      "requests": 320,
+      "bytes": 26108420,
+      "failedRequests": 0,
+      "cuts": 0,
+      "decoded": 1301,
+      "dropped": 0,
+      "fatalErrors": 0
+    }
+  ]
+}

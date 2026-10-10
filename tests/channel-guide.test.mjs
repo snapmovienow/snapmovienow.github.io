@@ -1,0 +1,5 @@
+import assert from 'node:assert/strict';import {readFileSync} from 'node:fs';import vm from 'node:vm';
+const ctx=vm.createContext({TextDecoder,Uint8Array,atob});vm.runInContext(readFileSync(new URL('../channel-guide.js',import.meta.url),'utf8'),ctx);const guide=ctx.SMNGuide;
+assert.equal(guide.text(btoa(unescape(encodeURIComponent('Película española')))),'Película española');assert.equal(guide.text('News'),'News');assert.equal(guide.text(null),'');
+const rows=[null,{title:'Terminó',start_timestamp:1,stop_timestamp:2},{title:'Actual',start_timestamp:3,stop_timestamp:6},...Array.from({length:50},(_,i)=>({title:'Programa '+i,start_timestamp:10+i,stop_timestamp:11+i}))];const lines=guide.lines({epg_listings:rows},4000);assert.equal(lines.length,24);assert.ok(lines[0].includes('En directo · Actual'));assert.ok(!lines.some(l=>l.includes('Terminó')));assert.equal(guide.lines({error:'unavailable'}).length,0);
+console.log('PASS: bounded UTF-8/plaintext EPG, malformed rows, expired programs and current-program marking.');

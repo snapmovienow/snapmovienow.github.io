@@ -11,14 +11,14 @@ MFA, copias automáticas, sincronización remota y métricas agregadas están di
 ## Cambios listos
 
 - Web y panel separados en scripts y módulos. Configuración de API central en `app-config.js`; la API pública es `https://api.snaptvnow.com`.
-- La adquisición del catálogo está separada en `catalog-loader.js`, con API/permisos de entrada y listas/avisos de salida, sin acceso al DOM, sesiones o reproductor. Respuestas nulas, objetos de error y elementos inválidos de un proveedor ya no interrumpen el inicio ni la recuperación de sesión: se conserva el catálogo válido y se muestra un aviso parcial. El resto de autenticación/presentación/reproducción todavía comparte parte de `app.js`; la separación completa sigue pendiente.
+- La adquisición del catálogo está separada en `catalog-loader.js`, con API/permisos de entrada y listas/avisos de salida, sin acceso al DOM, sesiones o reproductor. Respuestas nulas, objetos de error y elementos inválidos de un proveedor ya no interrumpen el inicio ni la recuperación de sesión: se conserva el catálogo válido y se muestra un aviso parcial. La persistencia/transporte de sesión está en `session-client.js` y la guía en `channel-guide.js`; la presentación principal y parte del reproductor todavía comparten `app.js`.
 - MFA TOTP para el administrador, semilla cifrada AES-GCM y ocho códigos de recuperación de un solo uso. Activar, desactivar MFA o renovar recuperación revoca las sesiones administrativas anteriores. Renovar exige contraseña actual y un código TOTP nuevo; los códigos de recuperación no autorizan esta operación. El reemplazo es transaccional, conserva el autenticador, invalida los ocho códigos anteriores, almacena solo hashes y registra el cambio sin secretos. La inscripción muestra un contador de diez minutos, borra la clave vencida y presenta los errores junto al formulario. Una ventana adaptada al móvil conserva los códigos hasta que el administrador confirma que los guardó; el sondeo del panel se detiene mientras tanto.
 - Historial administrativo acotado: inicios, usuarios, servidores, configuración Xtream, MFA y copias. No guarda contraseñas, tokens, URLs de reproducción ni diagnósticos completos.
 - Copias lógicas cifradas de usuarios/permisos/vencimientos y conexiones. Exportación y restauración requieren contraseña actual y MFA cuando está activado. Una copia alterada, de otra clave o de otro entorno es rechazada. Vista previa y texto RESTAURAR antes de reemplazar datos. La restauración cambia las identidades de clientes y cierra sus accesos anteriores; mantiene el administrador y su MFA.
 - Cron diario a las 05:17 UTC: últimas tres copias cifradas en el servidor, divididas en bloques pequeños para respetar el límite por valor de almacenamiento. Descarga externa desde Seguridad y recuperación. No se incluyen sesiones, reservas, progreso ni configuración MFA en estas copias.
 - Favoritos, progreso de películas/episodios e idiomas sincronizados por identidad de cliente. Las preferencias locales tienen clave por usuario; eliminaciones conservan marcas para que un dispositivo antiguo no las reviva. Se recupera al volver al primer plano y se conservan cambios locales sin red. Las respuestas tardías de otra sesión se ignoran.
-- Panel de salud: últimas 24 horas por servidor/tipo/etiqueta de calidad; inicios, límite superior de p95, tiempo cargando, cortes, errores y bytes de segmentos HLS medidos. Los datos no identifican clientes. Las alertas son orientativas y exigen al menos cinco inicios por grupo.
-- Guía TV: hasta cuatro programas del canal seleccionado cuando el proveedor ofrece EPG. Comparte la restricción de adultos; su fallo no detiene la señal.
+- Panel de salud: últimas 24 horas por servidor/tipo/etiqueta de calidad; inicios, límite superior de p95, tiempo cargando, cortes, errores y bytes de segmentos HLS medidos. Los datos no identifican clientes. Las alertas son orientativas: al menos cinco inicios para demora/cortes, o cinco fallos de arranque incluso sin inicios. Los informes se reintentan con ID deduplicado y se separan por plataforma.
+- Guía TV: hasta 24 programas del canal seleccionado cuando el proveedor ofrece EPG. Comparte la restricción de adultos; su fallo no detiene la señal.
 - CSP, política de referencia y cabeceras contra detección incorrecta de tipos; HLS y Movi con versiones e integridad fijadas. JSON de entrada acotado a 4 MB. Se conserva el diagnóstico manual y el modo HLS de segmentos completos que corrige el audio MPEG.
 
 ## Activación por el propietario
@@ -89,7 +89,7 @@ Para volver al reproductor anterior, el commit estable v42 es `202728872aa9df5fd
 
 Las reservas, los vídeos y las cuentas del proveedor son mediciones diferentes. Las pruebas de 1000 reservas no prometen 1000 señales simultáneas. El límite del proveedor se conserva, incluyendo duplicados, cuentas externas, vencimientos y suspensiones.
 
-El panel aporta cifras de uso y problemas de la web. Los bytes HLS incluyen segmentos precargados/reintentados; excluyen clientes Android, Movi, playlists, claves y otras peticiones. No equivalen al ancho de banda facturado por Cloudflare ni a un bitrate exacto del programa.
+El panel aporta cifras de uso y problemas de la web. Los bytes HLS incluyen segmentos precargados/reintentados; excluyen Android, Movi, playlists, claves y otras peticiones. Android aporta tiempos/cortes/errores por separado, sin bytes medidos. No equivalen al ancho de banda facturado por Cloudflare ni a un bitrate exacto del programa.
 
 Para planificar un escenario, usar `node scripts/capacity-plan.mjs --viewers 100 --mbps 6 --hours 2 --provider-slots 90`. Presenta tráfico estimado decimal y plazas faltantes. Comparar con mediciones reales y la factura de Cloudflare antes de dimensionar costes. No hay precios ni tarifas supuestos.
 
@@ -97,4 +97,14 @@ Queda pendiente una prueba gradual con señales y cuentas de prueba autorizadas,
 
 ## Android
 
-La API de perfil ya acepta clientes autenticados (`profile_get` / `profile_patch`). Se localizó el repositorio Android `juancanta89-tech/SnapTvNow`: su main declara versión 1.0.10 y una variante debug VPN. No contiene la integración con esas operaciones de perfil; sigue pendiente sincronizar web/app y validar red, segundo plano y reproductor en una compilación verificable. La versión de ese repositorio no demuestra cuál está instalada en los dispositivos del propietario.
+La integración nativa está en el repositorio `juancanta89-tech/SnapTvNow`: favoritos, progreso, idiomas, aislamiento por cuenta/servicio, HTTPS, métricas agregadas y guía ampliada. Ver VERIFICATION-v43.4.md para evidencia de compilación y límites. Las pruebas físicas y firma/distribución de producción requieren un dispositivo y la clave existente.
+
+## Pages sujeto a Quality
+
+El workflow está preparado en `.github/workflows/pages-after-quality.yml`. El propietario debe cambiar Source a GitHub Actions y activar la variable de Actions `PAGES_ACTIONS_ENABLED=true`. Mientras no lo haga, Pages continúa su publicación nativa en paralelo; el Worker ya exige Quality. El artefacto nuevo excluye código de servidor, pruebas, dependencias e informes.
+
+## Ensayo remoto de recuperación SQLite
+
+PITR de Cloudflare recupera SQLite/KV de los últimos 30 días y no funciona en desarrollo local. Ensayar únicamente en un objeto staging sin datos de clientes: guardar `ctx.storage.getCurrentBookmark()`, crear un usuario ficticio, guardar otro bookmark, alterar/borrar y pedir `ctx.storage.onNextSessionRestoreBookmark(bookmark)`; registrar el bookmark de retorno que devuelve y reiniciar el objeto mediante `ctx.abort()`. Comprobar desde una sesión nueva el usuario/permiso/vencimiento y cerrar sesiones restauradas antes de conectar un cliente. Volver al bookmark inicial para limpiar el ensayo. No se añadió una ruta pública de recuperación física.
+
+Antes de un incidente real conservar exportación cifrada y bookmark actuales, decidir el instante y registrar la autorización; una recuperación física puede traer sesiones, configuración y secretos antiguos. La prueba local de restauración lógica no demuestra PITR remoto. Fuente: https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/.

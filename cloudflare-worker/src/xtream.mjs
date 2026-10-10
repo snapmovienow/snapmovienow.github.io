@@ -57,6 +57,7 @@ async function mapList(rows, kind, auth, deps, base) {
     if (category !== null) item.category_id = String(ids[category]);
     if (kind.endsWith('_category')) {item.parent_id = 0; item.category_id = String(ids[index]);}
     else {
+      item.smn_profile={type:kind==='series_list'?'series':kind,id:String(row[field]),server:row._server};
       item.num = num + 1;
       if (kind !== 'series_list') {
         const ext = kind === 'live' ? 'm3u8' : EXTENSIONS.has(row.container_extension) ? row.container_extension : 'mp4';
@@ -79,7 +80,7 @@ async function details(params, kind, auth, deps, base) {
   const data = await deps.catalog(action, record.server, {[kind === 'movie' ? 'vod_id' : 'series_id']: record.upstreamId});
   if (auth.user.permissions.adults === false && (isAdult(data.info) || isAdult(data.movie_data))) return deps.json({error:'adult_content_disabled'},403);
   if (kind === 'movie') {
-    const row = {...data.movie_data, stream_id: Number(publicId), container_extension: record.ext || 'mp4'};
+    const row = {...data.movie_data, stream_id: Number(publicId), container_extension: record.ext || 'mp4',smn_profile:{type:'movie',id:record.upstreamId,server:record.server}};
     row.direct_source = playbackURL(base, auth, 'movie', publicId, row.container_extension);
     if (row.category_id != null) row.category_id = String((await deps.register([entry('movie_category', record.server, row.category_id)]))[0]);
     return deps.json({...data, movie_data: row});
@@ -94,7 +95,7 @@ async function details(params, kind, auth, deps, base) {
   const ids = await deps.register(flat.map(({row}) => entry('episode', record.server, row.id, {parentId:record.upstreamId, ext: EXTENSIONS.has(row.container_extension) ? row.container_extension : 'mp4'})));
   flat.forEach(({season, row}, i) => {
     const ext = EXTENSIONS.has(row.container_extension) ? row.container_extension : 'mp4';
-    episodes[season].push({...row, id: String(ids[i]), container_extension: ext, direct_source: playbackURL(base, auth, 'series', ids[i], ext)});
+    episodes[season].push({...row, smn_profile:{type:'series',id:record.upstreamId,server:record.server,episodeId:String(row.id)}, id: String(ids[i]), container_extension: ext, direct_source: playbackURL(base, auth, 'series', ids[i], ext)});
   });
   for (const season of Object.keys(episodes)) if (!episodes[season].length) delete episodes[season];
   const info = {...data.info};
