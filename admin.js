@@ -1,4 +1,4 @@
-import {mountAdminSeries} from './admin-series.js?v=43.9';
+import {mountAdminSeries} from './admin-series.js?v=43.10';
 import {mountAdminSecurity} from './admin-security.js?v=43.5';
 import {mountAdminOperations} from './admin-operations.js?v=43.4';
 import {mountAdminCapacity} from './admin-capacity.js?v=43.8';

@@ -11,7 +11,7 @@ export function mountAdminSeries({api,container}){
       if(current!==generation)return;
       status.textContent=result.results.length?'Comprobación terminada.':'No se encontró esa serie en el catálogo. Prueba una parte del título.';
       for(const item of result.results){const li=document.createElement('li');
-        const messages={no_episodes:'El proveedor no devolvió episodios disponibles.',adult_content_disabled:'Los permisos de adultos impiden acceder a esta serie.',upstream_unavailable:'No se pudo obtener una ficha válida del proveedor.',unavailable:'El servidor rechazó la solicitud.'};
+        const messages={no_episodes:'No hay episodios disponibles para ese usuario en la respuesta del servidor.',adult_content_disabled:'Los permisos de adultos impiden acceder a esta serie.',upstream_unavailable:'No se pudo obtener una ficha válida del proveedor.',unavailable:'El servidor rechazó la solicitud.'};
         li.textContent=item.name+' · '+(item.state==='ready'?item.seasons.length+' temporadas y '+item.episodes+' episodios disponibles.':messages[item.state]||'No disponible.')+' HTTP '+item.httpStatus+' · ID '+item.publicId;
         list.append(li);
       }
