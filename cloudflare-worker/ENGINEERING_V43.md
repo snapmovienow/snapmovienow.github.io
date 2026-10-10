@@ -8,6 +8,8 @@ Se añadió el lockfile propio del Worker, conservando Wrangler 4.149.0 y las ve
 
 MFA, copias automáticas, sincronización remota y métricas agregadas están disponibles en ese servidor. La publicación del Worker no inscribe MFA en el teléfono del propietario; debe configurarse desde el panel. El panel v43.3 muestra la última copia y el estado del intento, permite crear una copia con reautenticación y comprobar su integridad sin restaurar. La primera ejecución automática en producción queda por comprobar después del cron; la validación local de cifrado/restauración no certifica esa ejecución en producción.
 
+La actualización v43.5 añade cambio de contraseña y reemplazo de la clave del autenticador sin desactivar la protección durante la inscripción. Ver `VERIFICATION-v43.5.md` en la raíz para pruebas y pasos privados; renovar solo recuperación conserva la clave anterior. Android 1.0.11 está en main y pasó 142 pruebas; su firma espera la revisión del entorno production de GitHub.
+
 ## Cambios listos
 
 - Web y panel separados en scripts y módulos. Configuración de API central en `app-config.js`; la API pública es `https://api.snaptvnow.com`.

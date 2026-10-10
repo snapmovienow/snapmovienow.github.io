@@ -25,10 +25,10 @@ try{
  const restore=await admin('backup-restore',{password:'owner-password-test',blob:exported.data.blob,confirmation:plan.data.confirmation,confirmText:'RESTAURAR'});assert.equal(restore.status,200);
  assert.equal((await call(prod,{op:'profile_get',access_token:customer},'/')).status,401);
  const begin=await admin('mfa-begin',{password:'owner-password-test'});assert.equal(begin.status,200);
- const confirmed=await admin('mfa-confirm',{password:'owner-password-test',code:await totp(begin.data.seed,Math.floor(Date.now()/30000))});assert.equal(confirmed.status,200);assert.equal(confirmed.data.recoveryCodes.length,8);
+ const confirmed=await admin('mfa-confirm',{password:'owner-password-test',code:await totp(begin.data.seed,Math.floor(Date.now()/30000)-1)});assert.equal(confirmed.status,200);assert.equal(confirmed.data.recoveryCodes.length,8);
  assert.equal((await admin('users')).status,401);
  const afterMfa=await call(prod,{action:'login',username:'owner',password:'owner-password-test',code:confirmed.data.recoveryCodes[0]});assert.equal(afterMfa.status,200);activeToken=afterMfa.data.access_token;
- const renewed=await admin('mfa-recovery-renew',{password:'owner-password-test',code:await totp(begin.data.seed,Math.floor(Date.now()/30000)+1)});assert.equal(renewed.status,200);assert.equal(renewed.data.recoveryCodes.length,8);assert.equal(renewed.data.signInAgain,true);
+ const renewed=await admin('mfa-recovery-renew',{password:'owner-password-test',code:await totp(begin.data.seed,Math.floor(Date.now()/30000))});assert.equal(renewed.status,200);assert.equal(renewed.data.recoveryCodes.length,8);assert.equal(renewed.data.signInAgain,true);
  assert.equal((await admin('users')).status,401,'real SQLite recovery renewal revokes the prior session');
  assert.equal((await call(prod,{action:'login',username:'owner',password:'owner-password-test',code:confirmed.data.recoveryCodes[1]})).status,401,'SQLite rejects a superseded recovery code');
  const afterRenew=await call(prod,{action:'login',username:'owner',password:'owner-password-test',code:renewed.data.recoveryCodes[0]});assert.equal(afterRenew.status,200);activeToken=afterRenew.data.access_token;
@@ -48,5 +48,11 @@ try{
  assert.equal((await admin('overview')).data.provider.username,'synthetic-provider');assert.equal((await admin('xtream-settings')).data.enabled,false);
  assert.equal((await call(prod,{op:'session_info',access_token:oldCustomer},'/')).status,401);assert.equal((await admin('security-status')).data.mfaEnabled,true);
  assert.equal((await call(prod,{op:'auth',username:'customer',password:'customer-password-test'},'/')).status,200,'recovered credentials still work');
- console.log('PASS: actual workerd/SQLite production modules; isolated staging, protected profile storage, encrypted export, atomic restoration, old-session revocation, MFA enrollment and authenticated recovery renewal.');
+ const rotating=await admin('mfa-replace-begin',{password:'owner-password-test',code:await totp(begin.data.seed,Math.floor(Date.now()/30000)+1)});assert.equal(rotating.status,200);assert.equal((await admin('security-status')).data.mfaEnabled,true);assert.equal((await admin('users')).status,200,'current session/MFA remains active until the replacement is confirmed');
+ const rotated=await admin('mfa-confirm',{password:'owner-password-test',code:await totp(rotating.data.seed,Math.floor(Date.now()/30000))});assert.equal(rotated.status,200);assert.equal((await admin('users')).status,401);
+ assert.equal((await call(prod,{action:'login',username:'owner',password:'owner-password-test',code:renewed.data.recoveryCodes[4]})).status,401,'old recovery is invalid after authenticator replacement');
+ const rotatedLogin=await call(prod,{action:'login',username:'owner',password:'owner-password-test',code:rotated.data.recoveryCodes[0]});assert.equal(rotatedLogin.status,200);activeToken=rotatedLogin.data.access_token;
+ const changedPassword=await admin('admin-password',{password:'owner-password-test',newPassword:'synthetic-owner-new-password',code:await totp(rotating.data.seed,Math.floor(Date.now()/30000)+1)});assert.equal(changedPassword.status,200);assert.equal((await admin('users')).status,401,'password change revokes real SQLite administrator sessions');
+ assert.equal((await call(prod,{action:'login',username:'owner',password:'owner-password-test',code:rotated.data.recoveryCodes[1]})).status,401);assert.equal((await call(prod,{action:'login',username:'owner',password:'synthetic-owner-new-password',code:rotated.data.recoveryCodes[1]})).status,200);
+ console.log('PASS: actual workerd/SQLite production modules; isolated staging, protected profile storage, encrypted export, atomic restoration, old-session revocation, MFA enrollment and authenticated recovery renewal, authenticator replacement and administrator password rotation.');
 }finally{await mf.dispose()}
