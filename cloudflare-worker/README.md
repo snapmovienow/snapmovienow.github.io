@@ -19,6 +19,13 @@ After publication, require a successful Cloudflare build and v43 from `/health`
 before relying on the new server features. Check the first daily backup after its
 cron runs; MFA enrollment remains a deliberate owner action. Keep server secrets unchanged.
 
+Workers Builds dependency installation now waits for GitHub Quality to approve
+the exact checked-out commit and branch before the existing `npx wrangler deploy`
+command can proceed. Failure, cancellation, timeout or unverifiable approval
+blocks deployment. Local and GitHub CI installs skip this wait; manual `npm run
+deploy` and `npm run deploy:staging` require it explicitly. Keep npm lifecycle
+scripts enabled. See the engineering guide for the remaining Pages/branch settings.
+
 ## Deploy
 
 Use Cloudflare's Deploy to Cloudflare flow for this directory. Set TICKET_SECRET to a long random value when prompted.

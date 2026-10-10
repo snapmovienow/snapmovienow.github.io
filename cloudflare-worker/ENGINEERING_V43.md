@@ -4,9 +4,9 @@
 
 El fallo de Cloudflare del 9 de octubre se identificó en las capturas del build `52032803-3f33-4501-bfc0-645e1aaf8e4c`: la instalación ejecutaba `npm clean-install --progress=false` desde `cloudflare-worker`, donde faltaba `package-lock.json`. El lockfile de la raíz servía para Quality, pero no para esa carpeta de despliegue.
 
-Se añade el lockfile propio del Worker, conservando Wrangler 4.149.0 y las versiones e integridades ya fijadas en la raíz. Quality instala y compila también desde la carpeta de Cloudflare para detectar este problema antes de futuras publicaciones. Comprobar el resultado del build y `https://api.snaptvnow.com/health` después del commit: la API debe reportar v43. Al iniciar esta corrección aún reportaba v40.
+Se añadió el lockfile propio del Worker, conservando Wrangler 4.149.0 y las versiones e integridades ya fijadas en la raíz. Quality instala y compila también desde la carpeta de Cloudflare para detectar este problema antes de futuras publicaciones. El commit `ac15bf8bf39832c4b831e9b57412cefce54a969d` pasó Quality y Cloudflare; `https://api.snaptvnow.com/health` ya responde con v43.
 
-MFA, copias automáticas, sincronización remota y métricas agregadas requieren que ese despliegue termine correctamente. El frontend conserva el funcionamiento local mientras espera y habilita las nuevas operaciones al recargar después de actualizar el servidor. La publicación del Worker no inscribe MFA en el teléfono del propietario; debe configurarse desde el panel. La primera copia automática queda por comprobar después de ejecutarse el cron.
+MFA, copias automáticas, sincronización remota y métricas agregadas están disponibles en ese servidor. La publicación del Worker no inscribe MFA en el teléfono del propietario; debe configurarse desde el panel. La primera copia automática queda por comprobar después de ejecutarse el cron; la validación local de cifrado/restauración no certifica esa ejecución en producción.
 
 ## Cambios listos
 
@@ -56,7 +56,11 @@ npm run build:staging
 
 `npm test` ejecuta todas las regresiones, incluyendo vectores publicados RFC 6238, compatibilidad de sesiones nativas, restricciones de adultos, reproducción/Range/cancelación, sincronización y recuperación. `test:platform` utiliza el módulo de producción en workerd/SQLite real con dos entornos y cuentas ficticias; restaura únicamente esos datos de prueba. `test:storage` puede medir 100/250/500/1000 reservas sintéticas; con `SMN_SAFETY_ONLY=1` valida las invariantes sin repetir la carga.
 
-GitHub Actions Quality ejecuta regresiones, aislamiento workerd, compilaciones, invariantes SQLite y pruebas de Chromium. Los scripts de despliegue de esta carpeta ejecutan las regresiones antes de desplegar. Si Cloudflare Builds utiliza `npx wrangler deploy` directamente, cambiar su comando a `npm run deploy` para aplicar esa comprobación. Los permisos disponibles no permiten modificar ese ajuste ni las reglas de protección de ramas.
+GitHub Actions Quality ejecuta regresiones, aislamiento workerd, compilaciones, invariantes SQLite y pruebas de Chromium. `postinstall` de esta carpeta ejecuta `scripts/deploy-guard.mjs`: dentro de Workers Builds espera hasta doce minutos a que Quality apruebe el mismo SHA y la misma rama, con evento push y el workflow exacto. Una ejecución fallida/cancelada, un checkout diferente o modificado, una respuesta imposible de comprobar o el vencimiento de la espera bloquean la instalación y por tanto la publicación, incluso con el comando actual `npx wrangler deploy`. Usa la API pública de GitHub sin credenciales ni secretos nuevos. Un bloqueo por red o límite de la API permite reintentar el build cuando se resuelva; no aprueba por omisión.
+
+Fuera de Workers Builds, la instalación normal no espera a Quality: hacerlo dentro del propio job produciría una espera circular. Los comandos manuales `npm run deploy` y `npm run deploy:staging` exigen la misma aprobación antes de las regresiones locales y Wrangler. La instalación automática debe conservar los scripts npm habilitados. Esta protección no impide que un administrador cambie el comando, desactive los scripts o publique deliberadamente por otra vía; las reglas de protección de ramas requieren ajustes adicionales de la cuenta.
+
+GitHub Pages todavía publica en paralelo mediante su mecanismo nativo. Exigir Quality antes de publicar también el frontend requiere configurar Pages con GitHub Actions y un job de publicación dependiente de Quality; ese ajuste y las reglas de protección de ramas no están accesibles con la conexión actual.
 
 La evidencia de navegador se puede generar con `SMN_LIVE_AUDIO_REPORT=artifacts/live-audio.json`. Reproduce el problema de MPEG Layer III con HLS.js 1.6.15 usando una señal sintética, comprueba avance/decodificación y audio continuo con segmentos completos y también comprueba AAC. No certifica todas las señales del proveedor ni un teléfono físico.
 
@@ -82,4 +86,4 @@ Queda pendiente una prueba gradual con señales y cuentas de prueba autorizadas,
 
 ## Android
 
-La API de perfil ya acepta clientes autenticados (`profile_get` / `profile_patch`), pero el código Android no está en este repositorio. La app instalada conserva su funcionamiento actual; la integración de sincronización, preferencias y revisión de su reproductor necesita ese código y una compilación Android verificable.
+La API de perfil ya acepta clientes autenticados (`profile_get` / `profile_patch`). Se localizó el repositorio Android `juancanta89-tech/SnapTvNow`: su main declara versión 1.0.10 y una variante debug VPN. No contiene la integración con esas operaciones de perfil; sigue pendiente sincronizar web/app y validar red, segundo plano y reproductor en una compilación verificable. La versión de ese repositorio no demuestra cuál está instalada en los dispositivos del propietario.
