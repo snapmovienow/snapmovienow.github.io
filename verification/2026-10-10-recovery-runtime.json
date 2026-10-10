@@ -1,0 +1,21 @@
+{
+  "testedAt": "2026-10-10T18:24:22.763Z",
+  "runtime": "local workerd / real SQLite",
+  "data": "synthetic only",
+  "remoteProduction": false,
+  "checks": {
+    "reauthentication": true,
+    "separateNamespace": true,
+    "productionUsersUnchanged": true,
+    "existingSessionPreserved": true,
+    "authenticatedFileRestoration": true,
+    "userPermissionsExpiry": true,
+    "providerSettings": true,
+    "identitiesRotated": true,
+    "leasesCleared": true,
+    "adminMfaPreserved": true,
+    "sqliteCleanup": true,
+    "wrongEnvironmentRejected": true,
+    "manualDoesNotProveCron": true
+  }
+}

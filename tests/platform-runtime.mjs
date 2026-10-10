@@ -1,10 +1,11 @@
 // Actual production module in two independent local workerd/SQLite namespaces.
 import assert from 'node:assert/strict';
+import {mkdirSync,writeFileSync} from 'node:fs';
 import {build} from 'esbuild';
 import {Miniflare,convertV4MiniflareOptions} from 'miniflare';
 import {totp,unseal,seal} from '../cloudflare-worker/src/security.mjs';
 const bundled=await build({entryPoints:['cloudflare-worker/src/index.js'],bundle:true,format:'esm',platform:'browser',external:['cloudflare:sockets'],write:false});
-const common={modules:true,script:bundled.outputFiles[0].text,compatibilityDate:'2026-10-03',compatibilityFlags:['enable_request_signal'],durableObjects:{PLAYBACK_SESSIONS:{className:'PlaybackSession',useSQLite:true}},bindings:{TICKET_SECRET:'local-runtime-secret-never-deployed-123456',ADMIN_SETUP_SECRET:'local-runtime-setup-secret-never-deployed-123456',WEB_ORIGINS:'http://127.0.0.1:8788'}};
+const common={modules:true,script:bundled.outputFiles[0].text,compatibilityDate:'2026-10-03',compatibilityFlags:['enable_request_signal'],durableObjects:{PLAYBACK_SESSIONS:{className:'PlaybackSession',useSQLite:true},BACKUP_RECOVERY:{className:'BackupRecovery',useSQLite:true}},bindings:{TICKET_SECRET:'local-runtime-secret-never-deployed-123456',ADMIN_SETUP_SECRET:'local-runtime-setup-secret-never-deployed-123456',WEB_ORIGINS:'http://127.0.0.1:8788'}};
 const options={workers:[{...common,name:'production-test',bindings:{...common.bindings,ENVIRONMENT:'production'}},{...common,name:'staging-test',bindings:{...common.bindings,ENVIRONMENT:'staging'}}],durableObjectsPersist:false};
 const mf=new Miniflare(convertV4MiniflareOptions?convertV4MiniflareOptions(options):options);
 try{
@@ -21,6 +22,15 @@ try{
  assert.equal((await call(prod,{op:'profile_patch',access_token:customer,patches:[patch]},'/')).data.records[0].time,100);
  assert.equal((await call(stage,{op:'profile_get',access_token:customer},'/')).status,401);
  const exported=await admin('backup-export',{password:'owner-password-test'});assert.equal(exported.status,200);assert.ok(exported.data.blob);
+ assert.equal((await call(prod,{action:'backup-drill',blob:exported.data.blob})).status,401,'no public access to the recovery drill');
+ assert.equal((await admin('backup-drill',{blob:exported.data.blob})).status,401,'drill requires password reauthentication');
+ const beforeDrill=(await admin('users')).data;
+ const fileDrill=await admin('backup-drill',{password:'owner-password-test',blob:exported.data.blob});assert.equal(fileDrill.status,200);assert.equal(fileDrill.data.cleaned,true);assert.ok(Object.values(fileDrill.data.checks).every(Boolean));
+ assert.deepEqual((await admin('users')).data,beforeDrill,'isolated restoration never replaces production identities or data');
+ assert.equal((await call(prod,{op:'profile_get',access_token:customer},'/')).status,200,'the original customer session remains usable after a drill');
+ assert.equal((await admin('backup-status')).data.lastAutomaticAt,null,'manual/file checks do not prove the daily cron');
+ assert.ok((await admin('backup-status')).data.recovery.lastFileCheckAt);
+ assert.equal((await admin('backup-drill',{password:'owner-password-test',blob:'invalid'})).status,400,'invalid encrypted files are rejected before creating a drill object');
  const plan=await admin('backup-preview',{blob:exported.data.blob});assert.equal(plan.data.users,1);
  const restore=await admin('backup-restore',{password:'owner-password-test',blob:exported.data.blob,confirmation:plan.data.confirmation,confirmText:'RESTAURAR'});assert.equal(restore.status,200);
  assert.equal((await call(prod,{op:'profile_get',access_token:customer},'/')).status,401);
@@ -34,6 +44,8 @@ try{
  const afterRenew=await call(prod,{action:'login',username:'owner',password:'owner-password-test',code:renewed.data.recoveryCodes[0]});assert.equal(afterRenew.status,200);activeToken=afterRenew.data.access_token;
  assert.equal((await admin('security-status')).data.recoveryRemaining,7,'a new recovery code still works exactly once');
  const backupCreated=await admin('backup-create',{password:'owner-password-test',code:renewed.data.recoveryCodes[1]});assert.equal(backupCreated.status,200);
+ assert.equal(backupCreated.data.recovery.ok,true,'creating a backup also performs the actual isolated SQLite restoration');
+ assert.equal((await admin('backup-status')).data.automaticStale,true,'manual success never hides an unconfirmed daily backup');
  assert.equal((await admin('backup-status')).data.status,'success');
  const verification=await admin('backup-verify',{id:backupCreated.data.id});assert.equal(verification.data.verified,true);assert.equal(verification.data.users,1);
  const downloaded=await admin('backup-download',{id:backupCreated.data.id,password:'owner-password-test',code:renewed.data.recoveryCodes[2]});assert.equal(downloaded.status,200);
@@ -41,6 +53,8 @@ try{
  snapshot.settings.provider={username:'synthetic-provider',encrypted:'isolated-test-data',maxConnections:3};
  snapshot.settings['xtream-config']={enabled:false,version:2};
  const drill=await seal(common.bindings,snapshot),drillPlan=(await admin('backup-preview',{blob:drill})).data;
+ const settingsDrill=await admin('backup-drill',{password:'owner-password-test',code:renewed.data.recoveryCodes[5],blob:drill});assert.equal(settingsDrill.status,200);assert.equal(settingsDrill.data.checks.settings,true);assert.equal(settingsDrill.data.checks.administratorPreserved,true);assert.equal((await admin('overview')).data.provider,null,'test provider settings never escape the recovery namespace');
+ const foreign=await seal(common.bindings,{...snapshot,environment:'staging'});assert.equal((await admin('backup-drill',{password:'owner-password-test',code:renewed.data.recoveryCodes[6],blob:foreign})).status,400,'a different environment cannot be restored in the drill');
  const oldCustomer=(await call(prod,{op:'auth',username:'customer',password:'customer-password-test'},'/')).data.access_token;
  await admin('delete',{username:'customer'});assert.equal((await admin('users')).data.length,0);
  const recovered=await admin('backup-restore',{password:'owner-password-test',code:renewed.data.recoveryCodes[3],blob:drill,confirmation:drillPlan.confirmation,confirmText:'RESTAURAR'});assert.equal(recovered.status,200);
@@ -54,5 +68,6 @@ try{
  const rotatedLogin=await call(prod,{action:'login',username:'owner',password:'owner-password-test',code:rotated.data.recoveryCodes[0]});assert.equal(rotatedLogin.status,200);activeToken=rotatedLogin.data.access_token;
  const changedPassword=await admin('admin-password',{password:'owner-password-test',newPassword:'synthetic-owner-new-password',code:await totp(rotating.data.seed,Math.floor(Date.now()/30000)+1)});assert.equal(changedPassword.status,200);assert.equal((await admin('users')).status,401,'password change revokes real SQLite administrator sessions');
  assert.equal((await call(prod,{action:'login',username:'owner',password:'owner-password-test',code:rotated.data.recoveryCodes[1]})).status,401);assert.equal((await call(prod,{action:'login',username:'owner',password:'synthetic-owner-new-password',code:rotated.data.recoveryCodes[1]})).status,200);
+ mkdirSync('artifacts',{recursive:true});writeFileSync('artifacts/recovery-runtime.json',JSON.stringify({testedAt:new Date().toISOString(),runtime:'local workerd / real SQLite',data:'synthetic only',remoteProduction:false,checks:{reauthentication:true,separateNamespace:true,productionUsersUnchanged:true,existingSessionPreserved:true,authenticatedFileRestoration:true,userPermissionsExpiry:true,providerSettings:true,identitiesRotated:true,leasesCleared:true,adminMfaPreserved:true,sqliteCleanup:true,wrongEnvironmentRejected:true,manualDoesNotProveCron:true}},null,2)+'\n');
  console.log('PASS: actual workerd/SQLite production modules; isolated staging, protected profile storage, encrypted export, atomic restoration, old-session revocation, MFA enrollment and authenticated recovery renewal, authenticator replacement and administrator password rotation.');
 }finally{await mf.dispose()}

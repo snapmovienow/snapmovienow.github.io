@@ -5,6 +5,7 @@ import {traceRequest, SERVICE_VERSION} from './request-diagnostics.mjs';
 import {isApprovedMediaIP,fetchApprovedMediaIP} from './ip-media.mjs';
 import {readPanel,validateServerUrl} from "./reseller.mjs";
 import {accountsFetch} from "./accounts.mjs";
+export {BackupRecovery} from './backup-recovery.mjs';
 import {matchesXtream} from './xtream.mjs';
 import {contentPermissions,createAdultPolicy,isAdult} from './content-permissions.mjs';
 import {createProviderCatalog} from './provider-catalog.mjs';
@@ -97,7 +98,7 @@ async function adminRequest(req,env,ctx){
  if(action==="logout"){await sessionCall(env,s.sid,"/logout");return withSessionCookie(json({ok:true}),req,env,"admin","",0)}
  if(action==='xtream-settings'||action==='xtream-save'){const r=await directory(env,action==='xtream-save'?'/xtream-save':'/xtream-config',b);if(r.ok&&action==='xtream-save')await directory(env,'/audit-write',{actor:s.username,action:'xtream_changed'});return json({...await r.json(),url:new URL(req.url).origin,host:new URL(req.url).hostname,port:new URL(req.url).port||'443'},r.status)}
  if(action==='xtream-check'){const target=new URL('/player_api.php',req.url);const response=await xtreamRequest(new Request(target,{headers:{'User-Agent':'SnapMovieNow/1.0'}}),env);const body=await response.json();const config=await (await directory(env,'/xtream-config')).json();return json({compatible:response.status===401&&body.error==='credentials_required',enabled:config.enabled,url:new URL(req.url).origin,version:SERVICE_VERSION})}
- const security={"admin-password":"/admin-password","mfa-replace-begin":"/mfa-replace-begin","security-status":"/security-status","mfa-begin":"/mfa-begin","mfa-confirm":"/mfa-confirm","mfa-disable":"/mfa-disable","mfa-recovery-renew":"/mfa-recovery-renew","audit":"/audit","backup-list":"/backup-list","backup-status":"/backup-status","backup-verify":"/backup-verify","backup-create":"/backup-create","backup-download":"/backup-download","backup-export":"/backup-export","backup-preview":"/backup-preview","backup-restore":"/backup-restore"};
+ const security={"admin-password":"/admin-password","mfa-replace-begin":"/mfa-replace-begin","security-status":"/security-status","mfa-begin":"/mfa-begin","mfa-confirm":"/mfa-confirm","mfa-disable":"/mfa-disable","mfa-recovery-renew":"/mfa-recovery-renew","audit":"/audit","backup-list":"/backup-list","backup-status":"/backup-status","backup-verify":"/backup-verify","backup-create":"/backup-create","backup-drill":"/backup-drill","backup-download":"/backup-download","backup-export":"/backup-export","backup-preview":"/backup-preview","backup-restore":"/backup-restore"};
  if(security[action]){const r=await directory(env,security[action],{...b,actor:s.username});return json(await r.json(),r.status)}
  if(action==='playback-health'){const r=await env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_operations_v1')).fetch('https://private/operations/read',{method:'POST',body:'{}'});return json(await r.json(),r.status)}
  const record=async(action,target=null)=>directory(env,'/audit-write',{actor:s.username,action,target});
@@ -185,7 +186,7 @@ async function handleRequest(req,env,ctx){const u=new URL(req.url);
 if(req.method==='POST'&&req.headers.get('Cookie')?.includes('__Host-smn_')&&!canUseCookie(req,env))return json({error:'origin_not_allowed'},403);
 if(req.headers.get('Origin')&&!allowedOrigins(env).has(req.headers.get('Origin'))&&req.method==='POST')return json({error:'origin_not_allowed'},403);
 if(req.method==="OPTIONS")return new Response(null,{status:204,headers:cors});
-if(u.pathname==="/health")return json({ok:true,service:"snapmovienow-edge",version:SERVICE_VERSION,capabilities:['xtream','admin-recovery-renewal','backup-integrity','native-profile','metric-retry','admin-credentials-rotation']});
+if(u.pathname==="/health")return json({ok:true,service:"snapmovienow-edge",version:SERVICE_VERSION,capabilities:['xtream','admin-recovery-renewal','backup-integrity','native-profile','metric-retry','admin-credentials-rotation','isolated-backup-recovery']});
 if(matchesXtream(u.pathname))return xtreamRequest(req,env,ctx);
 if(u.pathname==="/admin"&&req.method==="POST"){try{return await adminRequest(req,env,ctx)}catch(e){return json({error:["body_too_large","invalid_json"].includes(e.message)?e.message:"admin_unavailable"},e.message==="body_too_large"?413:e.message==="invalid_json"?400:502)}}
 if(u.pathname==="/gnula-media"&&["GET","HEAD"].includes(req.method)){try{return await gnulaMedia(req,env,u,ctx)}catch{return json({error:"media_unavailable"},502)}}
@@ -256,7 +257,7 @@ if(session.managed){
  return json(data);
 }
 const x=new URL(ORIGIN+"/player_api.php");x.searchParams.set("username",String(b.username));x.searchParams.set("password",String(b.password));if(op!=="auth")x.searchParams.set("action",actions[op]);if(op==="series_info"&&b.series_id)x.searchParams.set("series_id",String(b.series_id));if(op==="vod_info"&&b.vod_id)x.searchParams.set("vod_id",String(b.vod_id));if(op==="live_epg"){x.searchParams.set("stream_id",String(b.stream_id));x.searchParams.set("limit","24")}const up=await fetch(x,{headers:{"User-Agent":"SnapMovieNow/1.0"},redirect:"follow"});return new Response(await up.text(),{status:up.status,headers:{...cors,"content-type":up.headers.get("content-type")||"application/json"}})}catch(e){return json({error:["body_too_large","invalid_json"].includes(e.message)?e.message:"upstream_unavailable"},e.message==="body_too_large"?413:e.message==="invalid_json"?400:502)}}
-export default {scheduled(event,env,ctx){if(env.ENVIRONMENT!=="staging")ctx.waitUntil(directory(env,"/backup-automatic").then(async r=>{const result=await r.json();if(result.error)console.error({event:"backup_failed",reason:result.error})}).catch(()=>console.error({event:"backup_failed",reason:"backup_service_unavailable"})))},async fetch(req, env, ctx) {const response=await traceRequest(req, () => handleRequest(req, env, ctx), {allowedOrigin: SITE});return browserResponse(response,req,env);}};
+export default {scheduled(event,env,ctx){if(env.ENVIRONMENT!=="staging")ctx.waitUntil(directory(env,"/backup-automatic").then(async r=>{const result=await r.json();if(result.error)console.error({event:"backup_failed",reason:result.error});if(result.recovery?.error)console.error({event:"backup_drill_failed",reason:result.recovery.error})}).catch(()=>console.error({event:"backup_failed",reason:"backup_service_unavailable"})))},async fetch(req, env, ctx) {const response=await traceRequest(req, () => handleRequest(req, env, ctx), {allowedOrigin: SITE});return browserResponse(response,req,env);}};
 
 
 

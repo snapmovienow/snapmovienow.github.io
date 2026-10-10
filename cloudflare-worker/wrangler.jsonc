@@ -26,6 +26,10 @@
           {
             "name": "PLAYBACK_SESSIONS",
             "class_name": "PlaybackSession"
+          },
+          {
+            "name": "BACKUP_RECOVERY",
+            "class_name": "BackupRecovery"
           }
         ]
       },
@@ -45,6 +49,10 @@
       {
         "name": "PLAYBACK_SESSIONS",
         "class_name": "PlaybackSession"
+      },
+      {
+        "name": "BACKUP_RECOVERY",
+        "class_name": "BackupRecovery"
       }
     ]
   },
@@ -53,6 +61,12 @@
       "tag": "playback-sessions-v1",
       "new_sqlite_classes": [
         "PlaybackSession"
+      ]
+    },
+    {
+      "tag": "backup-recovery-v1",
+      "new_sqlite_classes": [
+        "BackupRecovery"
       ]
     }
   ],

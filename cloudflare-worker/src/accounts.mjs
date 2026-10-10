@@ -24,7 +24,7 @@ export async function accountsFetch(state,env,req){
  if(p==='/audit')return answer((await store.get('security-audit')||[]).slice(-100).reverse());
  if(p==='/backup-automatic')return answer(await automaticBackup(store,env));
  if(['/backup-preview','/backup-list','/backup-status','/backup-verify'].includes(p))return backupRoute(store,env,p,b,leases);
- if(['/security-status','/admin-password','/mfa-begin','/mfa-replace-begin','/mfa-confirm','/mfa-disable','/mfa-recovery-renew','/backup-export','/backup-restore','/backup-download','/backup-create'].includes(p)){
+ if(['/security-status','/admin-password','/mfa-begin','/mfa-replace-begin','/mfa-confirm','/mfa-disable','/mfa-recovery-renew','/backup-export','/backup-restore','/backup-download','/backup-create','/backup-drill'].includes(p)){
   const result=await securityRoute(store,env,p,b,{passwordHash,withPassword,audit:writeAudit});
   if(result)return result;
   return backupRoute(store,env,p,b,leases);

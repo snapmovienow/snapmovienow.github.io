@@ -3,7 +3,7 @@ const root=process.cwd(),errors=[],requests=[];let browser;const server=http.cre
 try{
  await new Promise(r=>server.listen(0,'127.0.0.1',r));const base='http://127.0.0.1:'+server.address().port;
  browser=await chromium.launch({headless:true,...(process.env.SMN_BROWSER_EXECUTABLE?{executablePath:process.env.SMN_BROWSER_EXECUTABLE}:{}),args:['--no-sandbox','--disable-dev-shm-usage','--disable-gpu']});
- const context=await browser.newContext({viewport:{width:390,height:844}}),profile=new Map();let legacy=false,malformedCatalog=false,mfaEnabled=false,mfaError=null,backups=[],replacing=false;
+ const context=await browser.newContext({viewport:{width:390,height:844}}),profile=new Map();let legacy=false,malformedCatalog=false,mfaEnabled=false,mfaError=null,backups=[],replacing=false,recoveryProof={status:"unknown"};
  await context.route('http://127.0.0.1:8787/**',async route=>{
   const request=route.request();if(request.method()==='OPTIONS'){await route.fulfill({status:204,headers:{'Access-Control-Allow-Origin':base,'Access-Control-Allow-Methods':'POST,GET,OPTIONS','Access-Control-Allow-Headers':'content-type'}});return}
   const b=request.postDataJSON()||{},op=b.op||b.action;requests.push(op);let value=[];
@@ -28,9 +28,11 @@ try{
   if(op==='mfa-confirm'&&mfaError){await route.fulfill({status:401,contentType:'application/json',headers:{'Access-Control-Allow-Origin':base},body:JSON.stringify({error:mfaError})});return}
   if(op==='mfa-confirm'||op==='mfa-recovery-renew'){mfaEnabled=true;value={replaced:op==='mfa-confirm'&&replacing,recoveryCodes:Array.from({length:8},(_,i)=>(op==='mfa-recovery-renew'?'SYNTHETIC-NEW-':'SYNTHETIC-RECOVERY-')+i)}};
   if(op==='backup-list')value=backups;
-  if(op==='backup-status')value={status:backups.length?'success':'unknown',lastSuccessAt:backups[0]?.createdAt||null,stale:!backups.length,scheduleUTC:'05:17'};
+  if(op==='backup-status')value={status:backups.length?'success':'unknown',lastSuccessAt:backups[0]?.createdAt||null,stale:!backups.length,lastAutomaticAt:null,automaticStatus:'unknown',automaticStale:true,recovery:recoveryProof,scheduleUTC:'05:17'};
   if(op==='backup-create'){backups=[{id:'2026-10-10',createdAt:Date.now()}];value={ok:true,...backups[0]}}
   if(op==='backup-verify'){backups[0].verifiedAt=Date.now();value={verified:true,users:2,providers:1}}
+  if(op==='backup-drill'){recoveryProof={status:'success',completedAt:Date.now(),backupCreatedAt:backups[0].createdAt,lastFileCheckAt:b.blob?Date.now():null};backups[0].restoredAt=Date.now();value={ok:true,cleaned:true,users:2,providers:1}}
+  if(op==='backup-preview')value={users:2,providers:1,createdAt:backups[0].createdAt,confirmation:'synthetic-confirmation'};
   if(op==='mfa-begin'||op==='mfa-replace-begin'){replacing=op==='mfa-replace-begin';value={seed:'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',expiresInSeconds:600,uri:'otpauth://test'};}
   await route.fulfill({status:200,contentType:'application/json',headers:{'Access-Control-Allow-Origin':base},body:JSON.stringify(value)});
  });
@@ -44,12 +46,15 @@ try{
  const panel=await context.newPage();panel.on('pageerror',e=>errors.push(e.message));await panel.goto(base+'/admin.html');await panel.locator('#loginForm [name="username"]').fill('owner');await panel.locator('#loginForm [name="password"]').fill('owner-password-test');await panel.locator('#loginForm button').click();await panel.locator('#securityState').filter({hasText:'desactivado'}).waitFor();
  await panel.locator('#backupStatus').filter({hasText:'sin copia creada'}).waitFor();await panel.locator('#securityForm [name="password"]').fill('owner-password-test');await panel.locator('#backupCreate').click();await panel.locator('#securityNotice').filter({hasText:'Copia creada en el servidor'}).waitFor();assert.equal(await panel.locator('#securityForm [name="password"]').inputValue(),'');
  await panel.locator('#backupVerify').click();await panel.locator('#securityNotice').filter({hasText:'Integridad comprobada: 2 usuarios y 1 servidores'}).waitFor();assert.match(await panel.locator('#automaticBackups option:checked').textContent(),/verificada/);
+ assert.match(await panel.locator('#backupStatus').textContent(),/Aún no hay una ejecución diaria confirmada/);
+ await panel.locator('#securityForm [name="password"]').fill('owner-password-test');await panel.locator('#backupDrill').click();await panel.locator('#securityNotice').filter({hasText:'Restauración aislada comprobada'}).waitFor();assert.match(await panel.locator('#recoveryStatus').textContent(),/Archivo fuera del servidor: pendiente/);assert.equal(await panel.locator('#securityForm [name="password"]').inputValue(),'');
+ await panel.locator('#backupFile').setInputFiles({name:'synthetic-backup.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify({format:'SNAP-encrypted-backup-v1',blob:'synthetic-encrypted-file'}))});await panel.locator('#backupFileDrill').waitFor();await panel.locator('#securityForm [name="password"]').fill('owner-password-test');await panel.locator('#backupFileDrill').click();await panel.locator('#securityNotice').filter({hasText:'Archivo guardado comprobado'}).waitFor();assert.match(await panel.locator('#recoveryStatus').textContent(),/Archivo guardado: ensayo correcto/);assert.equal(requests.includes('backup-restore'),false,'checking a file never restores live users');
  await panel.locator('#rows button').filter({hasText:'Editar'}).click();assert.equal(await panel.locator('#userForm [name="adults"]').isChecked(),false);await panel.locator('#cancel').click();
  await panel.locator('#securityForm [name="password"]').fill('owner-password-test');await panel.locator('#mfaBegin').click();await panel.locator('#mfaSeed').filter({hasText:'AAAA'}).waitFor();assert.equal(await panel.locator('#mfaConfirm').isVisible(),true);
  await panel.locator('#mfaExpiry').filter({hasText:'minutos'}).waitFor();
  mfaError='mfa_invalid';await panel.locator('#securityForm [name="code"]').fill('123456');await panel.locator('#mfaConfirm').click();await panel.locator('#securityNotice').filter({hasText:'Código incorrecto'}).waitFor();assert.equal(await panel.locator('#securityNotice').getAttribute('role'),'alert');
  await panel.waitForFunction(()=>{const r=document.querySelector('#securityNotice').getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight});
- assert.equal(await panel.locator('#mfaSeed').textContent(),'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA','a wrong code preserves the unexpired enrollment');mfaError=null,backups=[],replacing=false;
+ assert.equal(await panel.locator('#mfaSeed').textContent(),'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA','a wrong code preserves the unexpired enrollment');mfaError=null,backups=[],replacing=false,recoveryProof={status:"unknown"};
  await panel.evaluate(()=>{window.realSecurityNow=Date.now;Date.now=()=>window.realSecurityNow()+610000});
  await panel.locator('#securityNotice').filter({hasText:'La configuración venció'}).waitFor();assert.equal(await panel.locator('#mfaSeed').textContent(),'');assert.equal(await panel.locator('#mfaConfirm').isVisible(),false);assert.equal(await panel.locator('#securityForm [name="code"]').inputValue(),'');
  await panel.evaluate(()=>{Date.now=window.realSecurityNow});await panel.locator('#mfaBegin').click();await panel.locator('#mfaSeed').filter({hasText:'AAAA'}).waitFor();
