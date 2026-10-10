@@ -34,6 +34,7 @@ assert.equal(events.length,2,'successful media requests do not create log events
 const health = await worker.fetch(new Request('https://example.test/health'),{});
 const healthInfo=await health.json();assert.equal(healthInfo.version,SERVICE_VERSION);assert.ok(healthInfo.capabilities.includes('admin-recovery-renewal'),'public deployment health identifies support without returning any private data');
 assert.ok(health.headers.get('X-SMN-Request-ID'));
+assert.ok(healthInfo.capabilities.includes('xtream-series-diagnostic'),'health identifies the deployed episode diagnostic');
 const unauthorised = await worker.fetch(new Request('https://example.test/player_api.php'),{});
 assert.equal(unauthorised.status,401); assert.equal((await unauthorised.json()).error,'credentials_required');
 console.log('PASS: bounded error diagnostics redact credentials, preserve cancellation/Range/CORS, survive logger failures, and retain Xtream authentication.');
