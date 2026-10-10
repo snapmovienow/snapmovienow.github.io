@@ -5,8 +5,42 @@ import {fileURLToPath} from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const repository = 'snapmovienow/snapmovienow.github.io';
 const workflow = '.github/workflows/quality.yml';
-const pollMs = 20_000;
+const pollMs = 60_000;
 const timeoutMs = 12 * 60_000;
+
+function seconds(value) {
+  if (typeof value !== 'string' || !/^\d+(?:\.\d+)?$/.test(value)) return 0;
+  const ms = Number(value) * 1000;
+  return Number.isSafeInteger(Math.ceil(ms)) ? Math.ceil(ms) : 0;
+}
+
+function timing(response, now) {
+  const header = name => response.headers?.get(name);
+  const retry = header('retry-after');
+  const date = retry && !/^\d+(?:\.\d+)?$/.test(retry) ? Date.parse(retry) : NaN;
+  const retryMs = Math.max(seconds(retry), Number.isFinite(date) ? date - now : 0);
+  const reset = seconds(header('x-ratelimit-reset'));
+  const exhausted = header('x-ratelimit-remaining') === '0';
+  return {
+    delay: Math.max(pollMs, seconds(header('x-poll-interval')), retryMs,
+      exhausted && reset > now ? reset - now + 1000 : 0),
+    exhausted,
+    rateLimited: exhausted || retryMs > 0 || response.status === 429
+  };
+}
+
+function githubHeaders(token) {
+  const headers = {'Accept': 'application/vnd.github+json', 'User-Agent': 'SNAPTVNOW-deploy-guard',
+    'X-GitHub-Api-Version': '2022-11-28'};
+  if (token !== undefined && token !== '') {
+    // Do not silently fall back to anonymous requests when a configured secret is invalid.
+    if (typeof token !== 'string' || !/^[A-Za-z0-9_-]{20,512}$/.test(token)) {
+      throw new Error('QUALITY_GITHUB_TOKEN is invalid; deployment blocked.');
+    }
+    headers.Authorization = `Bearer ${token}`;
+  }
+  return headers;
+}
 
 // A passing run for another revision, branch or workflow must never approve this build.
 export function qualityRun(runs, sha, branch) {
@@ -18,32 +52,62 @@ export function qualityRun(runs, sha, branch) {
 
 export async function waitForQuality({sha, branch, fetchImpl = fetch,
   wait = ms => new Promise(resolve => setTimeout(resolve, ms)),
-  now = Date.now, log = console.log, deadlineMs = timeoutMs}) {
+  now = Date.now, log = console.log, deadlineMs = timeoutMs, token}) {
   if (!/^[a-f0-9]{40}$/.test(sha || '') || !branch || branch.length > 255) {
     throw new Error('A complete commit SHA and branch are required for deployment.');
   }
   const url = new URL(`https://api.github.com/repos/${repository}/actions/workflows/quality.yml/runs`);
   url.search = new URLSearchParams({head_sha: sha, branch, event: 'push', per_page: '30'});
+  const baseHeaders = githubHeaders(token);
   const deadline = now() + deadlineMs;
   let failures = 0;
   let lastState;
+  let cachedRuns;
+  let etag;
+  const pause = async (ms, reason) => {
+    if (ms >= deadline - now()) {
+      throw new Error(`Cannot verify Quality; deployment blocked (${reason}; next check would exceed the build deadline).`);
+    }
+    await wait(ms);
+  };
   while (now() < deadline) {
     let run;
+    let delay = pollMs;
+    let reason = 'GitHub transport or invalid workflow response';
+    let fatal = false;
     try {
       const response = await fetchImpl(url, {
-        headers: {'Accept': 'application/vnd.github+json', 'User-Agent': 'SNAPTVNOW-deploy-guard',
-          'X-GitHub-Api-Version': '2022-11-28'},
+        headers: {...baseHeaders, ...(etag ? {'If-None-Match': etag} : {})},
+        // A build secret must never be forwarded to a redirected host.
+        redirect: 'error',
         signal: AbortSignal.timeout(Math.max(1, Math.min(10_000, deadline - now())))
       });
-      if (!response.ok) throw new Error(`GitHub HTTP ${response.status}`);
-      const data = await response.json();
-      run = qualityRun(data.workflow_runs, sha, branch);
+      const limits = timing(response, now());
+      delay = limits.delay;
+      if (response.status === 304) {
+        if (!etag || !cachedRuns) throw new Error('No validated cached response.');
+        run = qualityRun(cachedRuns, sha, branch);
+      } else {
+        if (!response.ok) {
+          reason = `GitHub HTTP ${Number.isInteger(response.status) ? response.status : 'invalid'}` +
+            (limits.exhausted ? '; API quota exhausted' : limits.rateLimited ? '; retry delay required' : '');
+          fatal = response.status >= 400 && response.status < 500 &&
+            response.status !== 403 && response.status !== 429;
+          throw new Error('GitHub request rejected.');
+        }
+        const data = await response.json();
+        run = qualityRun(data.workflow_runs, sha, branch);
+        cachedRuns = data.workflow_runs;
+        etag = response.headers?.get('etag');
+      }
       failures = 0;
-    } catch (error) {
+    } catch {
       failures++;
-      if (failures >= 5) throw new Error(`Cannot verify Quality; deployment blocked (${error.message}).`);
-      log(`Quality could not be read (${failures}/5); retrying without approving deployment.`);
-      await wait(Math.min(pollMs, Math.max(0, deadline - now())));
+      if (fatal || failures >= 5) throw new Error(`Cannot verify Quality; deployment blocked (${reason}).`);
+      delay = Math.max(delay, pollMs * 2 ** (failures - 1));
+      // Never log exception messages or API bodies: they can contain credentials.
+      log(`Quality could not be read (${failures}/5; ${reason}). Next check in ${Math.ceil(delay / 1000)}s; deployment remains blocked.`);
+      await pause(delay, reason);
       continue;
     }
     if (run?.status === 'completed') {
@@ -58,7 +122,8 @@ export async function waitForQuality({sha, branch, fetchImpl = fetch,
       log(`Waiting for Quality on ${branch}@${sha.slice(0, 12)} (${run?.status || 'not started'}).`);
       lastState = state;
     }
-    await wait(Math.min(pollMs, Math.max(0, deadline - now())));
+    if (delay >= deadline - now()) break;
+    await wait(delay);
   }
   throw new Error('Quality did not approve this commit within 12 minutes; deployment blocked.');
 }
@@ -84,7 +149,7 @@ export async function guardDeployment(env = process.env, args = process.argv.sli
   if (git('status', '--porcelain', '--untracked-files=no')) {
     throw new Error('Deployment checkout contains tracked modifications; deployment blocked.');
   }
-  return waitForQuality({sha, branch});
+  return waitForQuality({sha, branch, token: env.QUALITY_GITHUB_TOKEN});
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
