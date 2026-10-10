@@ -3,24 +3,55 @@ on:
   workflow_run:
     workflows: [Quality]
     types: [completed]
+    branches: [main]
+  workflow_dispatch:
 permissions:
   contents: read
 concurrency:
   group: pages-after-quality
   cancel-in-progress: false
 jobs:
-  deploy:
-    # Enable only after the owner changes Pages Source to GitHub Actions.
+  prepare:
     if: >-
-      vars.PAGES_ACTIONS_ENABLED == 'true' &&
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'push' &&
-      github.event.workflow_run.head_branch == 'main' &&
-      github.event.workflow_run.head_repository.full_name == github.repository
+      github.repository == 'snapmovienow/snapmovienow.github.io' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == 'main' &&
+        github.event.workflow_run.head_repository.full_name == github.repository))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    permissions:
+      contents: read
+      actions: read
+      pages: read
+    outputs:
+      ready: ${{ steps.approval.outputs.ready }}
+      sha: ${{ steps.approval.outputs.sha }}
+      run_id: ${{ steps.approval.outputs.run_id }}
+      attempt: ${{ steps.approval.outputs.attempt }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - name: Verify Pages source and Quality approval
+        id: approval
+        env:
+          PAGES_GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/pages-guard.mjs
+  deploy:
+    needs: prepare
+    if: needs.prepare.outputs.ready == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
+      actions: read
       pages: write
       id-token: write
     environment:
@@ -29,14 +60,8 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ needs.prepare.outputs.sha }}
           persist-credentials: false
-      - name: Reject a superseded publication
-        env:
-          SNAP_DEPLOY_SHA: ${{ github.event.workflow_run.head_sha }}
-        run: |
-          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$SNAP_DEPLOY_SHA"
-          test "$(git rev-parse HEAD)" = "$SNAP_DEPLOY_SHA"
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '24'
@@ -44,6 +69,13 @@ jobs:
       - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa
         with:
           path: artifacts/pages
+      - name: Recheck main and Quality immediately before publication
+        env:
+          PAGES_GITHUB_TOKEN: ${{ github.token }}
+          SNAP_PAGES_SHA: ${{ needs.prepare.outputs.sha }}
+          SNAP_QUALITY_RUN_ID: ${{ needs.prepare.outputs.run_id }}
+          SNAP_QUALITY_ATTEMPT: ${{ needs.prepare.outputs.attempt }}
+        run: node scripts/pages-guard.mjs --require-approved
       - name: Publish tested frontend
         id: deployment
         uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e

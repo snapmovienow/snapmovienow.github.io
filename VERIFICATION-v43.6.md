@@ -16,3 +16,5 @@ Validación local:
 Evidencia del motor local: `verification/2026-10-10-recovery-runtime.json`, únicamente datos sintéticos. Esta prueba no afirma haber restaurado datos de clientes ni ejecutado el cron en Cloudflare remoto. El ensayador se publica con el Worker; staging remoto y PITR físico no se dan por certificados.
 
 Cierre operativo: crear una copia en el panel, esperar restauración aislada correcta, descargarla y ensayar el archivo guardado fuera del servidor. Verificar la ejecución automática después del cron de las 05:17 UTC. Conservar por separado la clave original del servidor. Guía completa: `cloudflare-worker/ENGINEERING_V43.md`.
+
+Confirmación del propietario, 10 de octubre de 2026: la captura del panel informa restauración aislada correcta de 3 usuarios y 1 servidor, con almacenamiento de ensayo limpiado. Quedan por comprobar el archivo guardado fuera del servidor y el cron; esta captura no certifica PITR físico.

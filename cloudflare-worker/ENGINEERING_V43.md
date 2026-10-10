@@ -79,7 +79,7 @@ Referencias: [límites de GitHub](https://docs.github.com/en/rest/using-the-rest
 
 Fuera de Workers Builds, la instalación normal no espera a Quality: hacerlo dentro del propio job produciría una espera circular. Los comandos manuales `npm run deploy` y `npm run deploy:staging` exigen la misma aprobación antes de las regresiones locales y Wrangler. La instalación automática debe conservar los scripts npm habilitados. Esta protección no impide que un administrador cambie el comando, desactive los scripts o publique deliberadamente por otra vía; las reglas de protección de ramas requieren ajustes adicionales de la cuenta.
 
-GitHub Pages todavía publica en paralelo mediante su mecanismo nativo. Exigir Quality antes de publicar también el frontend requiere configurar Pages con GitHub Actions y un job de publicación dependiente de Quality; ese ajuste y las reglas de protección de ramas no están accesibles con la conexión actual.
+GitHub Pages todavía publica en paralelo mediante su mecanismo nativo hasta cambiar Source a GitHub Actions. El flujo v43.7 comprueba ajustes, revisión y aprobación de Quality con el token temporal de Actions. El ajuste administrativo de Source y las reglas de protección de ramas no están accesibles con la conexión actual.
 
 La evidencia de navegador se puede generar con `SMN_LIVE_AUDIO_REPORT=artifacts/live-audio.json`. Reproduce el problema de MPEG Layer III con HLS.js 1.6.15 usando una señal sintética, comprueba avance/decodificación y audio continuo con segmentos completos y también comprueba AAC. No certifica todas las señales del proveedor ni un teléfono físico.
 
@@ -109,7 +109,11 @@ La integración nativa está en el repositorio `juancanta89-tech/SnapTvNow`: fav
 
 ## Pages sujeto a Quality
 
-El workflow está preparado en `.github/workflows/pages-after-quality.yml`. El propietario debe cambiar Source a GitHub Actions y activar la variable de Actions `PAGES_ACTIONS_ENABLED=true`. Mientras no lo haga, Pages continúa su publicación nativa en paralelo; el Worker ya exige Quality. El artefacto nuevo excluye código de servidor, pruebas, dependencias e informes.
+El workflow v43.7 está preparado en `.github/workflows/pages-after-quality.yml`. Ya no necesita la variable `PAGES_ACTIONS_ENABLED`: consulta los ajustes reales de Pages. Con Source legado, valida Quality pero omite la publicación y explica el cambio pendiente. El propietario debe abrir https://github.com/snapmovienow/snapmovienow.github.io/settings/pages y cambiar **Build and deployment > Source** a **GitHub Actions**, conservando **app.snaptvnow.com** y **Enforce HTTPS**. No crear otro workflow sugerido por GitHub. Después abrir https://github.com/snapmovienow/snapmovienow.github.io/actions/workflows/pages-after-quality.yml y pulsar **Run workflow** en **main**. Ese arranque manual también exige la última ejecución push de Quality aprobada; no la reemplaza por una aprobación manual. La conexión actual publica código, pero no administra Source.
+
+El job de preparación solo tiene lectura de Contents, Actions y Pages. Rechaza otros repositorios, ramas, PR, workflows, revisiones, ejecuciones e intentos. Descarga únicamente la revisión aprobada, genera el artefacto de frontend y repite la consulta justo antes de desplegar con Pages/ID token. Un intento nuevo, fallo, error de API, cambio de main, de dominio o de HTTPS bloquea la publicación. Los permisos de escritura quedan en el job condicionado a la aprobación; no se cargan artefactos de PR ni credenciales externas. El artefacto excluye código de servidor, pruebas, dependencias e informes. La comprobación previa no es una transacción atómica con un push concurrente; una nueva revisión llegada después de esa comprobación se publicará con su propio Quality posterior.
+
+Después del cambio, confirmar que **Pages after Quality** publica y que ya no aparece una publicación nativa nueva en paralelo. El ajuste de Source debe verificarse en GitHub; un ensayo local no lo activa. Referencias: https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site y https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_run.
 
 ## Ensayo remoto de recuperación SQLite
 
@@ -135,3 +139,5 @@ Cierre operativo desde el panel:
 4. Conservar por separado la clave original del servidor, sin pegarla en el chat. PITR físico y recuperación de la cuenta Cloudflare siguen siendo procedimientos distintos; nunca probar PITR sobre el objeto de clientes.
 
 Evidencia automatizada: `npm test`, `npm run test:platform` y la integración móvil. `artifacts/recovery-runtime.json` se genera en CI usando únicamente datos sintéticos en workerd/SQLite local. No contiene copias, usuarios reales, tokens ni claves y no prueba la ejecución del cron remoto.
+
+Confirmación operativa del 10 de octubre de 2026: el propietario aportó la captura de «Restauración aislada comprobada: 3 usuarios y 1 servidores. Almacenamiento de ensayo limpiado» en el dominio del panel. Confirma el ensayo lógico real de una copia del servidor y su limpieza. No confirma el ensayo de un archivo externo reimportado, el próximo cron diario, la custodia de la clave original ni PITR físico.
