@@ -20,3 +20,5 @@ Cierre operativo: crear una copia en el panel, esperar restauración aislada cor
 Confirmación del propietario, 10 de octubre de 2026: la primera captura del panel informa restauración aislada correcta de una copia del servidor, con 3 usuarios y 1 servidor y almacenamiento de ensayo limpiado. A las 16:01 America/Chicago, una nueva captura confirma también «Archivo guardado comprobado», con los mismos conteos y limpieza. El archivo descargado y reimportado pasó el ensayo lógico aislado. Evidencia agregada: `verification/2026-10-10-recovery-owner-confirmation.json`; no conserva el archivo, identidades, claves ni códigos.
 
 Quedan por comprobar la primera ejecución diaria registrada, la custodia privada de la clave original del servidor y PITR físico en un entorno separado. El ensayo del archivo no certifica estos pasos ni constituye una restauración de producción.
+
+El 10 de octubre de 2026, a las 16:40 America/Chicago, el propietario pidió dejar pendiente la comprobación del cron diario y seguir con el siguiente punto. No se da por comprobado ni se programa otra tarea de seguimiento.

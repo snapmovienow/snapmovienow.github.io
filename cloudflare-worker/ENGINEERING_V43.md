@@ -8,7 +8,7 @@ Se añadió el lockfile propio del Worker, conservando Wrangler 4.149.0 y las ve
 
 MFA, copias automáticas, sincronización remota y métricas agregadas están disponibles en ese servidor. La publicación del Worker no inscribe MFA en el teléfono del propietario; debe configurarse desde el panel. El panel v43.3 muestra la última copia y el estado del intento, permite crear una copia con reautenticación y comprobar su integridad sin restaurar. El control de recuperación v43.6 registra por separado la última ejecución automática, el ensayo de restauración y el archivo reimportado. Las copias antiguas no certifican retroactivamente el cron. La primera ejecución con ese control queda por comprobar después del cron; la validación local de cifrado/restauración no certifica esa ejecución en producción.
 
-La actualización v43.5 añade cambio de contraseña y reemplazo de la clave del autenticador sin desactivar la protección durante la inscripción. Ver `VERIFICATION-v43.5.md` en la raíz para pruebas y pasos privados; renovar solo recuperación conserva la clave anterior. Android 1.0.11 está en main y pasó 142 pruebas; su firma de producción terminó correctamente, conserva el certificado de 1.0.8 y la APK fue entregada. La validación física sigue pendiente.
+La actualización v43.5 añade cambio de contraseña y reemplazo de la clave del autenticador sin desactivar la protección durante la inscripción. Ver `VERIFICATION-v43.5.md` en la raíz para pruebas y pasos privados; renovar solo recuperación conserva la clave anterior. Android 1.0.12 está en main, con 159 pruebas sin fallos ni omisiones y firma de producción terminada. Se verificaron los bytes y la firma v2 de la APK entregada, paquete com.snaptvnow.tv, versionCode 41 y certificado igual al de 1.0.11. La validación física sigue pendiente. Ver `VERIFICATION-android-1.0.12.md`.
 
 ## Cambios listos
 
@@ -105,7 +105,7 @@ Queda pendiente una prueba gradual con señales y cuentas de prueba autorizadas,
 
 ## Android
 
-La integración nativa está en el repositorio `juancanta89-tech/SnapTvNow`: favoritos, progreso, idiomas, aislamiento por cuenta/servicio, HTTPS, métricas agregadas y guía ampliada. Ver VERIFICATION-v43.4.md para evidencia de compilación y límites. Las pruebas físicas y firma/distribución de producción requieren un dispositivo y la clave existente.
+La integración nativa está en el repositorio `juancanta89-tech/SnapTvNow`: favoritos, progreso, idiomas, aislamiento por cuenta/servicio, HTTPS, métricas agregadas y guía ampliada. La revisión f1b2a04 (1.0.12) añade descarga e instalación de actualizaciones dentro de SNAPTVNOW. Android source check 38085780730 y Sign production APK 38085780725 terminaron correctamente. Se inspeccionaron los informes XML: 159 pruebas, cero fallos, errores y omisiones. La APK firmada se verificó y se entregó, conservando la firma anterior; no se modificó el repositorio Android durante esta comprobación. La prueba física en teléfono y Firestick, incluyendo instalación y reproducción real, sigue pendiente. Evidencia: `verification/2026-10-10-android-v1.0.12.json` y `VERIFICATION-android-1.0.12.md`.
 
 ## Pages sujeto a Quality
 
@@ -141,3 +141,5 @@ Cierre operativo desde el panel:
 Evidencia automatizada: `npm test`, `npm run test:platform` y la integración móvil. `artifacts/recovery-runtime.json` se genera en CI usando únicamente datos sintéticos en workerd/SQLite local. No contiene copias, usuarios reales, tokens ni claves y no prueba la ejecución del cron remoto.
 
 Confirmación operativa del 10 de octubre de 2026: el propietario aportó primero la captura de «Restauración aislada comprobada: 3 usuarios y 1 servidores. Almacenamiento de ensayo limpiado» y después, a las 16:01 America/Chicago, otra con «Archivo guardado comprobado». Confirman el ensayo lógico real de la copia del servidor y del archivo descargado y reimportado, con 3 usuarios, 1 servidor y limpieza del almacenamiento de ensayo. Evidencia agregada: `verification/2026-10-10-recovery-owner-confirmation.json`. No confirman el próximo cron diario, la custodia privada de la clave original ni PITR físico.
+
+El propietario dejó pendiente explícitamente la comprobación del cron diario a las 16:40 America/Chicago. El siguiente punto activo es la validación física de la APK, tras completar la protección de Pages después de Quality.

@@ -1,0 +1,219 @@
+{
+  "android_repository": "juancanta89-tech/SnapTvNow",
+  "commit": "f1b2a04b76666627129bb3ea68e5efdce1b1216d",
+  "version": "1.0.12",
+  "automated_tests": {
+    "repository": "juancanta89-tech/SnapTvNow",
+    "commit": "f1b2a04b76666627129bb3ea68e5efdce1b1216d",
+    "run_id": 38085780730,
+    "artifact_id": 11682257192,
+    "totals": {
+      "tests": 159,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "suites": [
+      {
+        "name": "com.snaptvnow.tv.CatalogCardGridTest",
+        "tests": 3,
+        "failures": 0,
+        "errors": 0
+      },
+      {
+        "name": "com.snaptvnow.tv.CatalogGridLayoutTest",
+        "tests": 4,
+        "failures": 0,
+        "errors": 0
+      },
+      {
+        "name": "com.snaptvnow.tv.CatalogSearchTest",
+        "tests": 6,
+        "failures": 0,
+        "errors": 0
+      },
+      {
+        "name": "com.snaptvnow.tv.ChannelCardTest",
+        "tests": 3,
+        "failures": 0,
+        "errors": 0
+      },
+      {
+        "name": "com.snaptvnow.tv.ContinueArtworkTest",
+        "tests": 3,
+        "failures": 0,
+        "errors": 0
+      },
+      {
+        "name": "com.snaptvnow.tv.ContinueQueueTest",
+        "tests": 9,
+        "failures": 0,
+        "errors": 0
+      },
+      {
+        "name": "com.snaptvnow.tv.ContinueWatchingTest",
+        "tests": 13,
+        "failures": 0,
+        "errors": 0
+      },
+      {
+        "name": "com.snaptvnow.tv.ContinueWatchingViewTest",
+        "tests": 7,
+        "failures": 0,
+        "errors": 0
+      },
+      {
+        "name": "com.snaptvnow.tv.EpgGuideTest",
+        "tests": 1,
+        "failures": 0,
+        "errors": 0
+      },
+      {
+        "name": "com.snaptvnow.tv.EpisodeEndViewTest",
+        "tests": 5,
+        "failures": 0,
+        "errors": 0
+      },
+      {
+        "name": "com.snaptvnow.tv.EpisodePlaybackControllerTest",
+        "tests": 13,
+        "failures": 0,
+        "errors": 0
+      },
+      {
+        "name": "com.snaptvnow.tv.EpisodeQueueTest",
+        "tests": 6,
+        "failures": 0,
+        "errors": 0
+      },
+      {
+        "name": "com.snaptvnow.tv.LivePlaybackRecoveryTest",
+        "tests": 16,
+        "failures": 0,
+        "errors": 0
+      },
+      {
+        "name": "com.snaptvnow.tv.LivePlayerReplacementTest",
+        "tests": 4,
+        "failures": 0,
+        "errors": 0
+      },
+      {
+        "name": "com.snaptvnow.tv.MovieResumeDialogTest",
+        "tests": 5,
+        "failures": 0,
+        "errors": 0
+      },
+      {
+        "name": "com.snaptvnow.tv.NativePlaybackMetricsTest",
+        "tests": 3,
+        "failures": 0,
+        "errors": 0
+      },
+      {
+        "name": "com.snaptvnow.tv.NativeProfileSyncTest",
+        "tests": 9,
+        "failures": 0,
+        "errors": 0
+      },
+      {
+        "name": "com.snaptvnow.tv.PlayerTrackOptionsTest",
+        "tests": 7,
+        "failures": 0,
+        "errors": 0
+      },
+      {
+        "name": "com.snaptvnow.tv.SearchInputTest",
+        "tests": 6,
+        "failures": 0,
+        "errors": 0
+      },
+      {
+        "name": "com.snaptvnow.tv.UpdateDownloadTest",
+        "tests": 8,
+        "failures": 0,
+        "errors": 0
+      },
+      {
+        "name": "com.snaptvnow.tv.UpdateInstallerTest",
+        "tests": 9,
+        "failures": 0,
+        "errors": 0
+      },
+      {
+        "name": "com.snaptvnow.tv.VodPlaybackSessionTest",
+        "tests": 12,
+        "failures": 0,
+        "errors": 0
+      },
+      {
+        "name": "com.snaptvnow.tv.VodPlayerControlsTest",
+        "tests": 4,
+        "failures": 0,
+        "errors": 0
+      },
+      {
+        "name": "com.snaptvnow.tv.XtreamClientCatalogTest",
+        "tests": 3,
+        "failures": 0,
+        "errors": 0
+      }
+    ]
+  },
+  "signed_run_id": 38085780725,
+  "signed_artifact_id": 11681907567,
+  "apk": {
+    "file": "SNAPTVNOW-1.0.12.apk",
+    "bytes": 44400730,
+    "sha256": "c9702ffb2eb6ee755d773ff351fe3a4f049d6085117634ee9b2185e8346e617d",
+    "signer_sha256": [
+      "069517313d68df21e9ba3110db2e498e9b42aeb8f3f4553d84953e946cd27165"
+    ],
+    "v2_signature_and_content_digest_verified": true,
+    "update_signature_and_package_match": true,
+    "manifest": [
+      {
+        "element": "manifest",
+        "attributes": {
+          "versionCode": 41,
+          "versionName": "1.0.12",
+          "compileSdkVersion": 36,
+          "compileSdkVersionCodename": "16",
+          "package": "com.snaptvnow.tv",
+          "platformBuildVersionCode": 36,
+          "platformBuildVersionName": 16
+        }
+      },
+      {
+        "element": "uses-sdk",
+        "attributes": {
+          "minSdkVersion": 23,
+          "targetSdkVersion": 35
+        }
+      },
+      {
+        "element": "application",
+        "attributes": {
+          "theme": 16974382,
+          "label": "SNAPTVNOW",
+          "icon": 2131099796,
+          "allowBackup": false,
+          "banner": 2131099648,
+          "extractNativeLibs": true,
+          "usesCleartextTraffic": true,
+          "networkSecurityConfig": 2131755009,
+          "appComponentFactory": "androidx.core.app.CoreComponentFactory"
+        }
+      }
+    ]
+  },
+  "physical_validation": {
+    "phone": "pending",
+    "firestick": "pending",
+    "actual_update_installation": "pending"
+  },
+  "daily_backup_cron": {
+    "status": "deferred by owner",
+    "owner_request_at": "2026-10-10T21:40:05Z"
+  }
+}
