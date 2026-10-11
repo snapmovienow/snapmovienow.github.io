@@ -39,7 +39,18 @@ try{
  });
  await context.route('https://cdn.jsdelivr.net/npm/hls.js@1.6.15/dist/hls.min.js',route=>route.fulfill({contentType:'text/javascript',headers:{'Access-Control-Allow-Origin':'*'},body:fs.readFileSync(path.join(root,'node_modules/hls.js/dist/hls.min.js'))}));
  const page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));page.on('console',m=>{if(m.type()==='error')errors.push(m.text())});
- await page.goto(base);await page.evaluate(()=>ensureHls());await page.locator('header [data-action="menu"]').click();assert.equal(await page.locator('#drawer').evaluate(e=>e.classList.contains('open')),true);await page.locator('#drawer [data-action="menu"]').click();
+ await page.goto(base);await page.evaluate(()=>SMNPlaybackTransport.loadHls());
+ const nativeTracks=await page.evaluate(()=>{
+  player=gnulaPlayer;profilePreferences={subtitle:'es'};
+  const metadata=gnulaPlayer.addTextTrack('metadata','Metadata','und'),captions=gnulaPlayer.addTextTrack('captions','Español','es');
+  metadata.mode='hidden';captions.mode='disabled';trackControls.reset();syncTrackControls();
+  const select=document.getElementById('subtitleSelect');
+  const result={enabled:!select.disabled,options:select.options.length,selected:select.value,mode:captions.mode};
+  select.value='off';select.dispatchEvent(new Event('change'));result.disabledMode=captions.mode;result.preference=profilePreferences.subtitle;
+  player=moviePlayer;profilePreferences={};trackControls.reset();syncTrackControls();return result;
+ });
+ assert.deepEqual(nativeTracks,{enabled:true,options:2,selected:'1',mode:'showing',disabledMode:'disabled',preference:'off'},'actual native TextTrackList preserves caption indices and saves the disable choice');
+ await page.locator('header [data-action="menu"]').click();assert.equal(await page.locator('#drawer').evaluate(e=>e.classList.contains('open')),true);await page.locator('#drawer [data-action="menu"]').click();
  await page.locator('#heroLogin').click();await page.locator('#user').fill('testuser');await page.locator('#pass').fill('customer-password-test');await page.locator('#submit').click();await page.locator('#movieRow .card').first().waitFor();
  await page.waitForFunction(()=>document.body.classList.contains('authenticated')&&document.querySelector('#movieRow b')?.textContent==='Película de prueba');
  await page.locator('#movieRow .card').first().click();await page.locator('#heartBtn').click();await page.waitForTimeout(1500);assert.ok([...profile.values()].some(p=>p.kind==='favorite'&&!p.deleted));

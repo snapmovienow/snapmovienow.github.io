@@ -1,4 +1,4 @@
-const API=globalThis.SMNConfig?.api||"https://api.snaptvnow.com";let allMovies=[],allSeries=[],allLive=[],permissions={movies:true,series:true,tv:true},authenticated=false,authGeneration=0,hlsEngine=null;
+const API=globalThis.SMNConfig?.api||"https://api.snaptvnow.com";let allMovies=[],allSeries=[],allLive=[],permissions={movies:true,series:true,tv:true},authenticated=false,authGeneration=0;
 let creds=SMNSessionClient.read(localStorage,{cookieMode:globalThis.SMNConfig?.cookieMode===true});const loginModal=document.getElementById("login");document.getElementById("loginBtn").addEventListener("click",()=>loginModal.classList.add("open"));document.getElementById("heroLogin").addEventListener("click",()=>loginModal.classList.add("open"));document.getElementById("closeLoginBtn").addEventListener("click",()=>loginModal.classList.remove("open"));
 function menu(){document.getElementById("drawer").classList.toggle("open")} function closeLogin(){document.getElementById("login").classList.remove("open");if(location.hash==="#login")history.replaceState(null,"",location.pathname+location.search)}
 const api=SMNSessionClient.transport({url:API,cookieMode:globalThis.SMNConfig?.cookieMode===true,getSession:()=>creds,getGeneration:()=>authGeneration,request:(...args)=>SMNConnection.requestJSON(...args)});
@@ -54,7 +54,7 @@ function assertPlaybackAttempt(attempt){if(!authenticated||!playbackLifecycle.va
 function releasePlayback(){playbackLease=null;return playbackLifecycle.cancel()}
 setInterval(async()=>{if(!authenticated||heartbeatBusy)return;const attempt=playbackLifecycle.current,lease=playbackLease,session=creds;heartbeatBusy=true;try{await api("playback_heartbeat",{lease_id:lease,request_id:attempt?.id})}catch(e){if(creds===session&&playbackLease===lease&&playbackLifecycle.current===attempt&&(e.status===401||e.status===410)){stopPlayback();document.getElementById("playerStatus").textContent="Tu acceso o reproducción ha finalizado. Inicia sesión nuevamente.";if(e.status===401)logout();}}finally{heartbeatBusy=false}},25000);
 window.addEventListener("pagehide",()=>{saveContinue();profileSync?.flush();stopPlayback();document.getElementById("playBtn").disabled=false;updatePlayLabel()});
-let stopLiveWatchdog=null, liveDiagnostics=null, liveDiagnosticHistory=[],playbackMetrics=null;
+let liveDiagnostics=null, liveDiagnosticHistory=[],playbackMetrics=null;
 function beginPlaybackMetrics(video,attempt){if(typeof createPlaybackMetrics!=="function")return;const selection=attempt.selection,x=selection.liveActual||selection.item,session=creds;playbackMetrics=createPlaybackMetrics(video,{type:selection.type,quality:String(x.name||"").match(/\b(1080|720)\b/)?.[1]||"other",server:x._server||x.source||"ccf",send:metric=>creds===session&&authenticated?api("playback_metric",{metric}):Promise.resolve()})}
 function resetLiveDiagnostics(type){liveDiagnosticHistory=[];document.getElementById("liveDiagnosticPanel").hidden=type!=="live";document.getElementById("liveDiagnosticText").hidden=true;document.getElementById("liveDiagnosticText").value="";document.getElementById("liveDiagnosticStatus").textContent="Si la señal se queda cargando, copia el diagnóstico y pégalo en el chat."}
 function startLiveDiagnostics(engine,attempt){
@@ -73,38 +73,36 @@ document.getElementById("copyLiveDiagnostic").addEventListener("click",copyLiveD
 function stopPlayback(invalidate=true){
  playbackMetrics?.stop();playbackMetrics=null;
  if(invalidate){liveRequest++;releasePlayback()}
- const watchdog=stopLiveWatchdog,engine=hlsEngine,diagnostic=liveDiagnostics;stopLiveWatchdog=null;hlsEngine=null;liveDiagnostics=null;
+ const diagnostic=liveDiagnostics;liveDiagnostics=null;
  if(diagnostic){try{liveDiagnosticHistory.push(diagnostic.report());liveDiagnosticHistory=liveDiagnosticHistory.slice(-2)}catch{}}
- // A player cleanup error must not prevent other transports from closing.
- for(const close of [()=>diagnostic?.stop(),()=>watchdog?.(),()=>engine?.destroy(),()=>moviePlayer.pause?.(),()=>{moviePlayer.src=null},()=>gnulaPlayer.pause(),()=>gnulaPlayer.removeAttribute("src"),()=>gnulaPlayer.load()]){try{close()}catch{}}
- moviePlayer.style.display="none";gnulaPlayer.style.display="none";
+ try{diagnostic?.stop()}catch{}
+ mediaTransport.stop();
 }
-let hlsLoading;
-function ensureHls(){return hlsLoading ||= new Promise((resolve,reject)=>{if(window.Hls)return resolve();const script=document.createElement("script");script.src="https://cdn.jsdelivr.net/npm/hls.js@1.6.15/dist/hls.min.js";script.crossOrigin="anonymous";script.integrity="sha384-iZBI1/lW9u8FcBjxuQ8nPTsU7TXhZNtzkV8H3gQHSTgz+VYQoKWqGlBHqhO84alJ";script.onload=resolve;script.onerror=()=>{hlsLoading=null;reject(Error("hls_unavailable"))};document.head.append(script)})}
-async function playWithTimeout(video,signal){let timer,onAbort;try{await Promise.race([video.play(),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error("load_timeout")),20000);onAbort=()=>reject(Error("playback_superseded"));if(signal?.aborted)onAbort();else signal?.addEventListener("abort",onAbort,{once:true})})])}finally{clearTimeout(timer);signal?.removeEventListener("abort",onAbort)}}
+function retryLivePlayback(){
+ if(!currentPlay||currentPlay.type!=="live")return;
+ liveFailures.set(favKey(currentPlay.liveActual||currentPlay.item,"live"),Date.now()+60000);
+ stopPlayback();document.getElementById("playBtn").disabled=false;document.getElementById("playBtn").click();
+}
+const mediaTransport=SMNPlaybackTransport.create({
+ moviePlayer,hlsPlayer:gnulaPlayer,assertAttempt:assertPlaybackAttempt,
+ onPlayer:(video,attempt)=>{player=video;beginPlaybackMetrics(video,attempt)},
+ onDiagnostics:startLiveDiagnostics,onBytes:bytes=>playbackMetrics?.addBytes(bytes),onError:()=>playbackMetrics?.error(),
+ onTracks:()=>syncTrackControls(),hidden:()=>document.hidden,
+ onStatus:text=>{document.getElementById("playerStatus").textContent=text},
+ onRecovery:()=>liveDiagnostics?.capture("watchdog_recovery"),
+ onFatal:type=>{if(type==="live")retryLivePlayback();else{stopPlayback();document.getElementById("playerStatus").textContent="La señal no está disponible. Vuelve a intentar."}}
+});
+const trackControls=SMNPlaybackTracks.create({
+ players:[moviePlayer,gnulaPlayer],nativePlayer:gnulaPlayer,getPlayer:()=>player,getEngine:()=>mediaTransport.engine,
+ getPreferences:()=>profilePreferences,onPreference:(name,value)=>{profilePreferences[name]=value;profileSync?.preference(name,value)},
+ audioSelect:document.getElementById("audioSelect"),subtitleSelect:document.getElementById("subtitleSelect"),status:document.getElementById("trackStatus")
+});
+function syncTrackControls(){trackControls.sync()}
 async function startPlayback(url,resumeAt=0,leaseId=null,attempt){
-assertPlaybackAttempt(attempt);if(!authenticated)throw Error("session_required");const generation=authGeneration;const external=currentPlay.item.source==="gnula"||currentPlay.type==="live";stopPlayback(false);playbackLease=leaseId;currentPlay.completed=false;
-trackPreferenceApplied={audio:false,subtitle:false};
-if(external){player=gnulaPlayer;beginPlaybackMetrics(player,attempt);player.style.display="block";await ensureHls();assertPlaybackAttempt(attempt);if(!Hls.isSupported()&&player.canPlayType("application/vnd.apple.mpegurl")){startLiveDiagnostics(null,attempt);player.src=url;await playWithTimeout(player,attempt.controller.signal)}else{await ensureHls();assertPlaybackAttempt(attempt);if(generation!==authGeneration||!authenticated)throw Error("session_changed");if(!Hls.isSupported())throw Error("hls_not_supported");hlsEngine=new Hls({progressive:false,startOnSegmentBoundary:currentPlay?.type==='live',maxBufferLength:currentPlay?.type==='live'?30:12,maxMaxBufferLength:currentPlay?.type==='live'?60:30,backBufferLength:10,liveSyncDurationCount:3,liveMaxLatencyDurationCount:8,manifestLoadingTimeOut:12000,manifestLoadingMaxRetry:2,levelLoadingTimeOut:12000,levelLoadingMaxRetry:2,fragLoadPolicy:{default:{maxTimeToFirstByteMs:15000,maxLoadTimeMs:currentPlay?.type==='live'?90000:15000,timeoutRetry:{maxNumRetry:2,retryDelayMs:1000,maxRetryDelayMs:4000},errorRetry:{maxNumRetry:3,retryDelayMs:1000,maxRetryDelayMs:8000}}}});const engine=hlsEngine;engine.on(Hls.Events.FRAG_LOADED,(_,data)=>playbackMetrics?.addBytes(data.frag?.stats?.loaded??data.stats?.loaded));engine.on(Hls.Events.ERROR,()=>playbackMetrics?.error());startLiveDiagnostics(engine,attempt);let ready=false,recoveries=0;engine.on(Hls.Events.ERROR,(_,data)=>{if(!ready||!data.fatal||hlsEngine!==engine||!playbackLifecycle.valid(attempt))return;if(data.type===Hls.ErrorTypes.NETWORK_ERROR&&recoveries++<2){document.getElementById("playerStatus").textContent="Reconectando la señal…";currentPlay?.type==='live'?recoverLivePlayback(player,engine,recoveries):engine.startLoad(-1)}else if(data.type===Hls.ErrorTypes.MEDIA_ERROR&&recoveries++<2){engine.recoverMediaError()}else{if(currentPlay?.type==="live"){liveFailures.set(favKey(currentPlay.liveActual||currentPlay.item,"live"),Date.now()+60000);stopPlayback();document.getElementById("playBtn").disabled=false;document.getElementById("playBtn").click()}else{stopPlayback();document.getElementById("playerStatus").textContent="La señal no está disponible. Vuelve a intentar."}}});await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error("load_timeout")),20000);engine.on(Hls.Events.MANIFEST_PARSED,()=>{clearTimeout(timer);ready=true;resolve()});engine.on(Hls.Events.ERROR,(_,data)=>{if(data.fatal){clearTimeout(timer);reject(Error("stream_failed"))}});attempt.controller.signal.addEventListener("abort",()=>{clearTimeout(timer);reject(Error("playback_superseded"))},{once:true});assertPlaybackAttempt(attempt);engine.loadSource(url);engine.attachMedia(player)});engine.on(Hls.Events.AUDIO_TRACKS_UPDATED,syncTrackControls);engine.on(Hls.Events.SUBTITLE_TRACKS_UPDATED,syncTrackControls);assertPlaybackAttempt(attempt);if(generation!==authGeneration||!authenticated){throw Error("session_changed")}if(resumeAt>5)player.currentTime=resumeAt;await playWithTimeout(player,attempt.controller.signal)}}
-else{await ensureMoviePlayer();await customElements.whenDefined("movi-player");assertPlaybackAttempt(attempt);if(generation!==authGeneration||!authenticated)throw Error("session_changed");player=moviePlayer;beginPlaybackMetrics(player,attempt);player.style.display="block";player.onloadedmetadata=null;player.setAttribute("startat",String(resumeAt>5?resumeAt:0));player.src=url;await playWithTimeout(player,attempt.controller.signal)}
-assertPlaybackAttempt(attempt);
-if(currentPlay?.type==="live"){
- const selection=currentPlay,engine=hlsEngine;
- stopLiveWatchdog=watchLivePlayback(player,{
-  active:()=>authenticated&&generation===authGeneration&&currentPlay===selection&&player===gnulaPlayer&&playbackLifecycle.valid(attempt),
-  hidden:()=>document.hidden,
-  segmentDuration:()=>{const level=engine?.currentLevel>=0?engine.currentLevel:engine?.loadLevel;return engine?.levels?.[level]?.details?.targetduration},
-  recover:attempt=>{
-   liveDiagnostics?.capture("watchdog_recovery");
-   document.getElementById("playerStatus").textContent="Recuperando la señal…";
-   recoverLivePlayback(player,engine&&hlsEngine===engine?engine:null,attempt);
-  },
-  fallback:()=>{liveFailures.set(favKey(selection.liveActual||selection.item,"live"),Date.now()+60000);stopPlayback();document.getElementById("playBtn").disabled=false;document.getElementById("playBtn").click()}
- });
+ assertPlaybackAttempt(attempt);stopPlayback(false);playbackLease=leaseId;currentPlay.completed=false;trackControls.reset();
+ await mediaTransport.start({url,resumeAt,external:currentPlay.item.source==="gnula"||currentPlay.type==="live",type:currentPlay.type,attempt});
+ assertPlaybackAttempt(attempt);syncTrackControls();player.scrollIntoView({behavior:"smooth",block:"center"});
 }
-syncTrackControls();player.scrollIntoView({behavior:"smooth",block:"center"});
-}
-for(const event of ["loadedmetadata","loadeddata","emptied","loadstart"])gnulaPlayer.addEventListener(event,()=>syncTrackControls());
 gnulaPlayer.addEventListener("playing",()=>{document.getElementById("playerStatus").textContent="";saveContinue()});
 gnulaPlayer.addEventListener("timeupdate",()=>{if(currentPlay&&gnulaPlayer.currentTime>0){const now=Date.now();if(now-lastProgressSave>5000){localStorage.setItem(progressKey(currentPlay),String(Math.floor(gnulaPlayer.currentTime)));lastProgressSave=now;saveContinue()}}});
 gnulaPlayer.addEventListener("pause",()=>{saveContinue();if(currentPlay&&gnulaPlayer.currentTime>0)localStorage.setItem(progressKey(currentPlay),String(Math.floor(gnulaPlayer.currentTime)))});
@@ -144,32 +142,6 @@ document.addEventListener("visibilitychange",()=>{if(!document.hidden)sessionExp
 const accessNotice=sessionStorage.getItem("smn_access_notice");if(accessNotice){sessionStorage.removeItem("smn_access_notice");document.getElementById("welcome").textContent=accessNotice;document.getElementById("msg").textContent=accessNotice}
 async function restoreSession(){if(!creds)return;const restoreGeneration=authGeneration;try{const a=await api(creds.access_token?"session_info":"auth");if(!a?.user_info||String(a.user_info.auth)!=="1")throw 0;creds={username:a.user_info.username||creds.username,access_token:globalThis.SMNConfig?.cookieMode?"cookie":a.access_token||creds.access_token};loadUserFavorites();if(!creds.access_token)throw 0;permissions=a.permissions||{movies:true,series:true,tv:true};authenticated=true;SMNSessionClient.write(localStorage,creds,{cookieMode:globalThis.SMNConfig?.cookieMode===true});armSessionExpiry(a);document.body.classList.add("authenticated");document.getElementById("login").classList.remove("open");document.getElementById("loginBtn").classList.add("hidden");document.getElementById("heroLogin").classList.add("hidden");document.getElementById("welcome").textContent="Catálogo conectado. Cargando contenido…";const loadedSession=creds;const partial=await loadCatalog();if(!authenticated||creds!==loadedSession)return;document.getElementById("welcome").textContent=partial?"Parte del catálogo no está disponible. Puedes usar el contenido cargado y volver a intentar más tarde.":"Películas, series y TV disponibles para tu cuenta."}catch(e){if(restoreGeneration!==authGeneration)return;sessionExpiry.cancel();localStorage.removeItem("smn_session");creds=null;authenticated=false;document.getElementById("content").hidden=true;document.body.classList.remove("authenticated")}}restoreSession();
 
-let trackPreferenceApplied={audio:false,subtitle:false};
-const audioSelect=document.getElementById("audioSelect"),subtitleSelect=document.getElementById("subtitleSelect"),trackStatus=document.getElementById("trackStatus");
-function trackLabel(t,i,prefix){const label=t.label||t.language;const languages={spa:"Español",es:"Español",eng:"Inglés",en:"Inglés",por:"Portugués",pt:"Portugués",fra:"Francés",fr:"Francés",und:"Idioma no indicado"};return (languages[label]||label||prefix)+" · "+(i+1)}
-function syncTrackControls(){
-applyTrackPreferences();
-const a=hlsEngine?hlsEngine.audioTracks:player.audioTracks,t=hlsEngine?hlsEngine.subtitleTracks.map((x,i)=>({...x,id:i,kind:"subtitles",mode:hlsEngine.subtitleTrack===i?"showing":"disabled"})):snapSubtitleTracks(player);
-audioSelect.replaceChildren();subtitleSelect.replaceChildren();
-if(a&&a.length){for(let i=0;i<a.length;i++){const o=new Option(trackLabel(a[i],i,"Audio"),String(i));o.selected=hlsEngine?hlsEngine.audioTrack===i:a[i].enabled;audioSelect.add(o)}audioSelect.disabled=a.length<2}else{audioSelect.add(new Option("Audio del video","default"));audioSelect.disabled=true}
-subtitleSelect.add(new Option("Desactivados","off"));let count=0;
-for(let i=0;i<(t?.length||0);i++){if(!["subtitles","captions"].includes(t[i].kind))continue;const o=new Option(trackLabel(t[i],count++,"Subtítulos"),String(i));o.selected=t[i].mode==="showing";subtitleSelect.add(o)}
-subtitleSelect.disabled=count===0;
-trackStatus.textContent=!player.currentSrc?"Reproduce el video para detectar idiomas y subtítulos.":[!a?"Este navegador no expone pistas de audio para cambiar de idioma.":a.length<2?"Este archivo contiene un solo audio.":a.length+" pistas de audio disponibles.",count===0?"Este archivo no contiene subtítulos.":count+" pistas de subtítulos disponibles."].filter(Boolean).join(" ");
-}
-audioSelect.addEventListener("change",()=>{trackPreferenceApplied.audio=true;const track=(hlsEngine?hlsEngine.audioTracks:player.audioTracks)?.[Number(audioSelect.value)];rememberTrackPreference("audio",track);if(hlsEngine){hlsEngine.audioTrack=Number(audioSelect.value);return}const a=player.audioTracks;if(a)for(let i=0;i<a.length;i++)a[i].enabled=String(i)===audioSelect.value});
-subtitleSelect.addEventListener("change",async()=>{trackPreferenceApplied.subtitle=true;const track=(hlsEngine?hlsEngine.subtitleTracks:snapSubtitleTracks(player))?.[Number(subtitleSelect.value)];rememberTrackPreference("subtitle",track,subtitleSelect.value==="off");if(hlsEngine){hlsEngine.subtitleTrack=subtitleSelect.value==="off"?-1:Number(subtitleSelect.value);syncTrackControls();return}if(player===gnulaPlayer){for(let i=0;i<player.textTracks.length;i++)player.textTracks[i].mode=subtitleSelect.value===String(i)?"showing":"disabled";syncTrackControls();return}const t=snapSubtitleTracks(player);try{const id=subtitleSelect.value==="off"?null:t[Number(subtitleSelect.value)]?.id;const ok=await player.player.selectSubtitleTrack(id);if(!ok)throw 0;syncTrackControls()}catch{trackStatus.textContent="No se pudo activar esta pista de subtítulos."}});
-for(const event of ["loadedmetadata","loadeddata","emptied","loadstart","trackschange","audiotrackchange","subtitletrackchange"])player.addEventListener(event,syncTrackControls);
-for(const list of [player.audioTracks,player.textTracks])if(list?.addEventListener)for(const event of ["addtrack","removetrack","change"])list.addEventListener(event,syncTrackControls);
-
-
-function trackLanguage(track){const raw=String(track?.lang||track?.language||track?.label||"").toLowerCase();const alias={spa:"es",eng:"en",por:"pt",fra:"fr",espanol:"es","español":"es",english:"en"};return alias[raw]||(/^[a-z]{2,3}$/.test(raw)?raw:null)}
-function rememberTrackPreference(name,track,off=false){const value=off?"off":trackLanguage(track);if(!value)return;profilePreferences[name]=value;profileSync?.preference(name,value)}
-function applyTrackPreferences(){
- const audio=hlsEngine?hlsEngine.audioTracks:player.audioTracks,subtitles=hlsEngine?hlsEngine.subtitleTracks:snapSubtitleTracks(player);
- if(!trackPreferenceApplied.audio&&audio?.length){const i=Array.from(audio).findIndex(t=>trackLanguage(t)===profilePreferences.audio);if(i>=0){trackPreferenceApplied.audio=true;if(hlsEngine)hlsEngine.audioTrack=i;else for(let n=0;n<audio.length;n++)audio[n].enabled=n===i}}
- if(!trackPreferenceApplied.subtitle&&subtitles?.length){const i=Array.from(subtitles).findIndex(t=>trackLanguage(t)===profilePreferences.subtitle);if(profilePreferences.subtitle==="off"||i>=0){trackPreferenceApplied.subtitle=true;if(hlsEngine)hlsEngine.subtitleTrack=profilePreferences.subtitle==="off"?-1:i;else if(player===gnulaPlayer)for(let n=0;n<subtitles.length;n++)subtitles[n].mode=n===i?"showing":"disabled";else player.player?.selectSubtitleTrack?.(i<0?null:subtitles[i].id)}}
-}
 function profileReference(item,type){const id=String(item.stream_id||item.series_id||item.id||"");if(!/^[a-zA-Z0-9_.:-]+$/.test(id))return null;const server=item._server||item.source||"ccf";return {key:type+":"+server+":"+id,type,id,server}}
 function profileCatalog(reference){const rows=reference.type==="live"?allLive:reference.type==="series"?allSeries:allMovies;return rows.find(item=>profileReference(item,reference.type)?.key===reference.key)}
 function localProfileRows(){let records=[];try{records=JSON.parse(localStorage.getItem(userStorageKey("profile"))||"[]")}catch{}if(!Array.isArray(records))records=[];return [...records,...favorites.map(f=>{const r=profileReference(f.item,f.type);return r?{...r,kind:"favorite",updatedAt:f.updatedAt||1}:null}).filter(r=>r&&!records.some(p=>p.kind===r.kind&&p.key===r.key)),...readContinue().map(e=>{const r=profileReference(e.item,e.type);return r?{...r,kind:"progress",time:e.time,duration:Math.min(172800,e.duration||0),episodeId:e.episodeId,updatedAt:e.updatedAt||1}:null}).filter(r=>r&&!records.some(p=>p.kind===r.kind&&p.key===r.key))]}

@@ -16,5 +16,5 @@ assert.deepEqual(requested,[1,2]);assert.deepEqual(played,['1','2']);assert.equa
 context.api=async()=>{context.currentPlay={type:'live',item:low};return{url:'obsolete',lease_id:'old'}};
 context.currentPlay={type:'live',item:low};const before=played.length;
 await context.playLiveSelection(low);assert.equal(played.length,before);
-assert.ok(html.includes('!Hls.isSupported()&&player.canPlayType'));
+assert.ok(fs.readFileSync(new URL('../playback-transport.js',import.meta.url),'utf8').includes("!Hls.isSupported()&&video.canPlayType"));
 console.log('PASS: same-channel quality fallback, country/server isolation, lease release, obsolete request cancellation, HLS-first selection.');

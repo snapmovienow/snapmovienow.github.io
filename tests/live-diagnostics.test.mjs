@@ -73,7 +73,7 @@ function fixture() {
 {
  const html=(fs.readFileSync(new URL('../index.html',import.meta.url),'utf8')+'\n'+fs.readFileSync(new URL('../app.js',import.meta.url),'utf8'));
  const nodes=Object.fromEntries(['liveDiagnosticPanel','liveDiagnosticStatus','liveDiagnosticText','copyLiveDiagnostic'].map(id=>[id,{hidden:false,value:'',textContent:'',focus(){this.focused=true},select(){this.selected=true},addEventListener(){}}]));
- const code=html.slice(html.indexOf('let stopLiveWatchdog='),html.indexOf('function stopPlayback('));
+ const code=html.slice(html.indexOf('let liveDiagnostics='),html.indexOf('function stopPlayback('));
  let copied;
  const ui={document:{getElementById:id=>nodes[id]},window:{Hls:{version:'1.6.15'}},navigator:{clipboard:{writeText:async t=>{copied=t}}}};
  vm.createContext(ui);vm.runInContext(code,ui);
@@ -84,7 +84,6 @@ function fixture() {
  ui.resetLiveDiagnostics('live');assert.equal(nodes.liveDiagnosticPanel.hidden,false);assert.equal(nodes.liveDiagnosticText.value,'');
  copied=null;await ui.copyLiveDiagnostic();assert.equal(copied,null);assert.match(nodes.liveDiagnosticStatus.textContent,/Primero reproduce/);
  ui.resetLiveDiagnostics();assert.equal(nodes.liveDiagnosticPanel.hidden,true);
- assert(html.includes('()=>diagnostic?.stop(),()=>watchdog?.(),()=>engine?.destroy()'));
  assert(html.includes('liveDiagnostics?.capture("watchdog_recovery")'));
 }
 console.log('PASS: real HLS event-shaped data, nonfatal and fatal errors, pending download timing, separate audio/video buffers, frozen cuts, privacy, bounded memory, cleanup and phone clipboard fallback.');

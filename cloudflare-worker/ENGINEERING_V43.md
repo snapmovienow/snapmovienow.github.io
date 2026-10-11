@@ -146,3 +146,13 @@ Evidencia automatizada: `npm test`, `npm run test:platform` y la integración m�
 Confirmación operativa del 10 de octubre de 2026: el propietario aportó primero la captura de «Restauración aislada comprobada: 3 usuarios y 1 servidores. Almacenamiento de ensayo limpiado» y después, a las 16:01 America/Chicago, otra con «Archivo guardado comprobado». Confirman el ensayo lógico real de la copia del servidor y del archivo descargado y reimportado, con 3 usuarios, 1 servidor y limpieza del almacenamiento de ensayo. Evidencia agregada: `verification/2026-10-10-recovery-owner-confirmation.json`. No confirman el próximo cron diario, la custodia privada de la clave original ni PITR físico.
 
 El propietario dejó pendiente explícitamente la comprobación del cron diario a las 16:40 America/Chicago. El siguiente punto activo es la validación física de la APK, tras completar la protección de Pages después de Quality.
+
+
+## Web v43.9: motores de reproducción separados
+
+- `playback-transport.js` concentra la carga de HLS/Movi, opciones de búfer, reproducción nativa, cancelación de cargas, recuperación de señal y cierre de ambos motores. `app.js` conserva la sesión, selección del catálogo, autorización, reservas y mensajes de la interfaz.
+- `playback-tracks.js` concentra audio, subtítulos y aplicación de preferencias. Cada transporte usa su propio lector de pistas: HLS, Movi o `TextTrackList` nativo. Los eventos del reproductor inactivo no cambian los controles del seleccionado.
+- El lector anterior de Movi devolvía cero pistas para el elemento de vídeo nativo. El módulo nuevo consulta sus subtítulos/captions directamente, conserva el índice al omitir pistas de metadatos y permite desactivarlos.
+- Pruebas locales: 17 archivos de regresión web; compilación Worker y empaquetado Pages correctos. Las pruebas específicas cubren cierre con error de motor, cierre durante carga HLS/Movi, cancelación durante manifiesto, limpieza de observadores temporales, reanudación, HLS nativo y preferencias por transporte.
+- Quality ejecuta además la suite completa, SQLite, interfaz móvil con `TextTrackList` real y vídeo generado con audio AAC/MPEG Layer III usando el módulo de producción. No certifica dispositivos físicos ni capacidad del proveedor.
+- La medición de carga y costes reales sigue pendiente: requiere cuentas de ensayo, límites de tráfico, métricas de consumo e importes del mismo período. La calculadora existente no sustituye esa medición. La comprobación del cron diario continúa aplazada por decisión del propietario.

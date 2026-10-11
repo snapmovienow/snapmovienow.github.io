@@ -20,9 +20,9 @@ try{playwright=load('playwright')}catch{
 const hlsPath=modules?require.resolve(path.join(modules,'hls.js')):require.resolve('hls.js');
 const Hls= require(hlsPath);
 assert.equal(Hls.version,'1.6.15','this regression targets the pinned production engine');
-const html=(fs.readFileSync(new URL('../index.html',import.meta.url),'utf8')+'\n'+fs.readFileSync(new URL('../app.js',import.meta.url),'utf8'));
-const expression=html.match(/hlsEngine=new Hls\((\{.*?\})\);const engine=hlsEngine/)[1];
-const liveConfig=JSON.parse(JSON.stringify(vm.runInNewContext('('+expression+')',{currentPlay:{type:'live'}})));
+const transportPath=new URL('../playback-transport.js',import.meta.url);
+const transportContext=vm.createContext({});vm.runInContext(fs.readFileSync(transportPath,'utf8'),transportContext);
+const liveConfig=JSON.parse(JSON.stringify(transportContext.SMNPlaybackTransport.hlsOptions('live')));
 assert.equal(liveConfig.progressive,false,'production must feed complete segments');
 const root=fs.mkdtempSync(path.join(os.tmpdir(),'smn-live-audio-'));
 let browser;
@@ -54,14 +54,25 @@ try{
  browser=await playwright.chromium.launch({headless:true,...(process.env.SMN_BROWSER_EXECUTABLE?{executablePath:process.env.SMN_BROWSER_EXECUTABLE}:{}),args:['--no-sandbox','--disable-dev-shm-usage','--disable-gpu','--autoplay-policy=no-user-gesture-required']});
  const results=await Promise.all(['aac','libmp3lame'].flatMap(codec=>[true,false].map(async progressive=>{
   const page=await browser.newPage();
-  await page.goto(base);await page.addScriptTag({path:hlsPath});
-  await page.evaluate(({base,codec,config})=>{
+  await page.goto(base);await page.addScriptTag({path:hlsPath});await page.addScriptTag({path:transportPath.pathname});await page.addScriptTag({path:new URL('../live-watchdog.js',import.meta.url).pathname});
+  await page.evaluate(async({base,codec,config})=>{
    window.errors=[];window.tracks={};window.first=null;
    const v=document.getElementById('v');window.engine=new Hls(config);
    engine.on(Hls.Events.BUFFER_CREATED,(_,d)=>window.tracks=d.tracks);
    engine.on(Hls.Events.ERROR,(_,d)=>{errors.push({detail:d.details,fatal:d.fatal});if(errors.length>30)errors.shift()});
    v.addEventListener('playing',()=>{if(first===null)first=v.currentTime});
-   engine.loadSource(base+'/'+codec+'/index.m3u8');engine.attachMedia(v);v.play().catch(()=>{});
+   if(config.progressive){engine.loadSource(base+'/'+codec+'/index.m3u8');engine.attachMedia(v);v.play().catch(()=>{});}
+   else{
+    engine.destroy();
+    const attempt={controller:new AbortController()},unused={style:{},pause(){}};
+    window.transport=SMNPlaybackTransport.create({moviePlayer:unused,hlsPlayer:v,assertAttempt(){},
+     onDiagnostics:current=>{
+      window.engine=current;current.on(Hls.Events.BUFFER_CREATED,(_,d)=>window.tracks=d.tracks);
+      current.on(Hls.Events.ERROR,(_,d)=>errors.push({detail:d.details,fatal:d.fatal}));
+     }
+    });
+    await transport.start({url:base+'/'+codec+'/index.m3u8',external:true,type:'live',attempt});
+   }
   },{base,codec,config:{...liveConfig,progressive}});
   await page.waitForTimeout(12000);
   const result=await page.evaluate(()=>{
