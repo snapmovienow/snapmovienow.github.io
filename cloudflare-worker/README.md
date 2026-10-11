@@ -30,6 +30,25 @@ scripts enabled. See the engineering guide for the remaining Pages/branch settin
 
 Use Cloudflare's Deploy to Cloudflare flow for this directory. Set TICKET_SECRET to a long random value when prompted.
 
+## Rotating live media destinations (2026-10-11)
+
+Authenticated production probes found ESPN 720 delivering H.264/AAC while
+ESPN 1080 COL, CHI and ARG preparation failed with `media_origin_unapproved`.
+The bridge previously allowed only three fixed upstream media IPv4 addresses.
+It now follows public IPv4 destinations and HTTP ports returned by the configured
+CCF provider, preserving that provider's provenance in encrypted HLS tickets,
+nested playlists, segments, keys and Range recovery. Other providers do not gain
+this permission. Private, loopback, metadata, shared, reserved and multicast
+addresses, embedded credentials and SMTP port 25 remain blocked at every hop.
+Account expiry, revocation and playback reservations are unchanged.
+
+The `rotating-media-origins` health capability identifies this correction after
+deployment. Regressions simulate destination rotation at 0, 12 and 24 hours and
+verify transport, HLS resources, Range headers and rejected destinations. These
+controlled-clock tests do not establish a real 24-hour soak or guarantee that an
+upstream channel is available. The provider's 1080 label also does not guarantee
+1920×1080 video: the sampled ESPN 2 MEX stream advertised 1280×720.
+
 
 Deployment refresh: Cloudflare root directory configured as `cloudflare-worker` (2026-10-03).
 

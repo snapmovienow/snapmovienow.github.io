@@ -1,19 +1,36 @@
-// Dedicated transport for the explicitly authorized CCF live origin.
-// Never accepts arbitrary IP destinations or user supplied resource URLs.
-export function isApprovedMediaIP(u){
- return u.protocol==='http:'&&['192.101.68.144','23.153.217.88','194.147.150.141'].includes(u.hostname)&&(!u.port||u.port==='80')&&!u.username&&!u.password;
+export const CCF_MEDIA_ORIGIN='http://ccf.center:8444';
+
+// Only globally routable IPv4 destinations can be handed out by the configured
+// CCF origin. Reject private, loopback, metadata, shared, documentation,
+// benchmarking, multicast and reserved address space before opening a socket.
+export function isPublicMediaIPv4(host){
+ const parts=host.split('.');if(parts.length!==4||parts.some(x=>!/^\d{1,3}$/.test(x)||Number(x)>255))return false;
+ const [a,b,c]=parts.map(Number);
+ return !(a===0||a===10||a===127||a>=224||a===100&&b>=64&&b<=127||
+  a===169&&b===254||a===172&&b>=16&&b<=31||
+  a===192&&(b===168||b===0&&(c===0||c===2)||b===88&&c===99)||
+  a===198&&(b===18||b===19||b===51&&c===100)||a===203&&b===0&&c===113);
 }
-export async function fetchApprovedMediaIP(value,headers,connectSocket,nativeStreamFactory){
- const url=new URL(value);if(!isApprovedMediaIP(url))throw Error('invalid_media_origin');
+
+// Legacy destinations remain explicit. Rotating destinations require the CCF
+// provenance from an authenticated entry point or its encrypted HLS resource
+// ticket, never a client-provided URL, header or query parameter.
+export function isApprovedMediaIP(u,sourceOrigin){
+ if(u.protocol!=='http:'||u.username||u.password)return false;
+ if(['192.101.68.144','23.153.217.88','194.147.150.141'].includes(u.hostname)&&(!u.port||u.port==='80'))return true;
+ return sourceOrigin===CCF_MEDIA_ORIGIN&&u.port!=='25'&&isPublicMediaIPv4(u.hostname);
+}
+export async function fetchApprovedMediaIP(value,headers,connectSocket,nativeStreamFactory,sourceOrigin){
+ const url=new URL(value);if(!isApprovedMediaIP(url,sourceOrigin))throw Error('invalid_media_origin');
  const connect=connectSocket||(await import('cloudflare:sockets')).connect;
- const socket=connect({hostname:url.hostname,port:80},{secureTransport:'off'});
+ const socket=connect({hostname:url.hostname,port:Number(url.port||80)},{secureTransport:'off'});
  socket.closed.catch(()=>{});
  const timed=async promise=>{let timer;try{return await Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('media_timeout')),20000)})])}finally{clearTimeout(timer)}};
  let reader;
  try{
  await timed(socket.opened);
  const writer=socket.writable.getWriter();
- const lines=['GET '+url.pathname+url.search+' HTTP/1.0','Host: '+url.hostname,'User-Agent: SnapMovieNow/1.0','Accept: */*','Accept-Encoding: identity','Connection: close'];
+ const lines=['GET '+url.pathname+url.search+' HTTP/1.0','Host: '+url.host,'User-Agent: SnapMovieNow/1.0','Accept: */*','Accept-Encoding: identity','Connection: close'];
  for(const name of ['range','if-range'])if(headers.has(name)){const value=headers.get(name);if(/[\r\n]/.test(value))throw Error('invalid_header');lines.push(name+': '+value)}
  await timed(writer.write(new TextEncoder().encode(lines.join('\r\n')+'\r\n\r\n')));writer.releaseLock();
  reader=socket.readable.getReader();let buffer=new Uint8Array(0),ended=false;

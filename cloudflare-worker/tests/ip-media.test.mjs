@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {fetchApprovedMediaIP,isApprovedMediaIP} from '../src/ip-media.mjs';
+import {CCF_MEDIA_ORIGIN,fetchApprovedMediaIP,isApprovedMediaIP,isPublicMediaIPv4} from '../src/ip-media.mjs';
 function transport(raw,split=7){const bytes=new TextEncoder().encode(raw);let offset=0,closed=false,written='';return {connect(){return {opened:Promise.resolve(),closed:Promise.resolve(),close:async()=>{closed=true},readable:new ReadableStream({pull(c){if(offset>=bytes.length)c.close();else{c.enqueue(bytes.slice(offset,offset+split));offset+=split}}}),writable:new WritableStream({write(b){written+=new TextDecoder().decode(b)}})}},state:()=>({closed,written})}}
 const allowed='http://192.101.68.144/a.m3u8';
 assert.ok(isApprovedMediaIP(new URL(allowed)));for(const u of ['http://127.0.0.1/','http://192.101.68.144:8080/','https://192.101.68.144/','http://user:password@192.101.68.144/'])assert.ok(!isApprovedMediaIP(new URL(u)));
@@ -44,3 +44,16 @@ try{assert.equal(await Promise.race([r.text(),new Promise((_,reject)=>{deadline=
 finally{clearTimeout(deadline)}
 assert.ok(t.state().closed,'finite body completion closes the upstream socket');
 console.log('PASS: a complete finite response does not wait for upstream socket EOF.');
+
+for(const host of ['89.44.33.22','11.22.33.44','45.90.28.10']){
+ assert.ok(isPublicMediaIPv4(host));
+ assert.ok(isApprovedMediaIP(new URL('http://'+host+':8080/live.m3u8'),CCF_MEDIA_ORIGIN));
+ assert.ok(!isApprovedMediaIP(new URL('http://'+host+'/live.m3u8')));
+ assert.ok(!isApprovedMediaIP(new URL('http://'+host+'/live.m3u8'),'https://other.example'));
+}
+for(const host of ['0.1.2.3','10.0.0.1','100.64.0.1','100.127.255.255','127.0.0.1','169.254.169.254','172.16.0.1','172.31.255.255','192.168.1.1','192.0.0.1','192.0.2.1','192.88.99.1','198.18.0.1','198.19.0.1','198.51.100.1','203.0.113.1','224.0.0.1','240.0.0.1','255.255.255.255','1.2.3.256','1.2.3','localhost','[::1]'])assert.ok(!isPublicMediaIPv4(host),host);
+for(const value of ['http://2130706433/','http://0x7f000001/','http://0177.0.0.1/','https://89.44.33.22/','http://user:password@89.44.33.22/','http://89.44.33.22:25/'])assert.ok(!isApprovedMediaIP(new URL(value),CCF_MEDIA_ORIGIN));
+t=transport('HTTP/1.0 200 OK\r\nContent-Length: 5\r\n\r\nhello');let destination;
+r=await fetchApprovedMediaIP('http://89.44.33.22:8080/signed/live.m3u8',new Headers(),(target,options)=>{destination=target;assert.equal(options.secureTransport,'off');return t.connect()},undefined,CCF_MEDIA_ORIGIN);
+assert.equal(await r.text(),'hello');assert.deepEqual(destination,{hostname:'89.44.33.22',port:8080});assert.ok(t.state().written.includes('Host: 89.44.33.22:8080\r\n'));
+console.log('PASS: public IPv4 rotation requires trusted CCF provenance, reserved networks remain blocked, and the provider HTTP port is preserved.');
