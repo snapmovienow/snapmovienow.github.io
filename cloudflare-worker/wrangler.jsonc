@@ -30,6 +30,10 @@
           {
             "name": "BACKUP_RECOVERY",
             "class_name": "BackupRecovery"
+          },
+          {
+            "name": "OPERATION_ALERTS",
+            "class_name": "OperationsMonitor"
           }
         ]
       },
@@ -53,6 +57,10 @@
       {
         "name": "BACKUP_RECOVERY",
         "class_name": "BackupRecovery"
+      },
+      {
+        "name": "OPERATION_ALERTS",
+        "class_name": "OperationsMonitor"
       }
     ]
   },
@@ -68,6 +76,12 @@
       "new_sqlite_classes": [
         "BackupRecovery"
       ]
+    },
+    {
+      "tag": "operational-alerts-v1",
+      "new_sqlite_classes": [
+        "OperationsMonitor"
+      ]
     }
   ],
   "observability": {
@@ -79,7 +93,8 @@
   },
   "triggers": {
     "crons": [
-      "17 5 * * *"
+      "17 5 * * *",
+      "*/5 * * * *"
     ]
   }
 }

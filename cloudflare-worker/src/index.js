@@ -1,5 +1,8 @@
 import {profileRoute} from './profiles.mjs';
 import {operationsRoute} from './operations.mjs';
+import {MONITOR_CRON,monitorCall} from './monitor.mjs';
+import {probeProviders} from './provider-monitor.mjs';
+export {OperationsMonitor} from './monitor.mjs';
 import {allowedOrigins,canUseCookie,cookieToken,withSessionCookie,browserResponse} from './browser-sessions.mjs';
 import {traceRequest, SERVICE_VERSION} from './request-diagnostics.mjs';
 import {isApprovedMediaIP,fetchApprovedMediaIP} from './ip-media.mjs';
@@ -34,6 +37,7 @@ export class PlaybackSession {
  async fetch(req){const path=new URL(req.url).pathname;
  if(path==='/stream'&&['GET','HEAD'].includes(req.method))return serverStreamDirect(req,this.env,new URL(req.url),{waitUntil:promise=>this.state.waitUntil?.(promise)});
  if(path==='/refresh-pool'){const force=req.method==='POST'&&(await req.json()).force===true;if(!this.refreshing)this.refreshing=refreshProviderPool(this.env,force).finally(()=>{this.refreshing=null});try{const lines=await this.refreshing;return Response.json({ok:true,single:lines===null})}catch(e){return Response.json({error:e.message},{status:503})}}
+ if(path==='/monitor-providers'){const providers=await (await directory(this.env,'/providers')).json();return Response.json(await probeProviders(providers,{decrypt:value=>unticket(this.env,value),readPanel,validateAccount,identifier:hashId}))}
  if(path.startsWith('/profile/'))return profileRoute(this.state.storage,req);
  if(path.startsWith('/operations/'))return operationsRoute(this.state.storage,req);
  if(path.startsWith("/accounts/"))return accountsFetch(this.state,this.env,req);if(path==="/create"){const {exp,identity,sid}=await req.json();await this.state.storage.put("exp",exp);if(sid)await this.state.storage.put("sid",sid);if(identity)await this.state.storage.put("identity",identity);await this.state.storage.setAlarm(exp);return new Response("ok")}
@@ -109,6 +113,13 @@ async function adminRequest(req,env,ctx){
  const security={"admin-password":"/admin-password","mfa-replace-begin":"/mfa-replace-begin","security-status":"/security-status","mfa-begin":"/mfa-begin","mfa-confirm":"/mfa-confirm","mfa-disable":"/mfa-disable","mfa-recovery-renew":"/mfa-recovery-renew","audit":"/audit","backup-list":"/backup-list","backup-status":"/backup-status","backup-verify":"/backup-verify","backup-create":"/backup-create","backup-drill":"/backup-drill","backup-download":"/backup-download","backup-export":"/backup-export","backup-preview":"/backup-preview","backup-restore":"/backup-restore"};
  if(security[action]){const r=await directory(env,security[action],{...b,actor:s.username});return json(await r.json(),r.status)}
  if(action==='playback-health'){const r=await env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_operations_v1')).fetch('https://private/operations/read',{method:'POST',body:'{}'});return json(await r.json(),r.status)}
+ if(['alerts-status','alerts-settings','alerts-check','alerts-test'].includes(action)){
+  const paths={'alerts-status':'/status','alerts-settings':'/settings','alerts-check':'/tick','alerts-test':'/test'};
+  const result=await monitorCall(env,paths[action],action==='alerts-settings'?{enabled:b.enabled,channel:b.channel,to:b.to,from:b.from,apiKey:b.apiKey}:{});
+  if(result.ok&&action==='alerts-settings')await directory(env,'/audit-write',{actor:s.username,action:'alerts_changed'});
+  if(action==='alerts-check'&&result.ok){await result.body?.cancel();const status=await monitorCall(env,'/status');return json(await status.json(),status.status)}
+  return json(await result.json(),result.status);
+ }
  const record=async(action,target=null)=>directory(env,'/audit-write',{actor:s.username,action,target});
  const paths={users:"/users",save:"/save",delete:"/delete",overview:"/overview"};
  if(action==='provider-dashboard'){
@@ -194,7 +205,7 @@ async function handleRequest(req,env,ctx){const u=new URL(req.url);
 if(req.method==='POST'&&req.headers.get('Cookie')?.includes('__Host-smn_')&&!canUseCookie(req,env))return json({error:'origin_not_allowed'},403);
 if(req.headers.get('Origin')&&!allowedOrigins(env).has(req.headers.get('Origin'))&&req.method==='POST')return json({error:'origin_not_allowed'},403);
 if(req.method==="OPTIONS")return new Response(null,{status:204,headers:cors});
-if(u.pathname==="/health")return json({ok:true,service:"snapmovienow-edge",version:SERVICE_VERSION,capabilities:['xtream','admin-recovery-renewal','backup-integrity','native-profile','metric-retry','admin-credentials-rotation','isolated-backup-recovery','xtream-series-diagnostic']});
+if(u.pathname==="/health")return json({ok:true,service:"snapmovienow-edge",version:SERVICE_VERSION,capabilities:['xtream','admin-recovery-renewal','backup-integrity','native-profile','metric-retry','admin-credentials-rotation','isolated-backup-recovery','xtream-series-diagnostic','operational-alerts']});
 if(matchesXtream(u.pathname))return xtreamRequest(req,env,ctx);
 if(u.pathname==="/admin"&&req.method==="POST"){try{return await adminRequest(req,env,ctx)}catch(e){return json({error:["body_too_large","invalid_json"].includes(e.message)?e.message:"admin_unavailable"},e.message==="body_too_large"?413:e.message==="invalid_json"?400:502)}}
 if(u.pathname==="/gnula-media"&&["GET","HEAD"].includes(req.method)){try{return await gnulaMedia(req,env,u,ctx)}catch{return json({error:"media_unavailable"},502)}}
@@ -265,7 +276,12 @@ if(session.managed){
  return json(data);
 }
 const x=new URL(ORIGIN+"/player_api.php");x.searchParams.set("username",String(b.username));x.searchParams.set("password",String(b.password));if(op!=="auth")x.searchParams.set("action",actions[op]);if(op==="series_info"&&b.series_id)x.searchParams.set("series_id",String(b.series_id));if(op==="vod_info"&&b.vod_id)x.searchParams.set("vod_id",String(b.vod_id));if(op==="live_epg"){x.searchParams.set("stream_id",String(b.stream_id));x.searchParams.set("limit","24")}const up=await fetch(x,{headers:{"User-Agent":"SnapMovieNow/1.0"},redirect:"follow"});return new Response(await up.text(),{status:up.status,headers:{...cors,"content-type":up.headers.get("content-type")||"application/json"}})}catch(e){return json({error:["body_too_large","invalid_json"].includes(e.message)?e.message:"upstream_unavailable"},e.message==="body_too_large"?413:e.message==="invalid_json"?400:502)}}
-export default {scheduled(event,env,ctx){if(env.ENVIRONMENT!=="staging")ctx.waitUntil(directory(env,"/backup-automatic").then(async r=>{const result=await r.json();if(result.error)console.error({event:"backup_failed",reason:result.error});if(result.recovery?.error)console.error({event:"backup_drill_failed",reason:result.recovery.error})}).catch(()=>console.error({event:"backup_failed",reason:"backup_service_unavailable"})))},async fetch(req, env, ctx) {const response=await traceRequest(req, () => handleRequest(req, env, ctx), {allowedOrigin: SITE});return browserResponse(response,req,env);}};
+export default {scheduled(event,env,ctx){
+ if(env.ENVIRONMENT==='staging')return;
+ if(event.cron===MONITOR_CRON){ctx.waitUntil(monitorCall(env,'/tick').then(async response=>{if(!response.ok)console.error({event:'monitor_failed'});await response.body?.cancel()}).catch(()=>console.error({event:'monitor_failed'})));return}
+ if(event.cron&&event.cron!=='17 5 * * *')return;
+ ctx.waitUntil(directory(env,'/backup-automatic').then(async response=>{const result=await response.json();if(result.error)console.error({event:'backup_failed',reason:result.error});if(result.recovery?.error)console.error({event:'backup_drill_failed',reason:result.recovery.error})}).catch(()=>console.error({event:'backup_failed',reason:'backup_service_unavailable'})).finally(async()=>{const response=await monitorCall(env,'/tick');await response.body?.cancel()}));
+},async fetch(req, env, ctx) {const response=await traceRequest(req, () => handleRequest(req, env, ctx), {allowedOrigin: SITE});return browserResponse(response,req,env);}};
 
 
 

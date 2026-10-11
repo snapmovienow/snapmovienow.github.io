@@ -13,5 +13,8 @@ clock+=16000;assert.equal((await ingest({...metric,report_id:'synthetic-report-0
 for(let i=0;i<5;i++){clock+=16000;assert.equal((await ingest({...metric,platform:'android',report_id:'synthetic-failed-'+i,started:false,failedStart:true,startupMs:null,watchMs:0,stallMs:0,stalls:0,errors:1,decoded:0,dropped:0,bytes:null})).status,200)}
 health=await report();assert.equal(health.groups.length,2);const native=health.groups.find(g=>g.platform==='android');assert.equal(native.starts,0);assert.equal(native.failedStarts,5);assert.equal(health.alerts.some(a=>a.platform==='android'),true,'failed-start groups alert even when no video ever starts');
 assert.ok(!JSON.stringify(health).includes('synthetic-user'));assert.equal((await ingest({...metric,platform:'invalid'})).status,400);assert.equal((await ingest({...metric,report_id:'private-url?password=bad'})).status,400);
+const recent=async()=>await(await operationsRoute(store,new Request('https://private/operations/monitor',{method:'POST',body:'{}'}))).json();
+assert.equal((await recent()).groups.find(g=>g.platform==='android').failedStarts,5);clock+=20*60000;
+assert.equal((await recent()).groups.length,0,'old errors leave the operational window without erasing the 24-hour report');assert.ok((await report()).groups.length);
 console.log('PASS: idempotent metric retry, throttled retry, web/native separation, startup-failure alerts and private aggregates.');
 }finally{Date.now=realNow}

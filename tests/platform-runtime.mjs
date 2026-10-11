@@ -5,7 +5,7 @@ import {build} from 'esbuild';
 import {Miniflare,convertV4MiniflareOptions} from 'miniflare';
 import {totp,unseal,seal} from '../cloudflare-worker/src/security.mjs';
 const bundled=await build({entryPoints:['cloudflare-worker/src/index.js'],bundle:true,format:'esm',platform:'browser',external:['cloudflare:sockets'],write:false});
-const common={modules:true,script:bundled.outputFiles[0].text,compatibilityDate:'2026-10-03',compatibilityFlags:['enable_request_signal'],durableObjects:{PLAYBACK_SESSIONS:{className:'PlaybackSession',useSQLite:true},BACKUP_RECOVERY:{className:'BackupRecovery',useSQLite:true}},bindings:{TICKET_SECRET:'local-runtime-secret-never-deployed-123456',ADMIN_SETUP_SECRET:'local-runtime-setup-secret-never-deployed-123456',WEB_ORIGINS:'http://127.0.0.1:8788'}};
+const common={modules:true,script:bundled.outputFiles[0].text,compatibilityDate:'2026-10-03',compatibilityFlags:['enable_request_signal'],durableObjects:{PLAYBACK_SESSIONS:{className:'PlaybackSession',useSQLite:true},BACKUP_RECOVERY:{className:'BackupRecovery',useSQLite:true},OPERATION_ALERTS:{className:'OperationsMonitor',useSQLite:true}},bindings:{TICKET_SECRET:'local-runtime-secret-never-deployed-123456',ADMIN_SETUP_SECRET:'local-runtime-setup-secret-never-deployed-123456',WEB_ORIGINS:'http://127.0.0.1:8788'}};
 const options={workers:[{...common,name:'production-test',bindings:{...common.bindings,ENVIRONMENT:'production'}},{...common,name:'staging-test',bindings:{...common.bindings,ENVIRONMENT:'staging'}}],durableObjectsPersist:false};
 const mf=new Miniflare(convertV4MiniflareOptions?convertV4MiniflareOptions(options):options);
 try{
@@ -16,6 +16,20 @@ try{
  assert.equal((await call(stage,{action:'login',username:'owner',password:'owner-password-test'})).status,401);
  const login=await call(prod,{action:'login',username:'owner',password:'owner-password-test'});const token=login.data.access_token;assert.ok(token);
  let activeToken=token;const admin=(action,b={})=>call(prod,{action,access_token:activeToken,...b});
+ const alerts=await admin('alerts-status');assert.equal(alerts.status,200);assert.equal(alerts.data.settings.channel,'panel');
+ assert.equal((await call(prod,{action:'alerts-status'})).status,401,'monitor details require an administrator session');
+ assert.equal((await call(prod,{action:'alerts-settings',access_token:'invalid',enabled:false,channel:'panel'})).status,401,'unauthenticated clients cannot pause monitoring');
+ assert.equal((await admin('alerts-settings',{enabled:true,channel:'email',to:'owner@example.com',from:'alerts@example.com',apiKey:'re_local_runtime_key_only_test'})).status,200);
+ const refreshedAlerts=(await admin('alerts-status')).data;assert.equal(refreshedAlerts.settings.keyConfigured,true);assert.ok(!JSON.stringify(refreshedAlerts).includes('re_local_runtime'));
+ await mf.unsafeEvictDurableObject('production-test','OperationsMonitor',{name:'system-monitor-v1'});
+ assert.equal((await admin('alerts-status')).data.settings.to,'owner@example.com','monitor settings survive a real SQLite object restart');
+ await admin('alerts-settings',{enabled:true,channel:'panel'});
+ const checked=(await admin('alerts-check')).data;assert.ok(checked.lastCheckedAt);assert.equal(checked.incidents.length,0,'initial monitoring does not invent an overdue automatic backup');
+ assert.equal((await call(stage,{action:'setup',username:'stageowner',password:'stage-owner-password',setupSecret:common.bindings.ADMIN_SETUP_SECRET})).status,200);
+ const stageToken=(await call(stage,{action:'login',username:'stageowner',password:'stage-owner-password'})).data.access_token;
+ assert.equal((await call(stage,{action:'alerts-status',access_token:stageToken})).data.settings.keyConfigured,false,'staging cannot read production alert credentials');
+ assert.equal((await call(stage,{action:'alerts-check',access_token:stageToken})).data.lastCheckedAt,null,'staging never probes production providers');
+
  await admin('save',{create:true,username:'customer',password:'customer-password-test',permissions:{movies:true,series:false,tv:true,adults:false},expiresAt:Date.now()+86400000,status:'active'});
  const customer=(await call(prod,{op:'auth',username:'customer',password:'customer-password-test'},'/')).data.access_token;assert.ok(customer);
  assert.equal((await call(prod,{action:'xtream-series-check',username:'customer',query:'Test'})).status,401,'series diagnostics require an administrator session');

@@ -7,7 +7,7 @@ try{
  await context.route('http://127.0.0.1:8787/**',async route=>{
   const request=route.request();if(request.method()==='OPTIONS'){await route.fulfill({status:204,headers:{'Access-Control-Allow-Origin':base,'Access-Control-Allow-Methods':'POST,GET,OPTIONS','Access-Control-Allow-Headers':'content-type'}});return}
   const b=request.postDataJSON()||{},op=b.op||b.action;requests.push(op);let value=[];
-  if(legacy&&['security-status','backup-list','playback-health'].includes(op)){await route.fulfill({status:403,contentType:'application/json',headers:{'Access-Control-Allow-Origin':base},body:JSON.stringify({error:'operation_not_allowed'})});return}
+  if(legacy&&['security-status','backup-list','playback-health','alerts-status'].includes(op)){await route.fulfill({status:403,contentType:'application/json',headers:{'Access-Control-Allow-Origin':base},body:JSON.stringify({error:'operation_not_allowed'})});return}
   if(op==='auth'||op==='session_info')value={user_info:{auth:1,username:'testuser'},access_token:'synthetic-ui-token',permissions:{movies:true,series:true,tv:true,adults:false},server_time:Date.now(),session_expires_at:Date.now()+3600000};
   if(op==='vod')value=[{stream_id:42,name:'Película de prueba',_server:'ccf'}];
   if(malformedCatalog){
@@ -28,6 +28,7 @@ try{
   if(op==='security-status')value={mfaEnabled,recoveryRemaining:mfaEnabled?8:0};if(op==='playback-health')value={groups:[],alerts:[]};
   if(op==='mfa-confirm'&&mfaError){await route.fulfill({status:401,contentType:'application/json',headers:{'Access-Control-Allow-Origin':base},body:JSON.stringify({error:mfaError})});return}
   if(op==='mfa-confirm'||op==='mfa-recovery-renew'){mfaEnabled=true;value={replaced:op==='mfa-confirm'&&replacing,recoveryCodes:Array.from({length:8},(_,i)=>(op==='mfa-recovery-renew'?'SYNTHETIC-NEW-':'SYNTHETIC-RECOVERY-')+i)}};
+  if(op==='alerts-status'||op==='alerts-check')value={settings:{enabled:true,channel:'panel',to:'',from:'',keyConfigured:false},lastCheckedAt:Date.now(),monitorStale:false,incidents:[{id:'synthetic-outage',key:'provider:synthetic',kind:'provider',title:'Proveedor sin respuesta o sin cuentas activas',detail:'Proveedor 1',status:'open',openedAt:Date.now()}],history:[{id:'synthetic-notice',createdAt:Date.now(),changes:[{kind:'opened',title:'Proveedor sin respuesta o sin cuentas activas'}],delivery:'panel'}],delivery:{status:'not_configured'},pendingEmails:0};
   if(op==='backup-list')value=backups;
   if(op==='backup-status')value={status:backups.length?'success':'unknown',lastSuccessAt:backups[0]?.createdAt||null,stale:!backups.length,lastAutomaticAt:null,automaticStatus:'unknown',automaticStale:true,recovery:recoveryProof,scheduleUTC:'05:17'};
   if(op==='backup-create'){backups=[{id:'2026-10-10',createdAt:Date.now()}];value={ok:true,...backups[0]}}
@@ -57,6 +58,17 @@ try{
  await page.locator('#detailClose').click();await page.locator('header [data-action="menu"]').click();await page.locator('#favoritesMenu').click();assert.equal(await page.locator('#favoritesResults .card').count(),1);await page.locator('#favoritesClose').click();
  const panel=await context.newPage();panel.on('pageerror',e=>errors.push(e.message));await panel.goto(base+'/admin.html');await panel.locator('#loginForm [name="username"]').fill('owner');await panel.locator('#loginForm [name="password"]').fill('owner-password-test');await panel.locator('#loginForm button').click();await panel.locator('#securityState').filter({hasText:'desactivado'}).waitFor();
  await panel.locator('#capacityInventory').filter({hasText:'3 cupos totales'}).waitFor();
+ await panel.locator('#alertSummary').filter({hasText:'1 incidencias abiertas'}).waitFor();
+ assert.match(await panel.locator('#alertIncidents').textContent(),/Proveedor sin respuesta/);
+ assert.equal(await panel.locator('#alertTest').isDisabled(),true,'mail cannot be sent without a configured recipient and encrypted key');
+ await panel.locator('#automaticAlerts details').first().locator('summary').click();
+ await panel.locator('#alertForm [name="channel"]').selectOption('email');
+ await panel.locator('#alertForm [name="to"]').fill('owner@example.com');
+ await panel.locator('#alertRefresh').click();
+ assert.equal(await panel.locator('#alertForm [name="to"]').inputValue(),'owner@example.com','automatic status updates preserve unsaved settings');
+ assert.equal(await panel.locator('#automaticAlerts').evaluate(e=>e.scrollWidth>e.clientWidth||e.getBoundingClientRect().right>innerWidth),false,'automatic alerts fit the phone viewport');
+ await panel.locator('#alertForm [name="channel"]').selectOption('panel');
+
  await panel.locator('#seriesDiagnostic [name="query"]').fill('El Halcón');await panel.locator('#seriesDiagnostic button').click();
  await panel.locator('#seriesDiagnostic li').filter({hasText:'1 temporadas y 8 episodios disponibles'}).waitFor();
  assert.equal(await panel.locator('#seriesDiagnostic').evaluate(e=>e.scrollWidth>e.clientWidth||e.getBoundingClientRect().right>innerWidth),false,'series diagnostic fits the mobile viewport');
