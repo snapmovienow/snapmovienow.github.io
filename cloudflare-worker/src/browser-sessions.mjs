@@ -3,6 +3,7 @@ export function allowedOrigins(env){return new Set(String(env.WEB_ORIGINS||'http
 export function canUseCookie(req,env){
  const origin=req.headers.get('Origin');if(!allowedOrigins(env).has(origin))return false;
  const source=new URL(origin),target=new URL(req.url);
+ if(env.ENVIRONMENT==='staging')return source.protocol==='https:'&&source.origin===target.origin;
  return source.protocol==='https:'&&target.protocol==='https:'&&source.hostname.endsWith('.snaptvnow.com')&&target.hostname==='api.snaptvnow.com';
 }
 export function cookieToken(req,env,kind){

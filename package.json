@@ -6,7 +6,8 @@
     "test:browser": "node tests/live-audio-runtime.mjs",
     "test:storage": "node cloudflare-worker/tests/lease-runtime.mjs",
     "build:worker": "wrangler deploy --dry-run --config cloudflare-worker/wrangler.jsonc --env=\"\"",
-    "build:staging": "wrangler deploy --dry-run --config cloudflare-worker/wrangler.jsonc --env staging",
+    "build:staging": "node scripts/build-staging.mjs && wrangler deploy --dry-run --config cloudflare-worker/wrangler.jsonc --env staging",
+    "test:staging": "node tests/staging-runtime.mjs",
     "test:platform": "node tests/platform-runtime.mjs"
   },
   "devDependencies": {

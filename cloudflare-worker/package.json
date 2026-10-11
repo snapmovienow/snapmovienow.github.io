@@ -5,7 +5,7 @@
     "postinstall": "node ../scripts/deploy-guard.mjs",
     "deploy": "node ../scripts/deploy-guard.mjs --require-quality && node ../scripts/verify.mjs && wrangler deploy --env=\"\"",
     "dev": "wrangler dev",
-    "deploy:staging": "node ../scripts/deploy-guard.mjs --require-quality && node ../scripts/verify.mjs && wrangler deploy --env staging"
+    "deploy:staging": "node ../scripts/deploy-guard.mjs --require-quality && node ../scripts/verify.mjs && node ../scripts/build-staging.mjs && wrangler deploy --env staging"
   },
   "devDependencies": {
     "wrangler": "4.149.0"

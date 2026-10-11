@@ -29,6 +29,7 @@ jobs:
       - run: node scripts/build-pages.mjs
       - run: npm test
       - run: npm run test:platform
+      - run: npm run test:staging
       - name: Build from Cloudflare deployment root
         run: npx --no-install wrangler deploy --dry-run --env=""
         working-directory: cloudflare-worker
