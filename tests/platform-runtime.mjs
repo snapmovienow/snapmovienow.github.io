@@ -5,7 +5,13 @@ import {build} from 'esbuild';
 import {Miniflare,convertV4MiniflareOptions} from 'miniflare';
 import {totp,unseal,seal} from '../cloudflare-worker/src/security.mjs';
 const bundled=await build({entryPoints:['cloudflare-worker/src/index.js'],bundle:true,format:'esm',platform:'browser',external:['cloudflare:sockets'],write:false});
-const common={modules:true,script:bundled.outputFiles[0].text,compatibilityDate:'2026-10-03',compatibilityFlags:['enable_request_signal'],durableObjects:{PLAYBACK_SESSIONS:{className:'PlaybackSession',useSQLite:true},BACKUP_RECOVERY:{className:'BackupRecovery',useSQLite:true},OPERATION_ALERTS:{className:'OperationsMonitor',useSQLite:true}},bindings:{TICKET_SECRET:'local-runtime-secret-never-deployed-123456',ADMIN_SETUP_SECRET:'local-runtime-setup-secret-never-deployed-123456',WEB_ORIGINS:'http://127.0.0.1:8788'}};
+const mailRequests=[];let mailStatus=200;
+const outboundService=async request=>{
+ assert.equal(request.url,'https://api.resend.com/emails','email credentials never leave the fixed Resend endpoint');
+ mailRequests.push({headers:Object.fromEntries(request.headers),body:await request.json()});
+ return mailStatus===200?Response.json({id:'synthetic-local-email'}):new Response(null,{status:mailStatus,headers:{Location:'https://example.invalid/must-not-receive-credentials'}});
+};
+const common={modules:true,script:bundled.outputFiles[0].text,compatibilityDate:'2026-10-03',compatibilityFlags:['enable_request_signal'],outboundService,durableObjects:{PLAYBACK_SESSIONS:{className:'PlaybackSession',useSQLite:true},BACKUP_RECOVERY:{className:'BackupRecovery',useSQLite:true},OPERATION_ALERTS:{className:'OperationsMonitor',useSQLite:true}},bindings:{TICKET_SECRET:'local-runtime-secret-never-deployed-123456',ADMIN_SETUP_SECRET:'local-runtime-setup-secret-never-deployed-123456',WEB_ORIGINS:'http://127.0.0.1:8788'}};
 const options={workers:[{...common,name:'production-test',bindings:{...common.bindings,ENVIRONMENT:'production'}},{...common,name:'staging-test',bindings:{...common.bindings,ENVIRONMENT:'staging'}}],durableObjectsPersist:false};
 const mf=new Miniflare(convertV4MiniflareOptions?convertV4MiniflareOptions(options):options);
 try{
@@ -23,6 +29,20 @@ try{
  const refreshedAlerts=(await admin('alerts-status')).data;assert.equal(refreshedAlerts.settings.keyConfigured,true);assert.ok(!JSON.stringify(refreshedAlerts).includes('re_local_runtime'));
  await mf.unsafeEvictDurableObject('production-test','OperationsMonitor',{name:'system-monitor-v1'});
  assert.equal((await admin('alerts-status')).data.settings.to,'owner@example.com','monitor settings survive a real SQLite object restart');
+ const sent=(await admin('alerts-test')).data;
+ assert.equal(sent.delivery.status,'accepted','the actual workerd runtime must reach the email transport after decrypting the saved key');
+ assert.equal(sent.pendingEmails,0);assert.equal(mailRequests.length,1);
+ assert.equal(mailRequests[0].headers.authorization,'Bearer re_local_runtime_key_only_test');
+ assert.deepEqual(mailRequests[0].body.to,['owner@example.com']);assert.equal(mailRequests[0].body.from,'alerts@example.com');
+ assert.ok(mailRequests[0].headers['idempotency-key']);assert.match(mailRequests[0].body.text,/PRUEBA/);
+ assert.equal((await admin('alerts-test')).status,429);assert.equal(mailRequests.length,1,'a repeated click cannot send another email');
+ const monitorNamespace=await mf.getDurableObjectNamespace('OPERATION_ALERTS','production-test');
+ const redirected=monitorNamespace.get(monitorNamespace.idFromName('local-email-redirect-test'));
+ const monitorRequest=(target,path,body={})=>target.fetch('https://private'+path,{method:'POST',body:JSON.stringify(body)});
+ await monitorRequest(redirected,'/settings',{enabled:true,channel:'email',to:'owner@example.com',from:'alerts@example.com',apiKey:'re_local_runtime_key_only_test'});
+ mailStatus=302;const redirectResult=await (await monitorRequest(redirected,'/test')).json();
+ assert.equal(redirectResult.delivery.status,'email_rejected');assert.equal(redirectResult.pendingEmails,0);
+ assert.equal(mailRequests.length,2,'a redirect is rejected without forwarding the key or email to another host');mailStatus=200;
  await admin('alerts-settings',{enabled:true,channel:'panel'});
  const checked=(await admin('alerts-check')).data;assert.ok(checked.lastCheckedAt);assert.equal(checked.incidents.length,0,'initial monitoring does not invent an overdue automatic backup');
  assert.equal((await call(stage,{action:'setup',username:'stageowner',password:'stage-owner-password',setupSecret:common.bindings.ADMIN_SETUP_SECRET})).status,200);

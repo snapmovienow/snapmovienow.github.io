@@ -151,7 +151,9 @@ export class OperationsMonitor{
   let status='accepted',retryAfter=0;
   try{
    const secret=await unseal(this.env,claimed.config.key);if(secret?.kind!=='alert-email-key')throw Error('email_configuration_failed');
-   const response=await fetch('https://api.resend.com/emails',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+secret.key,'Idempotency-Key':'snap-alert/'+claimed.event.id},body:JSON.stringify(mail(claimed.event,claimed.config)),signal:AbortSignal.timeout(10000),redirect:'error'});
+   // workerd supports follow/manual only. Reject redirects via the non-2xx
+   // check below, keeping the credential and email on the fixed endpoint.
+   const response=await fetch('https://api.resend.com/emails',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+secret.key,'Idempotency-Key':'snap-alert/'+claimed.event.id},body:JSON.stringify(mail(claimed.event,claimed.config)),signal:AbortSignal.timeout(10000),redirect:'manual'});
    if(!response.ok){retryAfter=Math.min(3600000,Math.max(0,Number(response.headers.get('Retry-After'))||0)*1000);await response.body?.cancel();throw Error(response.status===429?'email_rate_limited':response.status>=500?'email_unavailable':'email_rejected')}
    const data=await response.json();if(typeof data.id!=='string')throw Error('email_unavailable');
   }catch(error){status=['email_configuration_failed','email_rate_limited','email_unavailable','email_rejected'].includes(error.message)?error.message:'email_unavailable'}

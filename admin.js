@@ -1,7 +1,7 @@
 import {mountAdminSeries} from './admin-series.js?v=43.10';
 import {mountAdminSecurity} from './admin-security.js?v=43.5';
 import {mountAdminOperations} from './admin-operations.js?v=43.4';
-import {mountAdminAlerts} from './admin-alerts.js?v=43.11';
+import {mountAdminAlerts} from './admin-alerts.js?v=43.12';
 import {mountAdminCapacity} from './admin-capacity.js?v=43.8';
 
 import {createProviderView} from "./admin-provider-view.js?v=43.8";
