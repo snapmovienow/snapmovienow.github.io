@@ -49,6 +49,16 @@ controlled-clock tests do not establish a real 24-hour soak or guarantee that an
 upstream channel is available. The provider's 1080 label also does not guarantee
 1920×1080 video: the sampled ESPN 2 MEX stream advertised 1280×720.
 
+After the production deployment, FFmpeg decoded real video and audio for ESPN 1
+COL/CHI/ARG, ESPN 2 ARG, HBO and Discovery, preserving the 720 control channel.
+The native Xtream entry points were also checked through both TS and HLS for
+ESPN 1 COL/CHI. Samples ran for about 20 seconds, not on a physical Android or
+Smarters device. Some initial attempts returned transient upstream 503 errors;
+retries succeeded. CHI–ESPN 1 (PM) remained unavailable and returned upstream
+404 through native TS. That provider signal needs restoration independently of
+the IP policy fix. Bounded, credential-free evidence is in
+`verification/2026-10-11-rotating-live-media.json`.
+
 
 Deployment refresh: Cloudflare root directory configured as `cloudflare-worker` (2026-10-03).
 

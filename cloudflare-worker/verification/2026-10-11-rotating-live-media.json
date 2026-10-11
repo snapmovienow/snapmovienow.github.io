@@ -1,0 +1,474 @@
+{
+  "date": "2026-10-11",
+  "fixCommit": "99158f17396cd85c94ad51689bcce29cdfc4fec3",
+  "environment": "authenticated production, temporary diagnostic customer",
+  "before": [
+    {
+      "channel": "DEPORTES - Espn 1 COL (e)(720)",
+      "id": 9517,
+      "prepareHttp": 200,
+      "prepareSeconds": 8.945,
+      "error": null,
+      "probeReturncode": 0,
+      "streams": [
+        {
+          "codec_type": "video",
+          "codec_name": "h264",
+          "width": 1280,
+          "height": 720,
+          "avg_frame_rate": "30000/1001"
+        },
+        {
+          "codec_type": "audio",
+          "codec_name": "aac",
+          "sample_rate": "48000",
+          "channels": 2,
+          "avg_frame_rate": "0/0"
+        }
+      ],
+      "streamDetected": true,
+      "cancelHttp": 200,
+      "wallSeconds": 24.064
+    },
+    {
+      "channel": "DEPORTES - Espn 1 COL (e)(1080)",
+      "id": 9516,
+      "prepareHttp": 502,
+      "prepareSeconds": 4.328,
+      "error": "media_origin_unapproved",
+      "cancelHttp": 200,
+      "wallSeconds": 7.884
+    },
+    {
+      "channel": "DEPORTES - Espn 1 CHI (TV)(1080)",
+      "id": 99538,
+      "prepareHttp": 502,
+      "prepareSeconds": 4.752,
+      "error": "media_origin_unapproved",
+      "cancelHttp": 200,
+      "wallSeconds": 10.141
+    },
+    {
+      "channel": "DEPORTES - Espn 1 ARG (TV)(1080)",
+      "id": 9521,
+      "prepareHttp": 502,
+      "prepareSeconds": 4.999,
+      "error": "media_origin_unapproved",
+      "cancelHttp": 200,
+      "wallSeconds": 10.29
+    },
+    {
+      "channel": "DEPORTES - Espn 2 ARG (e)(1080)",
+      "id": 9527,
+      "prepareHttp": 502,
+      "prepareSeconds": 4.149,
+      "error": "media_origin_unapproved",
+      "cancelHttp": 200,
+      "wallSeconds": 8.487
+    },
+    {
+      "channel": "DEPORTES - Espn 2 MEX (TV)(1080)",
+      "id": 9531,
+      "prepareHttp": 200,
+      "prepareSeconds": 5.189,
+      "error": null,
+      "probeReturncode": 0,
+      "streams": [
+        {
+          "codec_type": "video",
+          "codec_name": "h264",
+          "width": 1280,
+          "height": 720,
+          "avg_frame_rate": "30/1"
+        },
+        {
+          "codec_type": "audio",
+          "codec_name": "aac",
+          "sample_rate": "44100",
+          "channels": 2,
+          "avg_frame_rate": "0/0"
+        }
+      ],
+      "streamDetected": true,
+      "cancelHttp": 200,
+      "wallSeconds": 23.726
+    },
+    {
+      "channel": "CHI-Espn 1 (PM)(1080)",
+      "id": 143375,
+      "prepareHttp": 502,
+      "prepareSeconds": 5.583,
+      "error": "live_signal_unavailable",
+      "cancelHttp": 200,
+      "wallSeconds": 9.179
+    }
+  ],
+  "after": [
+    {
+      "channel": "DEPORTES - Espn 1 COL (e)(1080)",
+      "id": 9516,
+      "protocol": "web-HLS",
+      "prepareHttp": 200,
+      "prepareSeconds": 5.047,
+      "error": null,
+      "decoded": true,
+      "returncode": 0,
+      "frames": 120,
+      "decodedSeconds": 18.005,
+      "video": [
+        {
+          "codec": "h264",
+          "width": 1920,
+          "height": 1080
+        }
+      ],
+      "audio": [
+        {
+          "codec": "pcm_s16le",
+          "sampleRate": 44100
+        }
+      ],
+      "httpErrors": [],
+      "cancelHttp": 200
+    },
+    {
+      "channel": "DEPORTES - Espn 1 CHI (TV)(1080)",
+      "id": 99538,
+      "protocol": "web-HLS",
+      "prepareHttp": 502,
+      "prepareSeconds": 6.571,
+      "error": "live_signal_unavailable",
+      "cancelHttp": 200
+    },
+    {
+      "channel": "DEPORTES - Espn 1 ARG (TV)(1080)",
+      "id": 9521,
+      "protocol": "web-HLS",
+      "prepareHttp": 200,
+      "prepareSeconds": 3.557,
+      "error": null,
+      "decoded": true,
+      "returncode": 0,
+      "frames": 595,
+      "decodedSeconds": 19.97,
+      "video": [
+        {
+          "codec": "h264",
+          "width": 1280,
+          "height": 1080
+        }
+      ],
+      "audio": [
+        {
+          "codec": "pcm_s16le",
+          "sampleRate": 44100
+        }
+      ],
+      "httpErrors": [],
+      "cancelHttp": 200
+    },
+    {
+      "channel": "DEPORTES - Espn 2 ARG (e)(1080)",
+      "id": 9527,
+      "protocol": "web-HLS",
+      "prepareHttp": 502,
+      "prepareSeconds": 6.337,
+      "error": "live_signal_unavailable",
+      "cancelHttp": 200
+    },
+    {
+      "channel": "DEPORTES - Espn 1 COL (e)(720)",
+      "id": 9517,
+      "protocol": "web-HLS",
+      "prepareHttp": 200,
+      "prepareSeconds": 3.69,
+      "error": null,
+      "decoded": true,
+      "returncode": 0,
+      "frames": 599,
+      "decodedSeconds": 19.99,
+      "video": [
+        {
+          "codec": "h264",
+          "width": 1280,
+          "height": 720
+        }
+      ],
+      "audio": [
+        {
+          "codec": "pcm_s16le",
+          "sampleRate": 48000
+        }
+      ],
+      "httpErrors": [],
+      "cancelHttp": 200
+    },
+    {
+      "channel": "CINE - HBO (M)(1080)",
+      "id": 9666,
+      "protocol": "web-HLS",
+      "prepareHttp": 200,
+      "prepareSeconds": 4.16,
+      "error": null,
+      "decoded": true,
+      "returncode": 0,
+      "frames": 600,
+      "decodedSeconds": 19.989,
+      "video": [
+        {
+          "codec": "h264",
+          "width": 1920,
+          "height": 1080
+        }
+      ],
+      "audio": [
+        {
+          "codec": "pcm_s16le",
+          "sampleRate": 48000
+        }
+      ],
+      "httpErrors": [],
+      "cancelHttp": 200
+    },
+    {
+      "channel": "DOC-Discovery Channel (L)(1080)",
+      "id": 9814,
+      "protocol": "web-HLS",
+      "prepareHttp": 200,
+      "prepareSeconds": 4.782,
+      "error": null,
+      "decoded": true,
+      "returncode": 0,
+      "frames": 599,
+      "decodedSeconds": 19.99,
+      "video": [
+        {
+          "codec": "h264",
+          "width": 1920,
+          "height": 1080
+        }
+      ],
+      "audio": [
+        {
+          "codec": "pcm_s16le",
+          "sampleRate": 48000
+        }
+      ],
+      "httpErrors": [],
+      "cancelHttp": 200
+    },
+    {
+      "channel": "CHI-Espn 1 (PM)(1080)",
+      "id": 143375,
+      "protocol": "web-HLS",
+      "prepareHttp": 502,
+      "prepareSeconds": 5.932,
+      "error": "live_signal_unavailable",
+      "cancelHttp": 200
+    },
+    {
+      "channel": "DEPORTES - Espn 1 COL (e)(1080)",
+      "id": 9516,
+      "nativeId": 171,
+      "protocol": "Xtream-ts",
+      "decoded": true,
+      "returncode": 0,
+      "frames": 226,
+      "decodedSeconds": 19.997,
+      "video": [
+        {
+          "codec": "h264",
+          "width": 1920,
+          "height": 1080
+        }
+      ],
+      "audio": [
+        {
+          "codec": "pcm_s16le",
+          "sampleRate": 44100
+        }
+      ],
+      "httpErrors": []
+    },
+    {
+      "channel": "DEPORTES - Espn 1 CHI (TV)(1080)",
+      "id": 99538,
+      "nativeId": 169,
+      "protocol": "Xtream-ts",
+      "decoded": true,
+      "returncode": 0,
+      "frames": 1190,
+      "decodedSeconds": 19.992,
+      "video": [
+        {
+          "codec": "h264",
+          "width": 1280,
+          "height": 720
+        }
+      ],
+      "audio": [
+        {
+          "codec": "mp2",
+          "sampleRate": 48000
+        }
+      ],
+      "httpErrors": []
+    },
+    {
+      "channel": "DEPORTES - Espn 1 COL (e)(1080)",
+      "id": 9516,
+      "nativeId": 171,
+      "protocol": "Xtream-m3u8",
+      "decoded": false,
+      "returncode": 8,
+      "frames": 0,
+      "decodedSeconds": 0.0,
+      "video": [],
+      "audio": [],
+      "httpErrors": [
+        "503"
+      ]
+    },
+    {
+      "channel": "DEPORTES - Espn 1 CHI (TV)(1080)",
+      "id": 99538,
+      "nativeId": 169,
+      "protocol": "Xtream-m3u8",
+      "decoded": true,
+      "returncode": 0,
+      "frames": 1190,
+      "decodedSeconds": 19.992,
+      "video": [
+        {
+          "codec": "h264",
+          "width": 1280,
+          "height": 720
+        }
+      ],
+      "audio": [
+        {
+          "codec": "mp2",
+          "sampleRate": 48000
+        }
+      ],
+      "httpErrors": []
+    },
+    {
+      "channel": "DEPORTES - Espn 1 CHI (TV)(1080)",
+      "protocol": "web-HLS",
+      "id": 99538,
+      "prepareHttp": 200,
+      "error": null,
+      "decoded": true,
+      "returncode": 0,
+      "frames": 1190,
+      "decodedSeconds": 19.992,
+      "video": [
+        {
+          "codec": "h264",
+          "width": 1280,
+          "height": 720
+        }
+      ],
+      "audio": [
+        {
+          "codec": "mp2",
+          "sampleRate": 48000
+        }
+      ],
+      "httpErrors": []
+    },
+    {
+      "channel": "DEPORTES - Espn 2 ARG (e)(1080)",
+      "protocol": "web-HLS",
+      "id": 9527,
+      "prepareHttp": 200,
+      "error": null,
+      "decoded": true,
+      "returncode": 0,
+      "frames": 598,
+      "decodedSeconds": 19.989,
+      "video": [
+        {
+          "codec": "h264",
+          "width": 1280,
+          "height": 720
+        }
+      ],
+      "audio": [
+        {
+          "codec": "pcm_s16le",
+          "sampleRate": 48000
+        }
+      ],
+      "httpErrors": []
+    },
+    {
+      "channel": "DEPORTES - Espn 1 COL (e)(1080)",
+      "protocol": "Xtream-m3u8",
+      "id": 9516,
+      "decoded": true,
+      "returncode": 0,
+      "frames": 150,
+      "decodedSeconds": 19.999,
+      "video": [
+        {
+          "codec": "h264",
+          "width": 1920,
+          "height": 1080
+        }
+      ],
+      "audio": [
+        {
+          "codec": "pcm_s16le",
+          "sampleRate": 44100
+        }
+      ],
+      "httpErrors": []
+    }
+  ],
+  "additionalBefore": [
+    {
+      "channel": "CINE - HBO (M)(1080)",
+      "id": 9666,
+      "prepareHttp": 200,
+      "error": null
+    },
+    {
+      "channel": "DOC-Discovery Channel (L)(1080)",
+      "id": 9814,
+      "prepareHttp": 502,
+      "error": "media_origin_unapproved"
+    }
+  ],
+  "remainingSourceFailure": {
+    "channel": "CHI-Espn 1 (PM)(1080)",
+    "protocol": "native-TS",
+    "http": "404",
+    "bytes": 32,
+    "error": "upstream_unavailable"
+  },
+  "validation": {
+    "regressionFiles": 41,
+    "productionWorkerdSQLite": "passed",
+    "productionDryBuild": "passed",
+    "githubQualityRun": 38161098952,
+    "cloudflareProductionBuild": "passed",
+    "cloudflareStagingBuild": "passed",
+    "pagesDeploy": "passed",
+    "simulatedOriginRotationHours": [
+      0,
+      12,
+      24
+    ],
+    "actualPlaybackSecondsPerSample": 20,
+    "physicalAndroidOrSmartersDeviceTest": false,
+    "actual24HourSoak": false
+  },
+  "notes": [
+    "Some channel names containing 1080 advertised 1280x720. No resolution was downgraded by the bridge.",
+    "Initial post-fix attempts included transient upstream 503 failures; repeated COL/CHI/ARG probes delivered video and audio.",
+    "CHI-ESPN 1 (PM) remained unavailable; native TS returned upstream HTTP 404.",
+    "Audio codec fields from FFmpeg include its decoded null-output PCM codec and must not be treated as the upstream codec."
+  ]
+}
