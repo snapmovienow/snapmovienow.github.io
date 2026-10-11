@@ -142,12 +142,24 @@ export async function guardDeployment(env = process.env, args = process.argv.sli
     return;
   }
   const sha = git('rev-parse', 'HEAD');
-  const branch = env.WORKERS_CI === '1' ? env.WORKERS_CI_BRANCH : git('branch', '--show-current');
-  if (env.WORKERS_CI === '1' && sha !== env.WORKERS_CI_COMMIT_SHA) {
-    throw new Error('Cloudflare commit and checked-out commit differ; deployment blocked.');
+  const workersBuild = env.WORKERS_CI === '1';
+  const reportedSha = env.WORKERS_CI_COMMIT_SHA;
+  const branch = workersBuild && env.WORKERS_CI_BRANCH ? env.WORKERS_CI_BRANCH : git('branch', '--show-current');
+  // Manual builds can omit push-event commit metadata. The downloaded HEAD still
+  // needs its own successful Quality run; a supplied SHA must match exactly.
+  if (workersBuild && reportedSha !== undefined && reportedSha !== '') {
+    if (typeof reportedSha !== 'string' || !/^[a-f0-9]{40}$/.test(reportedSha)) {
+      throw new Error('Cloudflare commit metadata is not a complete SHA; deployment blocked.');
+    }
+    if (sha !== reportedSha) {
+      throw new Error(`Cloudflare commit and checked-out commit differ; deployment blocked (Cloudflare ${reportedSha.slice(0, 12)}, checkout ${sha.slice(0, 12)}).`);
+    }
   }
   if (git('status', '--porcelain', '--untracked-files=no')) {
     throw new Error('Deployment checkout contains tracked modifications; deployment blocked.');
+  }
+  if (workersBuild && (reportedSha === undefined || reportedSha === '')) {
+    console.log(`Cloudflare supplied no commit SHA; verifying Quality for checked-out ${branch}@${sha}.`);
   }
   return waitForQuality({sha, branch, token: env.QUALITY_GITHUB_TOKEN});
 }

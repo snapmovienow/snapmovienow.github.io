@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
+import {copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync} from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import {qualityRun, waitForQuality} from '../scripts/deploy-guard.mjs';
 
 const sha = 'a'.repeat(40);
@@ -137,4 +140,74 @@ const wrongCommit = spawnSync(process.execPath, ['scripts/deploy-guard.mjs'], {
 });
 assert.equal(wrongCommit.status, 1);
 assert.match(wrongCommit.stderr, /checked-out commit differ/);
-console.log('PASS: exact-commit deployment approval, rate-limit backoff, conditional reads, secret isolation and install isolation.');
+
+// Run the complete CLI in a real, isolated Git checkout. A manual build without
+// push metadata must approve this checkout's SHA, not an arbitrary passing run.
+const temporary = mkdtempSync(path.join(os.tmpdir(), 'smn-deploy-guard-'));
+try {
+  const checkout = path.join(temporary, 'checkout');
+  mkdirSync(path.join(checkout, 'scripts'), {recursive: true});
+  copyFileSync('scripts/deploy-guard.mjs', path.join(checkout, 'scripts/deploy-guard.mjs'));
+  writeFileSync(path.join(checkout, 'tracked.txt'), 'original\n');
+  const fixtureGit = (...args) => {
+    const result = spawnSync('git', args, {cwd: checkout, encoding: 'utf8'});
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout.trim();
+  };
+  fixtureGit('init', '-b', 'main');
+  fixtureGit('add', '.');
+  fixtureGit('-c', 'user.name=Deploy Guard Test', '-c', 'user.email=guard@example.invalid', 'commit', '-m', 'Synthetic deployment checkout');
+  const checkoutSha = fixtureGit('rev-parse', 'HEAD');
+  const preload = path.join(temporary, 'github-fixture.mjs');
+  writeFileSync(preload, `import assert from 'node:assert/strict';
+globalThis.fetch = async (url, options) => {
+  assert.equal(url.hostname, 'api.github.com');
+  assert.equal(url.pathname, '/repos/snapmovienow/snapmovienow.github.io/actions/workflows/quality.yml/runs');
+  assert.equal(url.searchParams.get('head_sha'), ${JSON.stringify(checkoutSha)});
+  assert.equal(url.searchParams.get('branch'), 'main');
+  assert.equal(options.redirect, 'error');
+  console.log('GITHUB_FIXTURE_REQUEST');
+  return {ok: true, status: 200, headers: new Headers(), json: async () => ({workflow_runs: [{
+    ...${JSON.stringify(approved)}, head_sha: ${JSON.stringify(checkoutSha)},
+    conclusion: process.env.SMN_GUARD_TEST_CONCLUSION || 'success'
+  }]})};
+};
+`);
+  const manual = (metadata = {}, extra = {}) => {
+    const env = {...process.env, WORKERS_CI: '1', WORKERS_CI_BRANCH: 'main', ...extra};
+    delete env.WORKERS_CI_COMMIT_SHA;
+    Object.assign(env, metadata);
+    return spawnSync(process.execPath, ['--import', preload, 'scripts/deploy-guard.mjs'], {
+      cwd: checkout, encoding: 'utf8', env, timeout: 5_000
+    });
+  };
+  for (const metadata of [{}, {WORKERS_CI_COMMIT_SHA: ''}, {WORKERS_CI_COMMIT_SHA: checkoutSha},
+    {WORKERS_CI_BRANCH: '', WORKERS_CI_COMMIT_SHA: ''}]) {
+    const result = manual(metadata);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, new RegExp(`Quality approved ${checkoutSha}`));
+    assert.match(result.stdout, /GITHUB_FIXTURE_REQUEST/);
+  }
+  for (const reported of ['0'.repeat(40), 'short', 'unknown', checkoutSha + '\n']) {
+    const result = manual({WORKERS_CI_COMMIT_SHA: reported});
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, /deployment blocked/);
+    assert.ok(!result.stdout.includes('GITHUB_FIXTURE_REQUEST'), 'invalid commit metadata blocks before GitHub');
+  }
+  const failed = manual({}, {SMN_GUARD_TEST_CONCLUSION: 'failure'});
+  assert.equal(failed.status, 1, failed.stderr);
+  assert.match(failed.stderr, /Quality failure; deployment blocked/);
+  fixtureGit('checkout', '--detach');
+  const branchless = manual({WORKERS_CI_BRANCH: ''});
+  assert.equal(branchless.status, 1, branchless.stderr);
+  assert.match(branchless.stderr, /complete commit SHA and branch/);
+  assert.ok(!branchless.stdout.includes('GITHUB_FIXTURE_REQUEST'));
+  writeFileSync(path.join(checkout, 'tracked.txt'), 'changed\n');
+  const dirty = manual();
+  assert.equal(dirty.status, 1, dirty.stderr);
+  assert.match(dirty.stderr, /tracked modifications/);
+  assert.ok(!dirty.stdout.includes('GITHUB_FIXTURE_REQUEST'));
+} finally {
+  rmSync(temporary, {recursive: true, force: true});
+}
+console.log('PASS: exact-commit deployment approval, manual-build checkout verification, rate-limit backoff, conditional reads, secret isolation and install isolation.');
