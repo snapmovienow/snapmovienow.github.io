@@ -40,16 +40,17 @@ try{
   assert.equal(await page.locator('body').evaluate(body=>body.scrollWidth>innerWidth),false,'panel fits width '+width);
   const buttons=await first.locator('.admin-user-actions button').evaluateAll(nodes=>nodes.map(n=>n.getBoundingClientRect().top));assert.ok(buttons.every(y=>Math.abs(y-buttons[0])<2),'actions share a horizontal row at '+width);
   assert.ok(await first.evaluate(card=>card.querySelector('.admin-user-permissions').getBoundingClientRect().top>card.querySelector('.admin-user-heading').getBoundingClientRect().bottom),'permissions are below the user');
+  assert.equal(await first.locator('.admin-user-permissions').evaluate(group=>group.scrollWidth>group.clientWidth),false,'all permission labels fit without clipping at '+width);
  }
  await page.setViewportSize({width:390,height:1000});
  fs.mkdirSync('artifacts',{recursive:true});await page.locator('#providerAssignments').screenshot({path:'artifacts/admin-activity-mobile.png'});await page.locator('#rows').screenshot({path:'artifacts/admin-users-mobile.png'});
  await first.getByRole('button',{name:'Editar cliente-demo1',exact:true}).click();const form=page.locator('#userForm');
  const order=await form.locator('input[name="username"],input[name="password"],textarea[name="comments"],input[name="name"]').evaluateAll(nodes=>nodes.map(n=>n.name));assert.deepEqual(order,['username','password','comments','name']);
  assert.equal(await form.locator('[name="password"]').getAttribute('type'),'text');assert.equal(await form.locator('[name="password"]').inputValue(),'');assert.equal(await form.locator('[name="comments"]').inputValue(),users[0].comments);
- await form.locator('[name="password"]').fill('Ejemplo2026!TV');await page.locator('#editor').screenshot({path:'artifacts/admin-editor-mobile.png'});
+ await form.locator('[name="password"]').fill('Ejemplo2026!TV');assert.equal(await page.locator('.editor-actions').evaluate(bar=>bar.getBoundingClientRect().top>=0&&bar.getBoundingClientRect().bottom<=innerHeight),true,'save and cancel stay inside the viewport');await page.locator('#editor').screenshot({path:'artifacts/admin-editor-mobile.png'});
  await page.locator('#cancel').click();await page.waitForFunction(()=>document.querySelector('#userForm [name="password"]').value==='');assert.equal(saves.length,0,'cancel never saves a visible password');
  await first.getByRole('button',{name:'Editar cliente-demo1',exact:true}).click();const originalExpiry=users[0].expiresAt;
- const comments='Cliente mensual.\nContactar por la tarde. <img src=x onerror="window.injected=true">';await form.locator('[name="comments"]').fill(comments);await form.getByRole('button',{name:'Guardar cambios'}).click();await page.locator('#notice').filter({hasText:'Su reproducción y sesiones se conservan'}).waitFor();
+ const comments='Cliente mensual.\nContactar por la tarde. <img src=x onerror="window.injected=true">';await form.locator('[name="comments"]').fill(comments);await page.getByRole('button',{name:'Guardar cambios',exact:true}).click();await page.locator('#notice').filter({hasText:'Su reproducción y sesiones se conservan'}).waitFor();
  assert.equal(saves.at(-1).comments,comments);assert.equal(saves.at(-1).password,'');assert.equal(saves.at(-1).expiresAt,originalExpiry,'editing notes preserves expiry seconds');
  await page.locator('.admin-user-card[data-username="cliente-demo1"]').getByRole('button',{name:'Editar cliente-demo1',exact:true}).click();assert.equal(await form.locator('[name="comments"]').inputValue(),comments);assert.equal(await page.evaluate(()=>window.injected),undefined,'comments remain text');
  await page.keyboard.press('Escape');await page.waitForFunction(()=>!document.querySelector('#editor').open);
