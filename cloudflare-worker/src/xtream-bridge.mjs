@@ -2,6 +2,7 @@ import {handleXtream} from './xtream.mjs';
 
 import {createProviderCatalog,fingerprint} from './provider-catalog.mjs';
 import {createAdultPolicy} from './content-permissions.mjs';
+import {cleanPlaybackActivity,cachedPlaybackActivity} from './playback-activity.mjs';
 export {publicMetadata} from './provider-catalog.mjs';
 
 export function createXtreamBridge(deps) {
@@ -36,11 +37,13 @@ export function createXtreamBridge(deps) {
     };
     const resolve = async id => (await deps.registry(env,'/xtream-resolve',{id})).json();
     const play = async (request, session, item) => {
+      let activity=cleanPlaybackActivity(item.activity,item.type);
+      if(!activity)try{activity=await cachedPlaybackActivity(catalog,{type:item.type,server:item.server,id:item.upstreamId,parentId:item.parentId})}catch{}
       const request_id=crypto.randomUUID();
       const begun=await privateCall('/playback-begin',{sid:session.sid,request_id});if(!begun.ok)return deps.json(await begun.json(),begun.status);
       const excluded=[];let lastFailure=null;
       for(let attempt=0;attempt<3;attempt++){
-      const mediaSession={...session,request_id,mediaKey:item.type+'|'+item.server+'|'+item.upstreamId+'|'+item.ext};
+      const mediaSession={...session,request_id,mediaKey:item.type+'|'+item.server+'|'+item.upstreamId+'|'+item.ext,...(activity?{activity}:{})};
       const allocation=await deps.managedPlayback(env,mediaSession,item.server,ctx,excluded);
       if(!allocation.r.ok){if(lastFailure&&allocation.r.status===409)return deps.json({error:'upstream_unavailable'},lastFailure);return deps.json(await allocation.r.json(),allocation.r.status)}
       const {lease_id}=await allocation.r.json(),credentials=allocation.credentials;

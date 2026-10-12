@@ -1,5 +1,6 @@
 import {isAdult} from './content-permissions.mjs';
 import {normaliseSeries} from './xtream-series.mjs';
+import {cleanPlaybackActivity,episodeActivity} from './playback-activity.mjs';
 // Xtream player compatibility. Provider passwords and playback origins stay private.
 const ACTIONS = {
   get_live_categories: ['tv', 'live_category'], get_live_streams: ['tv', 'live'],
@@ -48,7 +49,8 @@ async function mapList(rows, kind, auth, deps, base) {
     if (!numeric(row[field])) continue;
     const server = row._server;
     if (!server) continue;
-    const index = entries.push(entry(kind, server, row[field], {ext: EXTENSIONS.has(row.container_extension) ? row.container_extension : 'mp4'})) - 1;
+    const activity=cleanPlaybackActivity({title:row.name||row.title},kind==='series_list'?'series':kind);
+    const index = entries.push(entry(kind, server, row[field], {ext: EXTENSIONS.has(row.container_extension) ? row.container_extension : 'mp4',...(activity?{activity}:{})})) - 1;
     const category = kind.endsWith('_category') || row.category_id == null ? null : entries.push(entry(categories, server, row.category_id)) - 1;
     refs.push({row, index, category});
   }
@@ -92,7 +94,7 @@ async function details(params, kind, auth, deps, base) {
     episodes[season] = [];
     for (const row of rows) flat.push({season, row});
   }
-  const ids = await deps.register(flat.map(({row}) => entry('episode', record.server, row.id, {parentId:record.upstreamId, ext: EXTENSIONS.has(row.container_extension) ? row.container_extension : 'mp4'})));
+  const ids = await deps.register(flat.map(({season,row}) => entry('episode', record.server, row.id, {parentId:record.upstreamId,activity:episodeActivity(series.info,row,season),ext: EXTENSIONS.has(row.container_extension) ? row.container_extension : 'mp4'})));
   flat.forEach(({season, row}, i) => {
     const ext = EXTENSIONS.has(row.container_extension) ? row.container_extension : 'mp4';
     // The provider's custom_sid is private and has already been removed by

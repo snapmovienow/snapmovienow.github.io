@@ -52,6 +52,10 @@ try{
 
  await admin('save',{create:true,username:'customer',password:'customer-password-test',permissions:{movies:true,series:false,tv:true,adults:false},expiresAt:Date.now()+86400000,status:'active'});
  const customer=(await call(prod,{op:'auth',username:'customer',password:'customer-password-test'},'/')).data.access_token;assert.ok(customer);
+ const customerRow=(await admin('users')).data.find(u=>u.username==='customer'),privateNotes='Cliente de ensayo.\nFire TV Cube; contactar por la tarde.';
+ const noteSave=await admin('save',{...customerRow,create:false,comments:privateNotes});assert.equal(noteSave.status,200);assert.equal(noteSave.data.sessionsRevoked,false);
+ assert.equal((await admin('users')).data.find(u=>u.username==='customer').comments,privateNotes,'comments persist in actual SQLite storage');
+ const customerInfo=await call(prod,{op:'session_info',access_token:customer},'/');assert.equal(customerInfo.status,200);assert.ok(!JSON.stringify(customerInfo.data).includes(privateNotes),'notes remain administrator-only');
  assert.equal((await call(prod,{action:'xtream-series-check',username:'customer',query:'Test'})).status,401,'series diagnostics require an administrator session');
  const patch={kind:'progress',key:'movie:ccf:42',type:'movie',id:'42',server:'ccf',time:100,duration:1000,updatedAt:Date.now()};
  assert.equal((await call(prod,{op:'profile_patch',access_token:customer,patches:[patch]},'/')).data.records[0].time,100);
@@ -68,6 +72,7 @@ try{
  assert.equal((await admin('backup-drill',{password:'owner-password-test',blob:'invalid'})).status,400,'invalid encrypted files are rejected before creating a drill object');
  const plan=await admin('backup-preview',{blob:exported.data.blob});assert.equal(plan.data.users,1);
  const restore=await admin('backup-restore',{password:'owner-password-test',blob:exported.data.blob,confirmation:plan.data.confirmation,confirmText:'RESTAURAR'});assert.equal(restore.status,200);
+ assert.equal((await admin('users')).data.find(u=>u.username==='customer').comments,privateNotes,'encrypted backup and restoration preserve administrator comments');
  assert.equal((await call(prod,{op:'profile_get',access_token:customer},'/')).status,401);
  const begin=await admin('mfa-begin',{password:'owner-password-test'});assert.equal(begin.status,200);
  const confirmed=await admin('mfa-confirm',{password:'owner-password-test',code:await totp(begin.data.seed,Math.floor(Date.now()/30000)-1)});assert.equal(confirmed.status,200);assert.equal(confirmed.data.recoveryCodes.length,8);

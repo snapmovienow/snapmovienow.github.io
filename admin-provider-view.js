@@ -7,6 +7,11 @@ export function selectAccounts(accounts,{query='',status='all',source='all'}={})
 }
 const labels={active:'Activa',expired:'Vencida',suspended:'Suspendida',unavailable:'No disponible'};
 const kinds={live:'TV en vivo',movie:'Película',series:'Serie',unknown:'Reproducción'};
+export function activityLabels(reservation){
+ const activity=reservation.activity||{},title=activity.seriesTitle||activity.title||'Título no disponible';
+ const episode=reservation.type==='series'?[activity.season?'Temporada '+activity.season:'',activity.episode?'Episodio '+activity.episode:''].filter(Boolean).join(' · '):'';
+ return {title,episode,detail:activity.seriesTitle&&activity.title!==activity.seriesTitle?activity.title:''};
+}
 export function createProviderView({document:doc,api,notice,onInventory=()=>{}}){
  const $=id=>doc.getElementById(id),size=25;
  let data=null,page=0,pending=null,epoch=0;
@@ -14,7 +19,7 @@ export function createProviderView({document:doc,api,notice,onInventory=()=>{}})
  const filters=()=>({query:$('providerSearch').value,status:$('providerState').value,source:$('providerSource').value});
  function sources(items){const select=$('providerSource'),previous=select.value;select.replaceChildren();for(const item of [{source:'all',name:'Todos los servidores'},...items]){const option=node('option',item.name);option.value=item.source;select.append(option)}select.value=items.some(s=>s.source===previous)?previous:'all'}
  function state(row){return node('span',labels[row.status]||'No disponible','provider-badge '+(row.eligible?'is-active':'is-inactive'))}
- function users(row){const box=node('div');if(!row.reservations.length)box.append(node('span','Sin usuario SNAP','muted'));else for(const reservation of row.reservations)box.append(node('div',reservation.username+' · '+kinds[reservation.type]+' · '+(reservation.client==='xtream'?'App Xtream':'Web'),'provider-user'));return box}
+ function users(row){const box=node('div');if(!row.reservations.length)box.append(node('span','Sin usuario SNAP','muted'));else for(const reservation of row.reservations){box.append(node('div',reservation.username+' · '+kinds[reservation.type]+' · '+(reservation.client==='xtream'?'App Xtream':'Web'),'provider-user'));const activity=activityLabels(reservation);box.append(node('span',activity.title+(activity.episode?' · '+activity.episode:''),'provider-user-content'))}return box}
  function render(){
   if(!data)return;
   const selected=selectAccounts(data.accounts,filters()),pages=Math.max(1,Math.ceil(selected.length/size));page=Math.min(page,pages-1);
@@ -36,7 +41,7 @@ export function createProviderView({document:doc,api,notice,onInventory=()=>{}})
   for(const [id,value] of Object.entries({providerActive:data.summary.activeAccounts,providerCapacity:data.summary.totalCapacity,providerReported:data.summary.reported,providerReserved:data.summary.reserved,providerAvailable:data.summary.available}))$(id).textContent=String(value);
   $('providerTotal').textContent=data.summary.accounts+' cuentas guardadas';
   const assignments=$('providerAssignments');assignments.replaceChildren();
-  for(const item of data.assignments){const card=node('div',undefined,'provider-assignment');card.append(node('strong',item.username),node('span','→','muted'),node('strong',item.accountUsername,'account-pill'),node('span',kinds[item.type]+' · '+(item.client==='xtream'?'App Xtream':'Web'),'muted'));assignments.append(card)}
+  for(const item of data.assignments){const card=node('article',undefined,'provider-assignment'),identity=node('div',undefined,'provider-assignment-identity');identity.append(node('strong',item.username),node('span','→','muted'),node('strong',item.accountUsername,'account-pill'),node('span','Reserva activa','provider-badge is-active'));card.append(identity);const content=node('div',undefined,'provider-assignment-content'),activity=activityLabels(item);content.append(node('p',(kinds[item.type]||kinds.unknown)+' · '+(item.client==='xtream'?'App Xtream':'Web'),'muted'),node('strong',activity.title));if(activity.episode)content.append(node('p',activity.episode));if(activity.detail)content.append(node('p',activity.detail,'muted'));if(item.lastSeenAt)content.append(node('span','Última actividad: '+new Date(item.lastSeenAt).toLocaleTimeString(),'provider-assignment-time'));card.append(content);assignments.append(card)}
   $('providerNoAssignments').hidden=!!data.assignments.length;
   const times=data.accounts.map(a=>a.syncedAt).filter(Boolean),synced=times.length?Math.min(...times):null;
   $('providerUpdated').textContent=synced?'Inventario comprobado: '+new Date(synced).toLocaleString():'Inventario pendiente de comprobar.';

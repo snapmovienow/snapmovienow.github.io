@@ -17,4 +17,5 @@ assert.equal(test.events.filter(e=>e.path==='/playback-begin').length,1);assert.
 test=setup([502,502,502]);response=await prepareWebPlayback(request,session,'https://example.com',{},ctx,test.deps);assert.equal(response.status,502);assert.equal(test.leases.size,0);
 test=setup([410,200]);response=await prepareWebPlayback(request,session,'https://example.com',{},ctx,test.deps);assert.equal(response.status,410);assert.equal(test.leases.size,0);
 test=setup([Error('media_origin_unapproved'),200]);response=await prepareWebPlayback(request,session,'https://example.com',{},ctx,test.deps);assert.equal(response.status,502);assert.equal((await response.json()).error,'media_origin_unapproved');assert.equal(test.leases.size,0);
+test=setup([200]);test.deps.activity=async()=>{throw Error('missing-catalog')};response=await prepareWebPlayback(request,session,'https://example.com',{},ctx,test.deps);assert.equal(response.status,200,'missing optional activity metadata never blocks a healthy stream');
 console.log('PASS: live account fallback, shared request ownership, release before retry, bounded attempts, cancelled requests and blocked destinations never retried.');

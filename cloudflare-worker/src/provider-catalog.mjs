@@ -58,6 +58,8 @@ export function createProviderCatalog(deps, env, ctx) {
         try{const response=await deps.registry(env,'/xtream-cache-get',{key});if(response.ok){const savedAt=Number(response.headers.get('x-catalog-saved-at'));const data=await decodeCatalog(response);remember(data,savedAt);saved={data,savedAt,until:savedAt+12*3600000}}}catch{}
       }
       const freshFor=persist?300000:30000;
+      // Activity labels must not trigger provider traffic or delay a stream.
+      if(options.cachedOnly)return saved?.data||null;
       if(!options.fresh&&saved&&saved.savedAt>Date.now()-freshFor)return saved.data;
       const refresh=async()=>{
         const credentials=await deps.catalogCredentials(env,server,ctx);

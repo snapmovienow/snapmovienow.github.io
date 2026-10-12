@@ -27,6 +27,8 @@ assert.equal(view.accounts.length,4,'overlapping subscription belongs to both so
 assert.deepEqual(view.summary,{accounts:4,activeAccounts:2,totalCapacity:6,reported:1,reserved:1,available:4});
 assert.equal(view.accounts.find(a=>a.id==='1').sources.length,2);
 assert.equal(view.assignments.length,1);assert.equal(view.assignments[0].username,'nito');assert.equal(view.assignments[0].accountUsername,'provider-one');assert.equal(view.assignments[0].type,'live');
+const activityLeaseStore=await openLeaseStore(store),current=await activityLeaseStore.get('current');await activityLeaseStore.put('current',{...current,activity:{title:'ESPN 1 · 1080',password:'activity-secret',url:'private-url'}});
+view=await providerDashboard(store,now);assert.deepEqual(view.assignments[0].activity,{title:'ESPN 1 · 1080'});assert.equal(view.assignments[0].lastSeenAt,now);assert.ok(!JSON.stringify(view).includes('activity-secret'));assert.ok(!JSON.stringify(view).includes('private-url'));
 assert.equal(view.accounts.find(a=>a.username==='expired-account').available,0);
 assert.equal(view.accounts.find(a=>a.username==='disabled-account').available,0);
 for(const forbidden of ['must-not-leak','private-sid','private-request','encrypted','password'])assert.ok(!JSON.stringify(view).includes(forbidden));
