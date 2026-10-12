@@ -18,9 +18,19 @@ assert.equal((await act('provider-save',{username:'service-test',password:'servi
 for(let i=0;i<4;i++)assert.equal((await act('save',{create:true,username:'customer'+i,password:'customer-password-test',name:'Test <script>',status:'active'})).status,200);
 assert.equal((await act('save',{create:true,username:'customer0',password:'customer-password-test',status:'active'})).status,409);
 const list=await act('users');assert.equal(list.data.length,4);assert.ok(!JSON.stringify(list.data).includes('hash'));assert.ok(!JSON.stringify(list.data).includes('password'));
+const noteUser=list.data[0],note='Cliente mensual.\nUsa Fire TV Cube. <script>example</script>';
+let noteSaved=await act('save',{...noteUser,create:false,comments:note});assert.equal(noteSaved.status,200);assert.equal(noteSaved.data.comments,note);assert.equal(noteSaved.data.sessionsRevoked,false);
+assert.equal((await act('save',{...noteUser,create:false,comments:'stale edit'})).status,409,'a stale panel cannot overwrite newer notes');
+assert.equal((await act('save',{...noteSaved.data,create:false,comments:'x'.repeat(2001)})).status,400);
+assert.equal((await act('save',{...noteSaved.data,create:false,comments:{unsafe:true}})).status,400);
 const sessions=[];for(let i=0;i<4;i++){const a=await req({op:'auth',username:'customer'+i,password:'customer-password-test'});assert.equal(a.status,200);assert.equal(a.data.user_info.auth,1);assert.ok(!JSON.stringify(a.data).includes('service-password'));sessions.push(a.data.access_token)}
 assert.equal((await req({op:'vod',access_token:sessions[0]})).data[0].name,'Test movie');assert.equal((await req({op:'series',access_token:sessions[0]})).data[0].name,'Test series');assert.equal((await admin('users',{access_token:sessions[0]})).status,401);
 const plays=await Promise.all(sessions.map(access_token=>req({op:'stream_token',access_token,type:'movie',id:123})));assert.equal(plays.filter(x=>x.status===200).length,3);assert.equal(plays.filter(x=>x.status===409).length,1);assert.equal(plays.find(x=>x.status===409).data.error,'ccf_capacity');
+assert.ok(!JSON.stringify((await req({op:'session_info',access_token:sessions[0]})).data).includes(note),'administrator notes never reach a customer session');
+const customer0=(await act('users')).data.find(u=>u.username==='customer0');
+const notesWhilePlaying=await act('save',{...customer0,create:false,comments:'Private test notes during playback'});assert.equal(notesWhilePlaying.data.sessionsRevoked,false);
+assert.equal((await req({op:'playback_heartbeat',access_token:sessions[0],lease_id:plays[0].data.lease_id})).status,200,'notes preserve the actual playback lease and customer session');
+assert.equal((await act('provider-dashboard')).data.assignments.find(a=>a.username==='customer0').activity.title,'Test movie','web titles come from the authorized cached catalog');
 assert.equal((await worker.fetch(new Request(plays[0].data.url,{method:'HEAD'}),env)).status,200);
 assert.equal((await req({op:'playback_heartbeat',access_token:sessions[0],lease_id:plays[0].data.lease_id})).status,200);
 assert.equal((await req({op:'playback_release',access_token:sessions[1],lease_id:plays[0].data.lease_id})).status,410);

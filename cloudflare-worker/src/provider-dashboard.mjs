@@ -1,6 +1,7 @@
 // A read-only, administrator-only projection of the same inventory and leases
 // used by allocation. Never serialize storage records or encrypted credentials.
 import {openLeaseStore} from './lease-store.mjs';
+import {cleanPlaybackActivity} from './playback-activity.mjs';
 const count=value=>Number.isFinite(Number(value))?Math.max(0,Math.floor(Number(value))):0;
 export async function providerDashboard(store,now=Date.now(),leases=null){
  leases??=await openLeaseStore(store);
@@ -20,7 +21,7 @@ export async function providerDashboard(store,now=Date.now(),leases=null){
  for(const lease of (await leases.active({},now)).values()){
   const user=users.get(lease.uid);if(lease.until<=now||!user||user.version!==lease.version||user.status!=='active'||(user.expiresAt&&user.expiresAt<=now))continue;
   const row=rows.get(lease.provider_id)||(rows.size===1&&!lease.provider_id?[...rows.values()][0]:null);if(!row)continue;
-  const kind=String(lease.mediaKey||'').split('|')[0],assignment={username:user.username,accountId:row.id,accountUsername:row.username,server:row.server,type:['movie','series','live'].includes(kind)?kind:'unknown',client:lease.xtream?'xtream':'web',until:lease.until};
+  const kind=String(lease.mediaKey||'').split('|')[0],assignment={username:user.username,accountId:row.id,accountUsername:row.username,server:row.server,type:['movie','series','live'].includes(kind)?kind:'unknown',client:lease.xtream?'xtream':'web',until:lease.until,lastSeenAt:Math.max(0,Math.min(now,lease.until-90000)),activity:cleanPlaybackActivity(lease.activity,kind)};
   row.reservations.push(assignment);assignments.push(assignment);
  }
  const accounts=[...rows.values()].map(row=>({...row,reserved:row.reservations.length,

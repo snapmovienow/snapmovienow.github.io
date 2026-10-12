@@ -3,6 +3,7 @@
 export async function prepareWebPlayback(body,session,requestUrl,env,ctx,deps){
  const type=String(body.type||'movie'),ext=deps.cleanExt(body.ext),server=String(body.server||'ccf');
  const request_id=String(body.request_id||crypto.randomUUID());
+ const activity=session.managed&&deps.activity?await deps.activity({type,server,id:body.id,parentId:body.series_id}).catch(()=>null):null;
  if(session.managed){
   const begun=await deps.directory(env,'/playback-begin',{sid:session.sid,request_id,revision:body.revision});
   if(!begun.ok)return deps.json(await begun.json(),begun.status);
@@ -12,7 +13,7 @@ export async function prepareWebPlayback(body,session,requestUrl,env,ctx,deps){
   let credentials=session,lease_id,provider_id;
   if(session.managed){
    let allocation;
-   try{allocation=await deps.managedPlayback(env,{...session,request_id,mediaKey:type+'|'+server+'|'+body.id+'|'+ext},server,ctx,excluded)}
+   try{allocation=await deps.managedPlayback(env,{...session,request_id,mediaKey:type+'|'+server+'|'+body.id+'|'+ext,...(activity?{activity}:{})},server,ctx,excluded)}
    catch(error){return deps.json({error:error.message.startsWith('panel_')?error.message:'provider_not_configured'},503)}
    if(!allocation.r.ok)return deps.json(await allocation.r.json(),allocation.r.status);
    credentials=allocation.credentials;provider_id=allocation.provider_id;lease_id=(await allocation.r.json()).lease_id;

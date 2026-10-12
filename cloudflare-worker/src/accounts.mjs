@@ -3,12 +3,14 @@ import {contentPermissions} from './content-permissions.mjs';
 import {catalogCacheRoute} from './catalog-cache.mjs';
 import {providerDashboard} from './provider-dashboard.mjs';
 import {openLeaseStore} from './lease-store.mjs';
+import {cleanPlaybackActivity} from './playback-activity.mjs';
 import {securityRoute,checkFactor,writeAudit} from './security.mjs';
 import {backupRoute,automaticBackup} from './backups.mjs';
 const answer=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:{'content-type':'application/json'}});
 const normal=x=>String(x||'').trim().toLowerCase();
 const validName=x=>/^[a-z0-9_.@-]{3,80}$/.test(x);
 const publicUser=u=>({id:u.id,username:u.username,name:u.name,status:u.status,expiresAt:u.expiresAt,createdAt:u.createdAt,updatedAt:u.updatedAt,permissions:contentPermissions(u.permissions)});
+const adminUser=u=>({...publicUser(u),comments:typeof u.comments==='string'?u.comments:''});
 const alive=u=>u&&u.status==='active'&&(!u.expiresAt||u.expiresAt>Date.now());
 const enc=new TextEncoder();
 async function digest(x){return new Uint8Array(await crypto.subtle.digest('SHA-256',enc.encode(String(x))))}
@@ -72,15 +74,18 @@ export async function accountsFetch(state,env,req){
   const u=await store.get(b.admin?'admin':'user:'+normal(b.username));return answer({ok:!!(u&&u.id===b.uid&&u.version===b.version&&(b.admin||alive(u)))},u&&u.id===b.uid&&u.version===b.version&&(b.admin||alive(u))?200:401);
  }
  if(p==='/has')return answer({exists:!!(await store.get('user:'+normal(b.username)))});
- if(p==='/users')return answer(Array.from((await store.list({prefix:'user:'})).values()).map(publicUser));
+ if(p==='/users')return answer(Array.from((await store.list({prefix:'user:'})).values()).map(adminUser));
  if(p==='/save'){
   const username=normal(b.username);if(!validName(username))return answer({error:'invalid_username'},400);
   const old=await store.get('user:'+username);if(b.create&&old)return answer({error:'username_exists'},409);if(!b.create&&!old)return answer({error:'not_found'},404);
+  if(old&&b.updatedAt!==undefined&&b.updatedAt!==old.updatedAt)return answer({error:'edit_conflict'},409);
   if(!['active','suspended'].includes(b.status))return answer({error:'invalid_status'},400);
+  if(b.comments!==undefined&&(typeof b.comments!=='string'||b.comments.length>2000))return answer({error:'invalid_comments'},400);
   const permissions=b.permissions===undefined?contentPermissions(old?.permissions):{movies:b.permissions?.movies===true,series:b.permissions?.series===true,tv:b.permissions?.tv===true,adults:Object.hasOwn(b.permissions||{},'adults')?b.permissions.adults===true:contentPermissions(old?.permissions).adults};
-  let u={...old,permissions,id:old?.id||crypto.randomUUID(),username,name:String(b.name||'').slice(0,120),status:b.status,expiresAt:expiry(b.expiresAt),createdAt:old?.createdAt||Date.now(),updatedAt:Date.now(),version:(old?.version||0)+1};
+  const expiresAt=expiry(b.expiresAt),accessChanged=!old||!!b.password||old.status!==b.status||old.expiresAt!==expiresAt||JSON.stringify(contentPermissions(old.permissions))!==JSON.stringify(permissions);
+  let u={...old,permissions,id:old?.id||crypto.randomUUID(),username,name:String(b.name||'').slice(0,120),comments:b.comments===undefined?(old?.comments||''):b.comments,status:b.status,expiresAt,createdAt:old?.createdAt||Date.now(),updatedAt:Math.max(Date.now(),(old?.updatedAt||0)+1),version:accessChanged?(old?.version||0)+1:old.version};
   if(b.password)u=await withPassword(u,b.password);else if(!old)return answer({error:'password_required'},400);
-  return store.transaction(async tx=>{const latest=await tx.get('user:'+username);if((latest?.version||0)!==(old?.version||0))return answer({error:'edit_conflict'},409);await tx.put('user:'+username,u);await leases.in(tx).removeFor({uid:u.id});return answer(publicUser(u))});
+  return store.transaction(async tx=>{const latest=await tx.get('user:'+username);if((latest?.version||0)!==(old?.version||0)||latest?.updatedAt!==old?.updatedAt)return answer({error:'edit_conflict'},409);await tx.put('user:'+username,u);if(accessChanged)await leases.in(tx).removeFor({uid:u.id});return answer({...adminUser(u),sessionsRevoked:accessChanged})});
  }
  if(p==='/delete')return store.transaction(async tx=>{const key='user:'+normal(b.username),u=await tx.get(key);if(!u)return answer({error:'not_found'},404);await tx.delete(key);await leases.in(tx).removeFor({uid:u.id});return answer({ok:true})});
  if(p==='/provider-save')return store.transaction(async tx=>{await tx.put('provider',{encrypted:b.encrypted,username:b.username,mode:b.mode||"single",maxConnections:Math.min(3,Math.max(1,Number(b.maxConnections)||3))});await leases.in(tx).clear();await tx.delete('pool');return answer({ok:true})});
@@ -120,10 +125,11 @@ export async function accountsFetch(state,env,req){
   const u=await tx.get('user:'+normal(b.username));if(!alive(u)||u.id!==b.uid||u.version!==b.version)return answer({error:'account_inactive'},401);
   const local=leases.in(tx);await local.prune();
   const sessionLeases=await local.active({sid:b.sid});
-  if(b.request_id){const previous=[...sessionLeases].find(([,l])=>l.mediaKey===b.mediaKey&&!(b.exclude||[]).includes(l.provider_id));if(previous){const [id,l]=previous;l.until=Date.now()+90000;l.request_id=b.request_id;await local.put(id,l);const pool=await tx.get('pool'),line=pool?.lines?.find(x=>x.id===l.provider_id);return answer({lease_id:id,provider_id:l.provider_id,encrypted:line?.encrypted,maxConnections:line?.maxConnections,reused:true,request_id:b.request_id})}}
+  if(b.request_id){const previous=[...sessionLeases].find(([,l])=>l.mediaKey===b.mediaKey&&!(b.exclude||[]).includes(l.provider_id));if(previous){const [id,l]=previous;l.until=Date.now()+90000;l.request_id=b.request_id;const activity=cleanPlaybackActivity(b.activity,String(b.mediaKey||'').split('|')[0]);if(activity)l.activity=activity;await local.put(id,l);const pool=await tx.get('pool'),line=pool?.lines?.find(x=>x.id===l.provider_id);return answer({lease_id:id,provider_id:l.provider_id,encrypted:line?.encrypted,maxConnections:line?.maxConnections,reused:true,request_id:b.request_id})}}
   await local.removeFor({sid:b.sid});
   if(b.xtream&&await local.count({uid:b.uid})>=3)return answer({error:'user_connection_limit'},409);
-  const extra={...(b.xtream?{xtream:true}:{}),...(b.request_id?{mediaKey:b.mediaKey,request_id:b.request_id}:{})};
+  const activity=cleanPlaybackActivity(b.activity,String(b.mediaKey||'').split('|')[0]);
+  const extra={...(b.xtream?{xtream:true}:{}),...(b.request_id?{mediaKey:b.mediaKey,request_id:b.request_id}:{}),...(activity?{activity}:{})};
   if(provider.mode==='panel'){
    // Inventory refresh stays off the streaming path. Counts use an index,
    // rather than deserializing all leases once for every provider candidate.
@@ -163,7 +169,10 @@ async function registerXtream(store,entries){
  return store.transaction(async tx=>{
   let next=await tx.get('xtream-next-id')||1;const result=[];
   for(let offset=0;offset<entries.length;offset+=60){const chunk=entries.slice(offset,offset+60),keys=chunk.map(e=>'xtream-map:'+e.kind+':'+e.server+':'+e.upstreamId),existing=await tx.get(keys),writes={};
-   for(let i=0;i<chunk.length;i++){const key=keys[i],e=chunk[i];let id=existing.get(key)||writes[key];if(!id){if(next>2147483647)throw Error('catalog_id_limit');id=next++;writes[key]=id;writes['xtream-id:'+id]={...e,id};}else if(e.parentId){writes['xtream-id:'+id]={...e,id};}result.push(id)}
+   const knownIds=[...new Set([...existing.values()])],known=knownIds.length?await tx.get(knownIds.map(id=>'xtream-id:'+id)):new Map();
+   for(let i=0;i<chunk.length;i++){const key=keys[i],e=chunk[i],activity=cleanPlaybackActivity(e.activity,e.kind==='episode'||e.kind==='series_list'?'series':e.kind);let id=existing.get(key)||writes[key];const isNew=!id;if(isNew){if(next>2147483647)throw Error('catalog_id_limit');id=next++;writes[key]=id;}
+    const previous=writes['xtream-id:'+id]||known.get('xtream-id:'+id),record={kind:e.kind,server:e.server,upstreamId:String(e.upstreamId),...(e.ext?{ext:e.ext}:{}),...(e.parentId?{parentId:String(e.parentId)}:{}),...(activity?{activity}:previous?.activity?{activity:previous.activity}:{}),id};
+    if(isNew||JSON.stringify(previous)!==JSON.stringify(record))writes['xtream-id:'+id]=record;result.push(id)}
    if(Object.keys(writes).length)await tx.put(writes);
   }
   await tx.put('xtream-next-id',next);return answer(result);
