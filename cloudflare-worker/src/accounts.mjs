@@ -1,3 +1,4 @@
+import {resellerAccounts} from './reseller-accounts.mjs';
 // Private Durable Object routes. This module is never served as an HTTP endpoint.
 import {contentPermissions} from './content-permissions.mjs';
 import {catalogCacheRoute} from './catalog-cache.mjs';
@@ -22,6 +23,7 @@ export async function accountsFetch(state,env,req){
  const p=new URL(req.url).pathname.replace('/accounts','');const b=await req.json();const store=state.storage;
  try{
  const leases=await openLeaseStore(store);
+ if(p==='/reseller-reserve'||p==='/reseller-apply')return resellerAccounts(store,p,b,{passwordHash,leases,writeAudit});
  if(p==='/audit-write'){await store.transaction(tx=>writeAudit(tx,b.actor,b.action,b.target));return answer({ok:true})}
  if(p==='/audit')return answer((await store.get('security-audit')||[]).slice(-100).reverse());
  if(p==='/backup-automatic')return answer(await automaticBackup(store,env));
@@ -77,7 +79,7 @@ export async function accountsFetch(state,env,req){
  if(p==='/users')return answer(Array.from((await store.list({prefix:'user:'})).values()).map(adminUser));
  if(p==='/save'){
   const username=normal(b.username);if(!validName(username))return answer({error:'invalid_username'},400);
-  const old=await store.get('user:'+username);if(b.create&&old)return answer({error:'username_exists'},409);if(!b.create&&!old)return answer({error:'not_found'},404);
+  const old=await store.get('user:'+username),reserved=await store.get('reseller-reservation:'+username);if(!old&&reserved?.until>Date.now())return answer({error:'username_reserved'},409);if(b.create&&old)return answer({error:'username_exists'},409);if(!b.create&&!old)return answer({error:'not_found'},404);
   if(old&&b.updatedAt!==undefined&&b.updatedAt!==old.updatedAt)return answer({error:'edit_conflict'},409);
   if(!['active','suspended'].includes(b.status))return answer({error:'invalid_status'},400);
   if(b.comments!==undefined&&(typeof b.comments!=='string'||b.comments.length>2000))return answer({error:'invalid_comments'},400);
@@ -85,7 +87,7 @@ export async function accountsFetch(state,env,req){
   const expiresAt=expiry(b.expiresAt),accessChanged=!old||!!b.password||old.status!==b.status||old.expiresAt!==expiresAt||JSON.stringify(contentPermissions(old.permissions))!==JSON.stringify(permissions);
   let u={...old,permissions,id:old?.id||crypto.randomUUID(),username,name:String(b.name||'').slice(0,120),comments:b.comments===undefined?(old?.comments||''):b.comments,status:b.status,expiresAt,createdAt:old?.createdAt||Date.now(),updatedAt:Math.max(Date.now(),(old?.updatedAt||0)+1),version:accessChanged?(old?.version||0)+1:old.version};
   if(b.password)u=await withPassword(u,b.password);else if(!old)return answer({error:'password_required'},400);
-  return store.transaction(async tx=>{const latest=await tx.get('user:'+username);if((latest?.version||0)!==(old?.version||0)||latest?.updatedAt!==old?.updatedAt)return answer({error:'edit_conflict'},409);await tx.put('user:'+username,u);if(accessChanged)await leases.in(tx).removeFor({uid:u.id});return answer({...adminUser(u),sessionsRevoked:accessChanged})});
+  return store.transaction(async tx=>{const latest=await tx.get('user:'+username),held=await tx.get('reseller-reservation:'+username);if(!latest&&held?.until>Date.now())return answer({error:'username_reserved'},409);if((latest?.version||0)!==(old?.version||0)||latest?.updatedAt!==old?.updatedAt)return answer({error:'edit_conflict'},409);await tx.put('user:'+username,u);if(accessChanged)await leases.in(tx).removeFor({uid:u.id});return answer({...adminUser(u),sessionsRevoked:accessChanged})});
  }
  if(p==='/delete')return store.transaction(async tx=>{const key='user:'+normal(b.username),u=await tx.get(key);if(!u)return answer({error:'not_found'},404);await tx.delete(key);await leases.in(tx).removeFor({uid:u.id});return answer({ok:true})});
  if(p==='/provider-save')return store.transaction(async tx=>{await tx.put('provider',{encrypted:b.encrypted,username:b.username,mode:b.mode||"single",maxConnections:Math.min(3,Math.max(1,Number(b.maxConnections)||3))});await leases.in(tx).clear();await tx.delete('pool');return answer({ok:true})});
@@ -127,7 +129,7 @@ export async function accountsFetch(state,env,req){
   const sessionLeases=await local.active({sid:b.sid});
   if(b.request_id){const previous=[...sessionLeases].find(([,l])=>l.mediaKey===b.mediaKey&&!(b.exclude||[]).includes(l.provider_id));if(previous){const [id,l]=previous;l.until=Date.now()+90000;l.request_id=b.request_id;const activity=cleanPlaybackActivity(b.activity,String(b.mediaKey||'').split('|')[0]);if(activity)l.activity=activity;await local.put(id,l);const pool=await tx.get('pool'),line=pool?.lines?.find(x=>x.id===l.provider_id);return answer({lease_id:id,provider_id:l.provider_id,encrypted:line?.encrypted,maxConnections:line?.maxConnections,reused:true,request_id:b.request_id})}}
   await local.removeFor({sid:b.sid});
-  if(b.xtream&&await local.count({uid:b.uid})>=3)return answer({error:'user_connection_limit'},409);
+  if((b.xtream||u.resellerBridge)&&await local.count({uid:b.uid})>=3)return answer({error:'user_connection_limit'},409);
   const activity=cleanPlaybackActivity(b.activity,String(b.mediaKey||'').split('|')[0]);
   const extra={...(b.xtream?{xtream:true}:{}),...(b.request_id?{mediaKey:b.mediaKey,request_id:b.request_id}:{}),...(activity?{activity}:{})};
   if(provider.mode==='panel'){
