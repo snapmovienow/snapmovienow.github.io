@@ -161,12 +161,12 @@ const VOE_EMBED_HOSTS=new Set(["teresapoliticallearn.com"]);
 function allowedGnula(u){return u.protocol==="https:"&&(/^(?:strm\d+\.uqload\.vc|ugc-cdn-caching-[a-z0-9]+\.cloudwindow-route\.com)$/.test(u.hostname))&&!u.port&&!u.username&&!u.password}
 function proxiedMedia(origin,t,url){return origin+"/gnula-media?t="+encodeURIComponent(t)+"&path="+encodeURIComponent(url)}
 async function gnulaMedia(req,env,u,ctx){const t=u.searchParams.get("t")||"",d=await unticket(env,t);if(d?.kind!=="gnula"||!(await sessionCall(env,d.sid,"/check")).ok)return json({error:"session_expired"},401);
- const base=new URL(d.source),target=new URL(u.searchParams.get("path")||d.source);const directory=base.pathname.slice(0,base.pathname.lastIndexOf("/")+1);
- if(!allowedGnula(target)||target.hostname!==base.hostname||!target.pathname.startsWith(directory))return json({error:"media_not_allowed"},403);
+ const base=new URL(d.source),target=new URL(u.searchParams.get("path")||d.source);const resourceDirectory=base.pathname.slice(0,base.pathname.lastIndexOf("/")+1);
+ if(!allowedGnula(target)||target.hostname!==base.hostname||!target.pathname.startsWith(resourceDirectory))return json({error:"media_not_allowed"},403);
  const headers=new Headers({"User-Agent":"Mozilla/5.0"});if(req.headers.has("range"))headers.set("range",req.headers.get("range"));const r=await fetch(target.href,{headers,redirect:"manual"});if(r.status>=300&&r.status<400)return json({error:"media_redirect_not_allowed"},502);
  if(!r.ok)return json({error:"media_unavailable"},r.status===404?404:502);
  const out=new Headers(cors);for(const n of ["content-type","content-length","content-range","accept-ranges"])if(r.headers.has(n))out.set(n,r.headers.get(n));
- if(target.pathname.endsWith(".m3u8")){const text=await r.text();if(!text.startsWith("#EXTM3U"))return json({error:"invalid_playlist"},502);const rewrite=x=>{const url=new URL(x,target);if(!allowedGnula(url)||url.hostname!==base.hostname||!url.pathname.startsWith(directory))throw Error("playlist_url_not_allowed");return proxiedMedia(u.origin,t,url.href)};
+ if(target.pathname.endsWith(".m3u8")){const text=await r.text();if(!text.startsWith("#EXTM3U"))return json({error:"invalid_playlist"},502);const rewrite=x=>{const url=new URL(x,target);if(!allowedGnula(url)||url.hostname!==base.hostname||!url.pathname.startsWith(resourceDirectory))throw Error("playlist_url_not_allowed");return proxiedMedia(u.origin,t,url.href)};
  const playlist=text.split(/\r?\n/).map(line=>!line.trim()?line:line.startsWith("#")?line.replace(/URI="([^"]+)"/g,(_,url)=>'URI="'+rewrite(url)+'"'):rewrite(line.trim())).join("\n");out.delete("content-length");out.set("content-type","application/vnd.apple.mpegurl");return new Response(req.method==="HEAD"?null:playlist,{headers:out})}
  return guardPlaybackExpiry(new Response(req.method==="HEAD"?null:r.body,{status:r.status,headers:out}),d.exp,req.signal,()=>directory(env,"/release-session",{sid:d.sid}),ctx)
 }

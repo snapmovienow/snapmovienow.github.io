@@ -18,6 +18,11 @@ try{
  await mf.ready;const prod=await mf.getWorker('production-test'),stage=await mf.getWorker('staging-test');
  const call=async(target,body,path='/admin')=>{const response=await target.fetch('https://local.test'+path,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});return{status:response.status,data:await response.json()}};
  assert.equal((await call(prod,{action:'setup',username:'owner',password:'owner-password-test',setupSecret:common.bindings.ADMIN_SETUP_SECRET})).status,200);
+ // Verify the public administrator endpoint against actual SQLite counters.
+ const loginProbe=(username,password,client)=>prod.fetch('https://local.test/admin',{method:'POST',headers:{'content-type':'application/json','CF-Connecting-IP':client},body:JSON.stringify({action:'login',username,password})});
+ for(let i=0;i<10;i++)assert.equal((await loginProbe('invented-admin-'+i,i===0?'owner-password-test':'wrong-password','synthetic-attack-client')).status,401);
+ assert.equal((await loginProbe('owner','owner-password-test','synthetic-attack-client')).status,429,'rotating names must not bypass the SQLite attempt budget');
+ assert.equal((await loginProbe('owner','owner-password-test','synthetic-legitimate-client')).status,200,'another client remains able to sign in');
  assert.equal((await call(stage,{action:'status'})).data.configured,false,'staging never reads production administrator storage');
  assert.equal((await call(stage,{action:'login',username:'owner',password:'owner-password-test'})).status,401);
  const login=await call(prod,{action:'login',username:'owner',password:'owner-password-test'});const token=login.data.access_token;assert.ok(token);

@@ -66,13 +66,14 @@ export async function accountsFetch(state,env,req){
   return store.transaction(async tx=>{if(await tx.get('admin'))return answer({error:'already_configured'},409);await tx.put('admin',admin);return answer({ok:true})});
  }
  if(p==='/admin-login'||p==='/login'){
-  // Bound failed attempts per username and client IP; no password is logged or returned.
-  const username=normal(b.username),bucket='attempt:'+String(b.client||'')+':'+username.slice(0,80),now=Date.now();
+  // The administrator is one fixed account: invented submitted names must
+  // share its client budget. Customer budgets remain isolated by username.
+  const username=normal(b.username),bucket=p==='/admin-login'?'admin-attempt:'+String(b.client||''):'attempt:'+String(b.client||'')+':'+username.slice(0,80),now=Date.now();
   const allowed=await store.transaction(async tx=>{let a=await tx.get(bucket);if(!a||a.until<now)a={count:0,until:now+15*60000};a.count++;await tx.put(bucket,a);return a.count<=10});
   if(!allowed)return answer({error:'try_later'},429);
   const u=await store.get(p==='/admin-login'?'admin':'user:'+username);
   const hash=await passwordHash(String(b.password||'').slice(0,256),u?.salt||'missing-account-salt');
-  if(!u||!await same(hash,u.hash)||(p==='/login'&&!alive(u)))return answer({error:'invalid_credentials'},401);
+  if(!u||!await same(hash,u.hash)||(p==='/admin-login'&&username!==u.username)||(p==='/login'&&!alive(u)))return answer({error:'invalid_credentials'},401);
   if(p==='/admin-login'){
    const factor=await store.transaction(async tx=>{const current=await tx.get('admin');if(current?.version!==u.version)return {valid:false};const r=await checkFactor(env,current,b.code);if(r.valid&&current.mfa?.enabled)await tx.put('admin',r.admin);return r});
    if(!factor.valid)return answer({error:b.code?'mfa_invalid':'mfa_required'},401);
