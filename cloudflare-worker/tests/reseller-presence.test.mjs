@@ -1,0 +1,15 @@
+import assert from 'node:assert/strict';
+import {resellerPresence,recordCustomerActivity} from '../src/reseller-presence.mjs';
+import {openLeaseStore} from '../src/lease-store.mjs';
+class Store{constructor(){this.data=new Map();this.writes=0;}async get(k){return structuredClone(this.data.get(k));}async put(k,v){this.writes++;this.data.set(k,structuredClone(v));}async delete(k){this.data.delete(k);}async list({prefix}){return new Map([...this.data].filter(([k])=>k.startsWith(prefix)));}async transaction(fn){return fn(this);}}
+const store=new Store(),leases=await openLeaseStore(store),now=Date.now(),accountId='juanito-fixture',user={id:'uid-1',username:'clienteficticio',version:2,status:'active',expiresAt:now+999999,resellerBridge:{accountId,lineId:'line-1'}};
+await store.put('user:'+user.username,user);await store.put('user:foreign',{...user,id:'uid-foreign',username:'foreign',resellerBridge:{accountId:'martin-fixture',lineId:'line-other'}});
+const input={accountId,lines:[{lineId:'line-1',username:user.username}]},read=async(b=input,t=now)=>{const r=await resellerPresence(store,leases,b,t);return {status:r.status,body:await r.json()};};
+assert.equal((await read()).body.lines[0].connectionsUsed,0);assert.equal((await read()).body.lines[0].lastConnectionAt,null);
+await leases.put('one',{uid:user.id,sid:'session-a',version:2,until:now+90000});await leases.put('two',{uid:user.id,sid:'session-b',version:2,until:now+90000});await leases.put('expired',{uid:user.id,sid:'expired',version:2,until:now});await leases.put('obsolete',{uid:user.id,sid:'obsolete',version:1,until:now+90000});await leases.put('foreign',{uid:'uid-foreign',sid:'foreign',version:2,until:now+90000});await recordCustomerActivity(store,user.id,now);
+let r=await read();assert.equal(r.body.lines[0].connectionsUsed,2);assert.equal(r.body.lines[0].online,true);assert.equal(r.body.lines[0].lastConnectionAt,now);assert.ok(!JSON.stringify(r).includes('session-a'));assert.equal(r.body.lines.length,1);
+const writes=store.writes;await recordCustomerActivity(store,user.id,now+1000);assert.equal(store.writes,writes);await recordCustomerActivity(store,user.id,now+31000);assert.equal(store.writes,writes+1);
+await leases.remove('one');assert.equal((await read()).body.lines[0].connectionsUsed,1);await leases.remove('two');assert.equal((await read()).body.lines[0].online,false);assert.equal((await read(input,now+91000)).body.lines[0].connectionsUsed,0);
+assert.equal((await read({accountId,lines:[{lineId:'line-other',username:'foreign'}]})).status,403);assert.equal((await read({...input,lines:[...input.lines,...input.lines]})).status,400);assert.equal((await read({accountId,lines:Array(101).fill(input.lines[0])})).status,400);
+await store.put('user:'+user.username,{...user,status:'suspended'});assert.equal((await read()).body.lines[0].connectionsUsed,0);
+console.log('PASS: scoped playback counts, stopped/expired/stale sessions, private last activity, throttled writes, suspension and foreign-reseller rejection.');

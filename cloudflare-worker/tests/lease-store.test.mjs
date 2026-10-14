@@ -19,8 +19,9 @@ for(let i=0;i<1000;i++)await repo.put('other-'+i,{sid:'s'+i,uid:'u'+i,username:'
 store.calls=[];
 const response=await accountsFetch({storage:store},{},new Request('https://private/accounts/heartbeat',{method:'POST',body:JSON.stringify({sid:'session-a',lease_id:'a',request_id:'request-a'})}));assert.equal(response.status,200);
 assert.equal(store.calls.some(([op])=>op==='list'),false,'heartbeat never enumerates unrelated leases');
-assert.ok(store.calls.every(([,key])=>['playback-lease:a','playback:session-a','user:customer-a'].includes(key)),'heartbeat only touches its own lease, ownership and customer');
-assert.equal(store.calls.filter(([op])=>op==='put').length,1,'one heartbeat writes exactly one lease');
+assert.ok(store.calls.every(([,key])=>['playback-lease:a','playback:session-a','user:customer-a','customer-activity:customer-a'].includes(key)),'heartbeat only touches its own lease, ownership and customer');
+assert.equal(store.calls.filter(([op])=>op==='put').length,2,'first heartbeat writes one lease and its own bounded activity record');
+store.calls=[];await accountsFetch({storage:store},{},new Request('https://private/accounts/heartbeat',{method:'POST',body:JSON.stringify({sid:'session-a',lease_id:'a',request_id:'request-a'})}));assert.equal(store.calls.filter(([op])=>op==='put').length,1,'repeated heartbeat throttles the durable activity write');
 assert.ok(store.calls.find(([op])=>op==='put')[2]<500,'heartbeat payload stays small with a thousand other leases');
 const release=await accountsFetch({storage:store},{},new Request('https://private/accounts/release-session',{method:'POST',body:JSON.stringify({sid:'session-a'})}));assert.equal(release.status,200);assert.equal(await repo.get('a'),undefined);assert.ok(await repo.get('b'));assert.equal(await repo.count(),1001);
 console.log('PASS: transactional migration with rollback/retry, active lease identity preservation, no legacy aggregate, isolated constant-size heartbeat and session cleanup.');

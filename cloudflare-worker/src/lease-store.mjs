@@ -77,6 +77,12 @@ export class LeaseStore{
   if(this.sql)return new Map(this.sql.exec('SELECT provider_id,COUNT(*) AS total FROM smn_playback_leases WHERE until > ? GROUP BY provider_id',now).toArray().map(row=>[row.provider_id,row.total]));
   const counts=new Map();for(const l of (await this.active({},now)).values())counts.set(String(l.provider_id||''),(counts.get(String(l.provider_id||''))||0)+1);return counts;
  }
+ async customerSummaries(uids,now=Date.now()){
+  const ids=[...new Set(uids)];if(!ids.length)return new Map();if(ids.length>100)throw Error('customer_limit');
+  const out=new Map(),add=(uid,version,count,lastObservedAt)=>{const rows=out.get(uid)||[];rows.push({version,count,lastObservedAt});out.set(uid,rows)};
+  if(this.sql){for(const row of this.sql.exec("SELECT uid,json_extract(data,'$.version') AS version,COUNT(*) AS n,MAX(until)-90000 AS observed FROM smn_playback_leases WHERE until>? AND uid IN ("+ids.map(()=>'?').join(',')+") GROUP BY uid,version",now,...ids).toArray())add(row.uid,row.version,row.n,row.observed);return out;}
+  const wanted=new Set(ids),grouped=new Map();for(const l of (await this.active({},now)).values())if(wanted.has(l.uid)){const k=l.uid+'|'+l.version,old=grouped.get(k)||{uid:l.uid,version:l.version,count:0,lastObservedAt:0};old.count++;old.lastObservedAt=Math.max(old.lastObservedAt,l.until-90000);grouped.set(k,old);}for(const row of grouped.values())add(row.uid,row.version,row.count,row.lastObservedAt);return out;
+ }
  async removeFor(filter,now=Date.now()){
   if(this.sql){const where=this.where(filter,now);this.sql.exec('DELETE FROM smn_playback_leases WHERE '+where.text,...where.values);return}
   for(const id of (await this.active(filter,now)).keys())await this.remove(id);

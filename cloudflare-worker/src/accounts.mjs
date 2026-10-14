@@ -1,3 +1,4 @@
+import {resellerPresence,recordCustomerActivity} from './reseller-presence.mjs';
 import {resellerAccounts} from './reseller-accounts.mjs';
 import {nativeResellerImport} from './native-reseller-import.mjs';
 // Private Durable Object routes. This module is never served as an HTTP endpoint.
@@ -24,6 +25,7 @@ export async function accountsFetch(state,env,req){
  const p=new URL(req.url).pathname.replace('/accounts','');const b=await req.json();const store=state.storage;
  try{
  const leases=await openLeaseStore(store);
+ if(p==='/reseller-presence')return store.transaction(tx=>resellerPresence(tx,leases.in(tx),b));
  if(['/native-list','/native-record','/native-claim','/native-verify'].includes(p))return nativeResellerImport(store,p,b);
  if(p==='/reseller-portal-recipient')return answer(await store.get('reseller-portal-recipient:'+b.accountId)||null);
  if(p==='/reseller-portal-recipient-ensure')return store.transaction(async tx=>{const key='reseller-portal-recipient:'+b.accountId,current=await tx.get(key);if(current)return answer(current);if(!b.accountId||typeof b.encrypted!=='string'||b.encrypted.length>12000)return answer({error:'bridge_input'},400);const value={encrypted:b.encrypted};await tx.put(key,value);return answer(value);});
@@ -133,7 +135,7 @@ export async function accountsFetch(state,env,req){
   const u=await tx.get('user:'+normal(b.username));if(!alive(u)||u.id!==b.uid||u.version!==b.version)return answer({error:'account_inactive'},401);
   const local=leases.in(tx);await local.prune();
   const sessionLeases=await local.active({sid:b.sid});
-  if(b.request_id){const previous=[...sessionLeases].find(([,l])=>l.mediaKey===b.mediaKey&&!(b.exclude||[]).includes(l.provider_id));if(previous){const [id,l]=previous;l.until=Date.now()+90000;l.request_id=b.request_id;const activity=cleanPlaybackActivity(b.activity,String(b.mediaKey||'').split('|')[0]);if(activity)l.activity=activity;await local.put(id,l);const pool=await tx.get('pool'),line=pool?.lines?.find(x=>x.id===l.provider_id);return answer({lease_id:id,provider_id:l.provider_id,encrypted:line?.encrypted,maxConnections:line?.maxConnections,reused:true,request_id:b.request_id})}}
+  if(b.request_id){const previous=[...sessionLeases].find(([,l])=>l.mediaKey===b.mediaKey&&!(b.exclude||[]).includes(l.provider_id));if(previous){const [id,l]=previous;l.until=Date.now()+90000;l.request_id=b.request_id;const activity=cleanPlaybackActivity(b.activity,String(b.mediaKey||'').split('|')[0]);if(activity)l.activity=activity;await local.put(id,l);await recordCustomerActivity(tx,u.id);const pool=await tx.get('pool'),line=pool?.lines?.find(x=>x.id===l.provider_id);return answer({lease_id:id,provider_id:l.provider_id,encrypted:line?.encrypted,maxConnections:line?.maxConnections,reused:true,request_id:b.request_id})}}
   await local.removeFor({sid:b.sid});
   if((b.xtream||u.resellerBridge)&&await local.count({uid:b.uid})>=3)return answer({error:'user_connection_limit'},409);
   const activity=cleanPlaybackActivity(b.activity,String(b.mediaKey||'').split('|')[0]);
@@ -145,11 +147,11 @@ export async function accountsFetch(state,env,req){
    const counts=await local.providerCounts();
    const candidates=pool.lines.filter(p=>(!b.server||(p.server||'ccf')===b.server)&&!(b.exclude||[]).includes(p.id)).map(p=>({...p,occupied:p.external+(counts.get(String(p.id))||0)})).filter(p=>p.occupied<p.maxConnections).sort((a,b)=>a.occupied/a.maxConnections-b.occupied/b.maxConnections);
    const selected=candidates[0];if(!selected)return answer({error:'ccf_capacity'},409);
-   const id=crypto.randomUUID();await local.put(id,{sid:b.sid,uid:b.uid,username:b.username,version:b.version,provider_id:selected.id,until:Date.now()+90000,...extra});return answer({lease_id:id,provider_id:selected.id,encrypted:selected.encrypted,maxConnections:selected.maxConnections});
+   const id=crypto.randomUUID();await local.put(id,{sid:b.sid,uid:b.uid,username:b.username,version:b.version,provider_id:selected.id,until:Date.now()+90000,...extra});await recordCustomerActivity(tx,u.id);return answer({lease_id:id,provider_id:selected.id,encrypted:selected.encrypted,maxConnections:selected.maxConnections});
   }
   const max=Math.min(provider.maxConnections,Math.max(1,Number(b.upstreamMax)||3));
   if(Math.max(await local.count(),Number(b.upstreamExternal)||0)>=max)return answer({error:'ccf_capacity',maxConnections:max},409);
-  const id=crypto.randomUUID();await local.put(id,{sid:b.sid,uid:b.uid,username:b.username,version:b.version,until:Date.now()+90000,...extra});return answer({lease_id:id});
+  const id=crypto.randomUUID();await local.put(id,{sid:b.sid,uid:b.uid,username:b.username,version:b.version,until:Date.now()+90000,...extra});await recordCustomerActivity(tx,u.id);return answer({lease_id:id});
  });
  if(p==='/lease-check'||p==='/heartbeat'||p==='/release')return store.transaction(async tx=>{
   const local=leases.in(tx),l=await local.get(b.lease_id);if(!l||l.sid!==b.sid)return answer({error:'playback_expired'},410);
@@ -157,7 +159,7 @@ export async function accountsFetch(state,env,req){
   if(b.request_id&&l.request_id!==b.request_id)return answer({error:'playback_superseded'},410);
   if(b.request_id&&(await tx.get('playback:'+b.sid))?.request_id!==b.request_id)return answer({error:'playback_superseded'},410);
   const u=await tx.get('user:'+normal(l.username));if(l.until<=Date.now()||!alive(u)||u.id!==l.uid||u.version!==l.version){await local.remove(b.lease_id);return answer({error:'playback_expired'},410)}
-  if(p==='/heartbeat')await local.renew(b.lease_id,Date.now()+90000);return answer({ok:true});
+  if(p==='/heartbeat'){await local.renew(b.lease_id,Date.now()+90000);await recordCustomerActivity(tx,u.id);}return answer({ok:true});
  });
  if(p==='/release-session'){await store.transaction(async tx=>{await leases.in(tx).removeFor({sid:b.sid});await tx.delete('playback:'+b.sid)});return answer({ok:true})}
  return answer({error:'not_found'},404);
