@@ -83,21 +83,21 @@ try{
   });
   await page.close();return {codec,progressive,...result};
  })));
+ const report={hlsVersion:Hls.version,browserVersion:browser.version(),productionProgressive:liveConfig.progressive,signal:'generated H.264 720x480 with AAC or MPEG Layer III audio, six 10-second TS segments',observedSeconds:12,results,limitations:['Synthetic fixtures reproduce the same audio-buffer failure; the authenticated customer channel and physical Android device are not exercised.']};
+ if(process.env.SMN_LIVE_AUDIO_REPORT){fs.mkdirSync(path.dirname(process.env.SMN_LIVE_AUDIO_REPORT),{recursive:true});fs.writeFileSync(process.env.SMN_LIVE_AUDIO_REPORT,JSON.stringify(report,null,2)+'\n')}
  const duration=r=>r.audio.reduce((total,[start,end])=>total+end-start,0);
  const broken=results.find(r=>r.codec==='libmp3lame'&&r.progressive);
  const fixed=results.find(r=>r.codec==='libmp3lame'&&!r.progressive);
  assert(duration(broken)<3,'original mode reproduces shortened MPEG audio buffers');
  assert(broken.errors.some(e=>e.detail==='bufferStalledError'),'original mode reproduces the customer error');
  for(const result of results.filter(r=>!r.progressive)){
-  assert.equal(result.errors.length,0,'complete segments must not generate HLS errors');
+  assert.equal(result.errors.length,0,'complete segments must not generate HLS errors: '+JSON.stringify({codec:result.codec,ready:result.ready,position:result.position,errors:result.errors}));
   assert.equal(result.ready,4);assert.equal(result.seeking,false);
   assert(result.position-result.firstPosition>=8,'fixed player advances continuously');
   assert(duration(result)>=20,'fixed audio buffer covers complete media segments');
   assert(result.decoded>=200,'fixed video is actually decoded');
  }
  assert(duration(fixed)>10*duration(broken));
- const report={hlsVersion:Hls.version,browserVersion:browser.version(),productionProgressive:liveConfig.progressive,signal:'generated H.264 720x480 with AAC or MPEG Layer III audio, six 10-second TS segments',observedSeconds:12,results,limitations:['Synthetic fixtures reproduce the same audio-buffer failure; the authenticated customer channel and physical Android device are not exercised.']};
- if(process.env.SMN_LIVE_AUDIO_REPORT){fs.mkdirSync(path.dirname(process.env.SMN_LIVE_AUDIO_REPORT),{recursive:true});fs.writeFileSync(process.env.SMN_LIVE_AUDIO_REPORT,JSON.stringify(report,null,2)+'\n')}
  console.log(JSON.stringify({status:'PASS',hlsVersion:Hls.version,browserVersion:browser.version(),results:results.map(r=>({codec:r.codec,progressive:r.progressive,position:r.position,audioSeconds:duration(r),errors:r.errors.length,decoded:r.decoded}))}));
 }finally{
  await browser?.close();server.close();fs.rmSync(root,{recursive:true,force:true});
