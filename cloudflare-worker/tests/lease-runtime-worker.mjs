@@ -8,7 +8,7 @@ export class LeaseTestDirectory{
   if(path==='/seed'){
    const b=await req.json(),count=b.count||0,lines=Array.from({length:b.accounts||Math.ceil(count/3)},(_,i)=>({id:String(i),username:'provider-'+i,key:'provider-'+i,server:'ccf',external:0,maxConnections:3,encrypted:'test-only'}));
    await storage.put('provider',{mode:'panel',username:'test-owner'});await storage.put('pool',{lines,syncedAt:Date.now()});
-   for(let i=0;i<count;i++)await storage.put('user:customer'+i,{id:'u'+i,username:'customer'+i,version:1,status:'active'});
+   for(let i=0;i<count;i++)await storage.put('user:customer'+i,{id:'u'+i,username:'customer'+i,version:1,status:'active',...(b.resellerAccountId?{resellerBridge:{accountId:b.resellerAccountId,lineId:'line-'+i}}:{})});
    if(b.legacy)await storage.put('leases',b.legacy);
    return Response.json({seeded:count});
   }

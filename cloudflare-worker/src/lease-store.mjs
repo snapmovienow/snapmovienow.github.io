@@ -80,7 +80,11 @@ export class LeaseStore{
  async customerSummaries(uids,now=Date.now()){
   const ids=[...new Set(uids)];if(!ids.length)return new Map();if(ids.length>100)throw Error('customer_limit');
   const out=new Map(),add=(uid,version,count,lastObservedAt)=>{const rows=out.get(uid)||[];rows.push({version,count,lastObservedAt});out.set(uid,rows)};
-  if(this.sql){for(const row of this.sql.exec("SELECT uid,json_extract(data,'$.version') AS version,COUNT(*) AS n,MAX(until)-90000 AS observed FROM smn_playback_leases WHERE until>? AND uid IN ("+ids.map(()=>'?').join(',')+") GROUP BY uid,version",now,...ids).toArray())add(row.uid,row.version,row.n,row.observed);return out;}
+  if(this.sql){
+   // Workers SQLite accepts at most 100 bound parameters; reserve one for now.
+   for(let at=0;at<ids.length;at+=99){const batch=ids.slice(at,at+99);for(const row of this.sql.exec("SELECT uid,json_extract(data,'$.version') AS version,COUNT(*) AS n,MAX(until)-90000 AS observed FROM smn_playback_leases WHERE until>? AND uid IN ("+batch.map(()=>'?').join(',')+") GROUP BY uid,version",now,...batch).toArray())add(row.uid,row.version,row.n,row.observed);}
+   return out;
+  }
   const wanted=new Set(ids),grouped=new Map();for(const l of (await this.active({},now)).values())if(wanted.has(l.uid)){const k=l.uid+'|'+l.version,old=grouped.get(k)||{uid:l.uid,version:l.version,count:0,lastObservedAt:0};old.count++;old.lastObservedAt=Math.max(old.lastObservedAt,l.until-90000);grouped.set(k,old);}for(const row of grouped.values())add(row.uid,row.version,row.count,row.lastObservedAt);return out;
  }
  async removeFor(filter,now=Date.now()){

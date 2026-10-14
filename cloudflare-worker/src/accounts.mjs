@@ -1,4 +1,4 @@
-import {resellerPresence,recordCustomerActivity} from './reseller-presence.mjs';
+import {resellerPresence,resellerPlaybackSummary,recordCustomerActivity} from './reseller-presence.mjs';
 import {resellerAccounts} from './reseller-accounts.mjs';
 import {nativeResellerImport} from './native-reseller-import.mjs';
 // Private Durable Object routes. This module is never served as an HTTP endpoint.
@@ -26,6 +26,7 @@ export async function accountsFetch(state,env,req){
  try{
  const leases=await openLeaseStore(store);
  if(p==='/reseller-presence')return store.transaction(tx=>resellerPresence(tx,leases.in(tx),b));
+ if(p==='/reseller-playback-summary')return store.transaction(tx=>resellerPlaybackSummary(tx,leases.in(tx),b));
  if(['/native-list','/native-record','/native-claim','/native-verify'].includes(p))return nativeResellerImport(store,p,b);
  if(p==='/reseller-portal-recipient')return answer(await store.get('reseller-portal-recipient:'+b.accountId)||null);
  if(p==='/reseller-portal-recipient-ensure')return store.transaction(async tx=>{const key='reseller-portal-recipient:'+b.accountId,current=await tx.get(key);if(current)return answer(current);if(!b.accountId||typeof b.encrypted!=='string'||b.encrypted.length>12000)return answer({error:'bridge_input'},400);const value={encrypted:b.encrypted};await tx.put(key,value);return answer(value);});

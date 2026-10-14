@@ -49,6 +49,14 @@ try{
   assert.equal((await call(race,'/accounts/heartbeat',{...customer(1),lease_id:repeated[0].data.lease_id})).status,410);
   assert.equal((await call(race,'/inspect')).data.count,3);await call(race,'/accounts/release-session',{sid:'s0'});assert.equal((await call(race,'/inspect')).data.count,2);
   report.checks.push('30 duplicate concurrent starts allocate one lease','three-slot provider capacity enforced under simultaneous starts','foreign ownership denied','session close frees exactly its own slot');
+  const totalsObject='summary-pages',totalsAccount='summary-fixture';
+  await call(totalsObject,'/seed',{count:201,accounts:70,resellerAccountId:totalsAccount});
+  const summaryStarts=[customer(0),{...customer(0),sid:'second-device-0',request_id:'second-request-0'},customer(100),customer(200)];
+  for(const playback of summaryStarts){assert.equal((await call(totalsObject,'/accounts/playback-begin',playback)).status,200);assert.equal((await call(totalsObject,'/accounts/acquire',playback)).status,200);}
+  const totals=await call(totalsObject,'/accounts/reseller-playback-summary',{accountId:totalsAccount});assert.equal(totals.status,200);assert.equal(totals.data.connectionsUsed,4);assert.equal(totals.data.linesOnline,3);
+  await call(totalsObject,'/accounts/release-session',{sid:'s0'});await call(totalsObject,'/accounts/release-session',{sid:'second-device-0'});
+  const fewer=await call(totalsObject,'/accounts/reseller-playback-summary',{accountId:totalsAccount});assert.equal(fewer.data.connectionsUsed,2);assert.equal(fewer.data.linesOnline,2);
+  report.checks.push('real SQLite dashboard totals span 201 paginated customers and distinguish concurrent devices from online users');
   console.log('PASS workerd SQLite safety/migration/concurrency checks');
  }
  const levels=process.env.SMN_SAFETY_ONLY?[]:baseline?[500,1000]:[100,250,500,1000];

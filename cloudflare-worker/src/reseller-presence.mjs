@@ -16,3 +16,21 @@ export async function resellerPresence(store,leases,b,now=Date.now()){
  }
  return answer({ok:true,checkedAt:now,lines});
 }
+
+// Dashboard totals span every owned customer, independently of table pages or
+// search filters. Only current, unexpired playback leases count as online.
+export async function resellerPlaybackSummary(store,leases,b,now=Date.now()){
+ if(!identifier(b.accountId))return answer({error:'bridge_input'},400);
+ let startAfter;const users=new Map();
+ for(;;){
+  const page=await store.list({prefix:'user:',limit:100,...(startAfter?{startAfter}:{})});
+  for(const [key,u]of page){startAfter=key;if(u?.resellerBridge?.accountId===b.accountId&&identifier(u.resellerBridge.lineId)&&identifier(u.id)&&u.status==='active'&&(!u.expiresAt||u.expiresAt>now))users.set(u.id,{id:u.id,version:u.version});}
+  if(page.size<100)break;
+ }
+ const owned=[...users.values()];let connectionsUsed=0,linesOnline=0;
+ for(let at=0;at<owned.length;at+=100){
+  const batch=owned.slice(at,at+100),summaries=await leases.customerSummaries(batch.map(u=>u.id),now);
+  for(const u of batch){const used=(summaries.get(u.id)||[]).filter(row=>row.version===u.version).reduce((n,row)=>n+row.count,0);connectionsUsed+=used;if(used)linesOnline++;}
+ }
+ return answer({ok:true,checkedAt:now,connectionsUsed,linesOnline});
+}
