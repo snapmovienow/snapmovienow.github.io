@@ -15,4 +15,8 @@ let hashes=0;const deps={passwordHash:async()=>{hashes++;throw Error('must not r
 const request={accountId,lineId:input.lineId,username:'nito',version:2,revoke:false,preserveCredentials:true,legacy:true,name:user.name,comments:user.comments,status:'active',expiresAt:Date.UTC(2031,0,1),createdAt:user.createdAt,permissions:user.permissions,connections:3};
 const result=await resellerAccounts(store,'/reseller-apply',request,deps);assert.equal(result.status,200);assert.equal(hashes,0);assert.equal((await store.get('user:nito')).hash,user.hash);assert.equal((await store.get('user:nito')).salt,user.salt);assert.deepEqual((await store.get('user:nito')).messages,user.messages);assert.equal((await store.get('user:nito')).permissions.movies,false);
 assert.equal((await resellerAccounts(store,'/reseller-apply',{...request,version:3,password:'attacker-reset-password'},deps)).status,409);
+assert.equal((await resellerAccounts(store,'/reseller-apply',{...request,version:3,preserveCredentials:false,password:'accidental-new-password'},deps)).status,400);
+await store.put('user:nativecustomer',{...await store.get('user:nito'),username:'nativecustomer',resellerBridge:{accountId,lineId:'native-second-user',native:true}});
+assert.equal((await resellerAccounts(store,'/reseller-apply',{...request,lineId:'native-second-user',username:'nativecustomer',version:3,preserveCredentials:false,password:'accidental-new-password'},deps)).status,409);
+assert.equal(hashes,0);
 console.log('PASS: native adoption preserves credentials, sessions, comments, messages and identifiers; raced exports, foreign owners, replaced lines and password injection are rejected.');
