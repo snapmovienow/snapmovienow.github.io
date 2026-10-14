@@ -42,6 +42,7 @@ assert.equal((await call('reserve',replacement)).status,200);
 assert.equal((await call('release',canceled)).data.released,false);
 assert.equal((await storage.get('reseller-reservation:'+canceled.username)).lineId,replacement.lineId);
 const presence=await call('presence',{lines:[{lineId:line.lineId,username:line.username}]});assert.equal(presence.status,200);assert.equal(presence.data.lines[0].connectionsUsed,0);assert.equal((await call('presence',{lines:[{lineId:'another-line',username:line.username}]})).status,403);
+const diagnostic=await call('diagnostics',{lines:[{lineId:line.lineId,username:line.username}]});assert.equal(diagnostic.status,200);assert.ok(Array.isArray(diagnostic.data.recent.groups));assert.ok(!JSON.stringify(diagnostic.data).includes(line.password));assert.equal((await call('diagnostics',{lines:[{lineId:'another-line',username:line.username}]})).status,403);
 const stored=await storage.get('user:'+line.username);assert.equal(stored.password,undefined);assert.notEqual(stored.hash,line.password);
 assert.equal((await call('apply',{...line,lineId:'another-line',version:2})).status,409);
 await storage.put('user:unrelatedclient',{id:'foreign',username:'unrelatedclient',version:1});assert.equal((await call('apply',{...line,lineId:'foreign-line',username:'unrelatedclient'})).status,409);
