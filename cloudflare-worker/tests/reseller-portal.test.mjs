@@ -1,0 +1,31 @@
+import assert from 'node:assert/strict';
+import {createResellerPortal,matchesResellerPortal,PORTAL_HOST,PORTAL_ACCOUNT,PORTAL_SOURCE} from '../src/reseller-portal.mjs';
+import {PORTAL_SCRIPT} from '../src/reseller-panel-assets.mjs';
+const token='a'.repeat(64),secret='b'.repeat(64),siteToken='private-test-service-token',calls=[];
+let fail=false,ownerReply=false,redirect=false;
+const portal=createResellerPortal({getConfig:async()=>({accountId:PORTAL_ACCOUNT,sourceOrigin:PORTAL_SOURCE,gatewaySecret:secret,siteToken}),fetcher:async(url,options)=>{
+ assert.equal(url,PORTAL_SOURCE+'/api/portal');assert.equal(options.redirect,'manual');assert.equal(options.headers['OAI-Sites-Authorization'],'Bearer '+siteToken);assert.equal(options.headers['X-SNAP-Portal-Gateway'],secret);assert.equal(options.headers['oai-authenticated-user-id'],undefined);assert.equal(options.headers.Cookie,undefined);
+ const body=JSON.parse(options.body);calls.push(body);assert.equal(body.accountId,PORTAL_ACCOUNT);if(fail)throw Error('test transport failure');if(redirect)return new Response(null,{status:302,headers:{Location:'https://foreign.example'}});
+ if(body.action==='login')return Response.json({ok:true,token,accountId:PORTAL_ACCOUNT,expiresAt:Date.now()+28800000});
+ if(body.action==='logout')return Response.json({ok:true});
+ if(body.action==='write')return Response.json({ok:true,actorId:PORTAL_ACCOUNT});
+ return Response.json({actor:{id:PORTAL_ACCOUNT,role:ownerReply?'owner':'reseller'},target:{id:PORTAL_ACCOUNT},overview:false,accounts:[],lines:[],authMode:'password'});
+}});
+const origin='https://'+PORTAL_HOST;
+async function request(path='/',{method='GET',body,headers={},base=origin}={}){return portal(new Request(base+path,{method,headers:{...headers,...(method==='POST'?{Origin:base,'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined}),{});}
+const html=await request();assert.equal(html.status,200);assert.ok((await html.text()).includes('portal-root'));assert.ok(html.headers.get('Content-Security-Policy').includes("frame-ancestors 'none'"));
+assert.equal((await request('/api/panel')).status,401);assert.equal(calls.length,0);
+const wrongOrigin=await portal(new Request(origin+'/api/portal/login',{method:'POST',headers:{Origin:'https://foreign.example','Content-Type':'application/json'},body:JSON.stringify({password:'00000123456789012'})}),{});assert.equal(wrongOrigin.status,403);assert.equal(calls.length,0);
+let login=await request('/api/portal/login',{method:'POST',body:{password:'00000123456789012',accountId:'martin'}});assert.equal(login.status,200);assert.deepEqual(await login.json(),{ok:true});const cookie=login.headers.get('Set-Cookie');for(const flag of ['HttpOnly','Secure','SameSite=Strict','Path=/'])assert.ok(cookie.includes(flag));const cookieHeader=cookie.split(';')[0];assert.equal(calls.at(-1).accountId,PORTAL_ACCOUNT);
+const snapshot=await request('/api/panel',{headers:{Cookie:cookieHeader,'oai-authenticated-user-id':'forged-owner'}});assert.equal(snapshot.status,200);const view=await snapshot.json();assert.equal(view.actor.role,'reseller');assert.equal(view.target.panelAccess.url,origin);assert.ok(!JSON.stringify(view).includes(token));assert.ok(!JSON.stringify(view).includes(secret));
+assert.equal((await request('/api/panel?source=1',{headers:{Cookie:cookieHeader}})).status,400);
+assert.equal((await request('/api/panel',{headers:{Cookie:cookieHeader+'; '+cookieHeader}})).status,401);
+assert.equal((await request('/api/panel',{method:'POST',body:{action:'line.renew',requestId:'test-only'},headers:{Cookie:cookieHeader}})).status,200);assert.equal(calls.at(-1).token,token);assert.equal(calls.at(-1).input.action,'line.renew');
+ownerReply=true;assert.equal((await request('/api/panel',{headers:{Cookie:cookieHeader}})).status,503);ownerReply=false;
+redirect=true;assert.equal((await request('/api/panel',{headers:{Cookie:cookieHeader}})).status,503);redirect=false;
+fail=true;assert.equal((await request('/api/panel',{headers:{Cookie:cookieHeader}})).status,503);fail=false;
+const logout=await request('/api/portal/logout',{method:'POST',body:{},headers:{Cookie:cookieHeader}});assert.equal(logout.status,200);assert.ok(logout.headers.get('Set-Cookie').includes('Max-Age=0'));
+assert.ok(matchesResellerPortal(new Request(origin+'/')));assert.ok(matchesResellerPortal(new Request('https://api.snaptvnow.com/panel/juanito')));assert.equal(matchesResellerPortal(new Request('https://api.snaptvnow.com/panel/martin')),false);
+assert.equal((await request('/player_api.php')).status,404);assert.equal((await request('/api/panel',{method:'DELETE'})).status,405);
+assert.ok(PORTAL_SCRIPT.length>100000);for(const privateValue of ['OAI-Sites-Authorization','SNAPTVNOW_PORTAL_GATEWAY_SECRET','LINE_CREDENTIAL_KEY'])assert.ok(!PORTAL_SCRIPT.includes(privateValue));
+console.log('PASS: Juanito-only HTTPS portal, credential-free assets, secure host cookies, CSRF, forged identity rejection, owner-scope rejection, query isolation, duplicate cookies, bounded transport, redirect refusal and logout.');

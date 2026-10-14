@@ -23,6 +23,10 @@ export async function accountsFetch(state,env,req){
  const p=new URL(req.url).pathname.replace('/accounts','');const b=await req.json();const store=state.storage;
  try{
  const leases=await openLeaseStore(store);
+ if(p==='/reseller-portal-recipient')return answer(await store.get('reseller-portal-recipient:'+b.accountId)||null);
+ if(p==='/reseller-portal-recipient-ensure')return store.transaction(async tx=>{const key='reseller-portal-recipient:'+b.accountId,current=await tx.get(key);if(current)return answer(current);if(!b.accountId||typeof b.encrypted!=='string'||b.encrypted.length>12000)return answer({error:'bridge_input'},400);const value={encrypted:b.encrypted};await tx.put(key,value);return answer(value);});
+ if(p==='/reseller-portal-config')return answer(await store.get('reseller-portal:'+b.accountId)||null);
+ if(p==='/reseller-portal-configure')return store.transaction(async tx=>{if(!b.accountId||typeof b.encrypted!=='string'||b.encrypted.length>12000||!Number.isSafeInteger(b.revision)||typeof b.payloadHash!=='string')return answer({error:'bridge_input'},400);const key='reseller-portal:'+b.accountId,old=await tx.get(key);if(old?.revision>b.revision)return answer({error:'bridge_stale'},409);if(old?.revision===b.revision&&old.payloadHash!==b.payloadHash)return answer({error:'bridge_version_conflict'},409);await tx.put(key,{encrypted:b.encrypted,revision:b.revision,payloadHash:b.payloadHash});return answer({ok:true,configured:true});});
  if(p==='/reseller-reserve'||p==='/reseller-apply')return resellerAccounts(store,p,b,{passwordHash,leases,writeAudit});
  if(p==='/audit-write'){await store.transaction(tx=>writeAudit(tx,b.actor,b.action,b.target));return answer({ok:true})}
  if(p==='/audit')return answer((await store.get('security-audit')||[]).slice(-100).reverse());

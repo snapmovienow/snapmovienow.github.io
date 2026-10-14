@@ -1,3 +1,4 @@
+import {createResellerPortal,matchesResellerPortal,PORTAL_ACCOUNT} from './reseller-portal.mjs';
 import {createResellerBridge} from './reseller-bridge.mjs';
 import {profileRoute} from './profiles.mjs';
 import {operationsRoute} from './operations.mjs';
@@ -201,8 +202,13 @@ async function serverStreamDirect(req,env,u,ctx){
 
 const catalogDeps={directory,registry,sessionCall,ticket,managedPlayback,serverStream,json,catalogCredentials:async(env,server,ctx)=>(await catalogCredentials(env,server,ctx,3)).map(p=>({...p,origin:p.origin||ORIGIN}))};
 const xtreamRequest=createXtreamBridge(catalogDeps);
-const resellerBridgeRequest=createResellerBridge(directory);
-async function handleRequest(req,env,ctx){const u=new URL(req.url);
+async function sealPortalConfig(env,value){const iv=crypto.getRandomValues(new Uint8Array(12)),data=await crypto.subtle.encrypt({name:'AES-GCM',iv,additionalData:new TextEncoder().encode('reseller-portal:'+PORTAL_ACCOUNT)},await aesKey(env.TICKET_SECRET),new TextEncoder().encode(JSON.stringify(value))),raw=new Uint8Array(12+data.byteLength);raw.set(iv);raw.set(new Uint8Array(data),12);return b64(raw)}
+async function openPortalConfig(env,value){try{const raw=unb64(value);return JSON.parse(new TextDecoder().decode(await crypto.subtle.decrypt({name:'AES-GCM',iv:raw.slice(0,12),additionalData:new TextEncoder().encode('reseller-portal:'+PORTAL_ACCOUNT)},await aesKey(env.TICKET_SECRET),raw.slice(12))))}catch{return null}}
+async function portalRecipient(env){let stored=await (await directory(env,'/reseller-portal-recipient',{accountId:PORTAL_ACCOUNT})).json();if(!stored){const pair=await crypto.subtle.generateKey({name:'ECDH',namedCurve:'P-256'},true,['deriveBits']),jwk=await crypto.subtle.exportKey('jwk',pair.privateKey),encrypted=await sealPortalConfig(env,{recipientKey:jwk});stored=await (await directory(env,'/reseller-portal-recipient-ensure',{accountId:PORTAL_ACCOUNT,encrypted})).json();}const value=await openPortalConfig(env,stored.encrypted),jwk=value.recipientKey,privateKey=await crypto.subtle.importKey('jwk',jwk,{name:'ECDH',namedCurve:'P-256'},false,['deriveBits']);return {privateKey,publicKey:{kty:'EC',crv:'P-256',x:jwk.x,y:jwk.y,ext:true}}}
+const resellerBridgeRequest=createResellerBridge(directory,undefined,{sealConfig:(env,body)=>sealPortalConfig(env,body),portalRecipient});
+const resellerPortalRequest=createResellerPortal({getConfig:async env=>{const stored=await (await directory(env,'/reseller-portal-config',{accountId:PORTAL_ACCOUNT})).json();return stored?.encrypted?openPortalConfig(env,stored.encrypted):null;}});
+async function handleRequest(req,env,ctx){
+if(matchesResellerPortal(req))return resellerPortalRequest(req,env);const u=new URL(req.url);
 if(req.method==='POST'&&req.headers.get('Cookie')?.includes('__Host-smn_')&&!canUseCookie(req,env))return json({error:'origin_not_allowed'},403);
 if(req.headers.get('Origin')&&!allowedOrigins(env).has(req.headers.get('Origin'))&&req.method==='POST')return json({error:'origin_not_allowed'},403);
 if(req.method==="OPTIONS")return new Response(null,{status:204,headers:cors});
