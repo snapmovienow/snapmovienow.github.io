@@ -29,6 +29,18 @@ assert.equal((await call('reserve',{...reservation,payloadHash:'b'.repeat(64)}))
 assert.equal((await call('reserve',{...reservation,operationKey:'b'.repeat(43),lineId:'local-other'})).status,409);
 assert.equal((await call('apply',line)).status,200);assert.equal((await call('apply',line)).data.replayed,true);
 assert.equal((await call('apply',{...line,name:'Conflicting replay'})).status,409);
+const committedRelease=await call('release',{...reservation,lineId:line.lineId});assert.equal(committedRelease.status,200);assert.equal(committedRelease.data.released,false);assert.ok(await storage.get('user:'+line.username));
+const canceled={lineId:'local-canceled-line',username:'clientecancelado',operationKey:'c'.repeat(43),payloadHash:'c'.repeat(64)};
+assert.equal((await call('reserve',canceled)).status,200);
+assert.equal((await call('release',{...canceled,payloadHash:'d'.repeat(64)})).status,409);
+assert.ok(await storage.get('reseller-reservation:'+canceled.username));
+assert.equal((await call('release',canceled)).data.released,true);
+assert.equal(await storage.get('reseller-reservation:'+canceled.username),undefined);
+assert.equal((await call('release',canceled)).data.released,false);
+const replacement={...canceled,lineId:'local-replacement-line',operationKey:'d'.repeat(43),payloadHash:'d'.repeat(64)};
+assert.equal((await call('reserve',replacement)).status,200);
+assert.equal((await call('release',canceled)).data.released,false);
+assert.equal((await storage.get('reseller-reservation:'+canceled.username)).lineId,replacement.lineId);
 const stored=await storage.get('user:'+line.username);assert.equal(stored.password,undefined);assert.notEqual(stored.hash,line.password);
 assert.equal((await call('apply',{...line,lineId:'another-line',version:2})).status,409);
 await storage.put('user:unrelatedclient',{id:'foreign',username:'unrelatedclient',version:1});assert.equal((await call('apply',{...line,lineId:'foreign-line',username:'unrelatedclient'})).status,409);

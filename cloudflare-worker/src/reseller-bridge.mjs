@@ -5,7 +5,7 @@ const json=(value,status=200)=>Response.json(value,{status,headers:{'Cache-Contr
 export async function verifyResellerPacket(packet,trust=TRUSTED_RESELLER,now=Date.now()){
  if(!trust.publicKey||!trust.keyId||typeof packet?.payload!=='string'||typeof packet?.signature!=='string'||packet.payload.length>22000||!/^[A-Za-z0-9_-]+$/.test(packet.payload)||!/^[A-Za-z0-9_-]{86}$/.test(packet.signature))throw Error('bridge_denied');
  const raw=unb64(packet.payload),key=await crypto.subtle.importKey('raw',unb64(trust.publicKey),'Ed25519',false,['verify']);if(!await crypto.subtle.verify('Ed25519',key,unb64(packet.signature),raw))throw Error('bridge_denied');
- const value=JSON.parse(dec.decode(raw));if(value.v!==1||value.accountId!==trust.accountId||value.keyId!==trust.keyId||!Number.isSafeInteger(value.issuedAt)||Math.abs(now-value.issuedAt)>45000||typeof value.nonce!=='string'||!/^[A-Za-z0-9_-]{16,80}$/.test(value.nonce)||!value.body||typeof value.body!=='object'||Array.isArray(value.body)||!['probe','reserve','apply','portal.configure','portal.key'].includes(value.action))throw Error('bridge_denied');return value;
+ const value=JSON.parse(dec.decode(raw));if(value.v!==1||value.accountId!==trust.accountId||value.keyId!==trust.keyId||!Number.isSafeInteger(value.issuedAt)||Math.abs(now-value.issuedAt)>45000||typeof value.nonce!=='string'||!/^[A-Za-z0-9_-]{16,80}$/.test(value.nonce)||!value.body||typeof value.body!=='object'||Array.isArray(value.body)||!['probe','reserve','release','apply','portal.configure','portal.key'].includes(value.action))throw Error('bridge_denied');return value;
 }
 export function createResellerBridge(directory,trust=TRUSTED_RESELLER,{sealConfig,portalRecipient}={}){return async(req,env)=>{
  if(req.method!=='POST')return json({error:'bridge_method'},405);if(req.headers.get('content-type')?.split(';')[0]!=='application/json')return json({error:'bridge_format'},415);
@@ -19,6 +19,6 @@ export function createResellerBridge(directory,trust=TRUSTED_RESELLER,{sealConfi
    const payloadHash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(value)))),v=>v.toString(16).padStart(2,'0')).join(''),encrypted=await sealConfig(env,value),r=await directory(env,'/reseller-portal-configure',{accountId:trust.accountId,revision:body.revision,payloadHash,encrypted});return json({...await r.json(),accountId:trust.accountId},r.status);
   }
   if(signed.action==='probe')return json({ok:true,accountId:trust.accountId,protocol:1});
-  const r=await directory(env,signed.action==='reserve'?'/reseller-reserve':'/reseller-apply',body);return json({...await r.json(),accountId:trust.accountId},r.status);
+  const r=await directory(env,signed.action==='reserve'?'/reseller-reserve':signed.action==='release'?'/reseller-release':'/reseller-apply',body);return json({...await r.json(),accountId:trust.accountId},r.status);
  }catch{return json({error:'bridge_denied'},403);}
 };}
