@@ -32,6 +32,7 @@ export function createResellerPortal({getConfig,fetcher=fetch}){return async(req
   if(path==='/api/portal/login'&&response.ok){if(result.ok!==true||result.accountId!==PORTAL_ACCOUNT||!/^[a-f0-9]{64}$/.test(result.token))throw Error('login_reply');return json({ok:true},200,{'Set-Cookie':cookie(result.token)});}
   if(path==='/api/portal/logout')return json({ok:true},200,{'Set-Cookie':cookie('',0)});
   if(result?.actor){if(result.actor.id!==PORTAL_ACCOUNT||result.actor.role!=='reseller'||result.overview!==false||result.accounts?.length)throw Error('gateway_scope');result.portalBase=base;result.target.panelAccess={url:u.origin+base,active:true};}
-  return json(result,response.status,[401,403].includes(response.status)&&['portal_session','portal_suspended'].includes(result?.error)?{'Set-Cookie':cookie('',0)}:{});
+  const retryAfter=Number(response.headers.get('Retry-After')||0),extra={...([401,403].includes(response.status)&&['portal_session','portal_suspended'].includes(result?.error)?{'Set-Cookie':cookie('',0)}:{}),...(response.status===429&&Number.isInteger(retryAfter)&&retryAfter>0&&retryAfter<=120?{'Retry-After':String(retryAfter)}:{})};
+  return json(result,response.status,extra);
  }catch{return json({error:'portal_unavailable',message:'No se pudo comprobar el resultado. Conserva la operación pendiente.',final:false},503);}
 };}

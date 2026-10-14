@@ -2,10 +2,11 @@ import assert from 'node:assert/strict';
 import {createResellerPortal,matchesResellerPortal,PORTAL_HOST,PORTAL_ACCOUNT,PORTAL_SOURCE} from '../src/reseller-portal.mjs';
 import {PORTAL_SCRIPT} from '../src/reseller-panel-assets.mjs';
 const token='a'.repeat(64),secret='b'.repeat(64),siteToken='private-test-service-token',calls=[];
-let fail=false,ownerReply=false,redirect=false;
+let fail=false,ownerReply=false,redirect=false,rateLimited=false;
 const portal=createResellerPortal({getConfig:async()=>({accountId:PORTAL_ACCOUNT,sourceOrigin:PORTAL_SOURCE,gatewaySecret:secret,siteToken}),fetcher:async(url,options)=>{
  assert.equal(url,PORTAL_SOURCE+'/api/portal');assert.equal(options.redirect,'manual');assert.equal(options.headers['OAI-Sites-Authorization'],'Bearer '+siteToken);assert.equal(options.headers['X-SNAP-Portal-Gateway'],secret);assert.equal(options.headers['oai-authenticated-user-id'],undefined);assert.equal(options.headers.Cookie,undefined);
  const body=JSON.parse(options.body);calls.push(body);assert.equal(body.accountId,PORTAL_ACCOUNT);if(fail)throw Error('test transport failure');if(redirect)return new Response(null,{status:302,headers:{Location:'https://foreign.example'}});
+ if(rateLimited)return Response.json({error:'rate_limit',message:'Wait'},{status:429,headers:{'Retry-After':'60'}});
  if(body.action==='login')return Response.json({ok:true,token,accountId:PORTAL_ACCOUNT,expiresAt:Date.now()+28800000});
  if(body.action==='logout')return Response.json({ok:true});
  if(body.action==='write')return Response.json({ok:true,actorId:PORTAL_ACCOUNT});
@@ -25,6 +26,7 @@ ownerReply=true;assert.equal((await request('/api/panel',{headers:{Cookie:cookie
 redirect=true;assert.equal((await request('/api/panel',{headers:{Cookie:cookieHeader}})).status,503);redirect=false;
 fail=true;assert.equal((await request('/api/panel',{headers:{Cookie:cookieHeader}})).status,503);fail=false;
 const logout=await request('/api/portal/logout',{method:'POST',body:{},headers:{Cookie:cookieHeader}});assert.equal(logout.status,200);assert.ok(logout.headers.get('Set-Cookie').includes('Max-Age=0'));
+rateLimited=true;const limited=await request('/api/panel',{headers:{Cookie:cookieHeader}});assert.equal(limited.status,429);assert.equal(limited.headers.get('Retry-After'),'60');rateLimited=false;
 assert.ok(matchesResellerPortal(new Request(origin+'/')));assert.ok(matchesResellerPortal(new Request('https://api.snaptvnow.com/panel/juanito')));assert.equal(matchesResellerPortal(new Request('https://api.snaptvnow.com/panel/martin')),false);
 assert.equal((await request('/player_api.php')).status,404);assert.equal((await request('/api/panel',{method:'DELETE'})).status,405);
 assert.ok(PORTAL_SCRIPT.length>100000);for(const privateValue of ['OAI-Sites-Authorization','SNAPTVNOW_PORTAL_GATEWAY_SECRET','LINE_CREDENTIAL_KEY'])assert.ok(!PORTAL_SCRIPT.includes(privateValue));
