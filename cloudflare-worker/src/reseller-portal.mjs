@@ -1,4 +1,4 @@
-import {PORTAL_SCRIPT,PORTAL_CSS} from './reseller-panel-assets.mjs';
+import {PORTAL_SCRIPT,PORTAL_CSS,PORTAL_ICON} from './reseller-panel-assets.mjs';
 export const PORTAL_HOST='juanito.resellers.snaptvnow.com';
 export const PORTAL_ACCOUNT='be5f1fc0-d772-4683-9c6f-2bcdee5a4e70';
 export const PORTAL_SOURCE='https://snaptvnow-resellers.juancanta89.chatgpt.site';
@@ -13,8 +13,9 @@ async function input(req){const length=Number(req.headers.get('content-length')|
 export function createResellerPortal({getConfig,fetcher=fetch}){return async(req,env)=>{
  const u=new URL(req.url),base=u.hostname===PORTAL_HOST?'':PREFIX,path=u.pathname.slice(base.length)||'/';
  if(u.protocol!=='https:')return new Response(null,{status:301,headers:{Location:'https://'+u.host+u.pathname+u.search}});
+ if(req.method==='GET'&&(path==='/assets/favicon.svg'||path==='/favicon.svg'))return new Response(PORTAL_ICON,{headers:{...headers,'Cache-Control':'public, max-age=300','Content-Type':'image/svg+xml; charset=utf-8'}});
  if(req.method==='GET'&&(path==='/assets/panel.js'||path==='/assets/panel.css'))return new Response(path.endsWith('.js')?PORTAL_SCRIPT:PORTAL_CSS,{headers:{...headers,'Cache-Control':'public, max-age=60','Content-Type':path.endsWith('.js')?'text/javascript; charset=utf-8':'text/css; charset=utf-8'}});
- if(req.method==='GET'&&path==='/')return new Response('<!doctype html><html lang="es" data-portal-base="'+base+'"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SNAPTVNOW · Panel de Juanito</title><link rel="stylesheet" href="'+base+'/assets/panel.css"></head><body><div id="portal-root"></div><script src="'+base+'/assets/panel.js" defer></script></body></html>',{headers:{...headers,'Content-Type':'text/html; charset=utf-8','Content-Security-Policy':csp}});
+ if(req.method==='GET'&&path==='/')return new Response('<!doctype html><html lang="es" data-portal-base="'+base+'"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#041521"><title>SNAPTVNOW · Panel de Juanito</title><link rel="icon" type="image/svg+xml" href="'+base+'/assets/favicon.svg?v=c1"><link rel="stylesheet" href="'+base+'/assets/panel.css?v=c1"></head><body><div id="portal-root"></div><script src="'+base+'/assets/panel.js?v=c1" defer></script></body></html>',{headers:{...headers,'Content-Type':'text/html; charset=utf-8','Content-Security-Policy':csp}});
  if(!['/api/panel','/api/portal/login','/api/portal/logout'].includes(path))return json({error:'portal_route',message:'Este acceso pertenece al panel de Juanito.'},404);
  if(!['GET','POST'].includes(req.method)||((path!=='/api/panel')&&req.method!=='POST'))return json({error:'portal_method'},405);
  if(req.method==='POST'&&(req.headers.get('Origin')!==u.origin||req.headers.get('Sec-Fetch-Site')==='cross-site'))return json({error:'portal_origin',message:'Abre el formulario desde este panel.'},403);
