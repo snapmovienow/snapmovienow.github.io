@@ -1,3 +1,4 @@
+import {createCcfExporter} from './ccf-record.mjs';
 import {createOwnerAdminAccess,ownerAccessState} from './owner-admin-access.mjs';
 import {selectExclusive,visibleExclusive} from './exclusive-catalog.mjs';
 import {createExclusiveService} from './exclusive-service.mjs';
@@ -17,7 +18,7 @@ import {allowedOrigins,canUseCookie,cookieToken,withSessionCookie,browserRespons
 import {traceRequest, SERVICE_VERSION} from './request-diagnostics.mjs';
 import {CCF_MEDIA_ORIGIN} from './ip-media.mjs';
 import {fetchValidatedMedia,validatedMediaTarget} from './media-origin.mjs';
-import {readPanel,validateServerUrl} from "./reseller.mjs";
+import {readPanel,readPanelRecord,validateServerUrl} from "./reseller.mjs";
 import {accountsFetch} from "./accounts.mjs";
 export {BackupRecovery} from './backup-recovery.mjs';
 import {matchesXtream} from './xtream.mjs';
@@ -205,7 +206,8 @@ async function sealPortalConfig(env,value){const iv=crypto.getRandomValues(new U
 async function openPortalConfig(env,value){try{const raw=unb64(value);return JSON.parse(new TextDecoder().decode(await crypto.subtle.decrypt({name:'AES-GCM',iv:raw.slice(0,12),additionalData:new TextEncoder().encode('reseller-portal:'+PORTAL_ACCOUNT)},await aesKey(env.TICKET_SECRET),raw.slice(12))))}catch{return null}}
 async function portalRecipient(env){let stored=await (await directory(env,'/reseller-portal-recipient',{accountId:PORTAL_ACCOUNT})).json();if(!stored){const pair=await crypto.subtle.generateKey({name:'ECDH',namedCurve:'P-256'},true,['deriveBits']),jwk=await crypto.subtle.exportKey('jwk',pair.privateKey),encrypted=await sealPortalConfig(env,{recipientKey:jwk});stored=await (await directory(env,'/reseller-portal-recipient-ensure',{accountId:PORTAL_ACCOUNT,encrypted})).json();}const value=await openPortalConfig(env,stored.encrypted),jwk=value.recipientKey,privateKey=await crypto.subtle.importKey('jwk',jwk,{name:'ECDH',namedCurve:'P-256'},false,['deriveBits']);return {privateKey,publicKey:{kty:'EC',crv:'P-256',x:jwk.x,y:jwk.y,ext:true}}}
 const ownerAdminAccess=createOwnerAdminAccess({ticket,unticket,sessionCall});
-const resellerBridgeRequest=createResellerBridge(directory,undefined,{ownerAccess:(env,action,body)=>ownerAdminAccess.bridge(env,action,body),sealConfig:(env,body)=>sealPortalConfig(env,body),portalRecipient});
+const ccfExporter=createCcfExporter({directory,unticket,readPanelRecord});
+const resellerBridgeRequest=createResellerBridge(directory,undefined,{ccfExport:(env,body)=>ccfExporter(env,body),ownerAccess:(env,action,body)=>ownerAdminAccess.bridge(env,action,body),sealConfig:(env,body)=>sealPortalConfig(env,body),portalRecipient});
 const resellerPortalRequest=createResellerPortal({getConfig:async env=>{const stored=await (await directory(env,'/reseller-portal-config',{accountId:PORTAL_ACCOUNT})).json();return stored?.encrypted?openPortalConfig(env,stored.encrypted):null;}});
 async function handleRequest(req,env,ctx){
 if(matchesResellerPortal(req))return resellerPortalRequest(req,env);const u=new URL(req.url);

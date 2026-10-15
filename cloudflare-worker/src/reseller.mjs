@@ -19,7 +19,7 @@ export function parseLines(data){
  if(!active||!username||!password||!Number.isFinite(used)||!Number.isInteger(max)||max<1||(date&&Date.parse(date+'T23:59:59Z')<Date.now()))return [];
  return [{id:plain(r[0]),username,password,maxConnections:max,external:used}];});
 }
-export async function readPanel(username,password,base=BASE,options={}){
+async function panelSession(username,password,base=BASE){
  base=validateServerUrl(base,true);
  const deadline=Date.now()+45000;
  let cookie='';async function request(path,body){let url=new URL(path,base),method=body?'POST':'GET';for(let i=0;i<5;i++){
@@ -31,6 +31,10 @@ export async function readPanel(username,password,base=BASE,options={}){
   if(!r.ok)throw Error('panel_unavailable');return r.text();}throw Error('panel_redirect_failed');}
  await request('login');const text=await request('login',new URLSearchParams({username,password,login:'',referrer:''}).toString());
  if(/name=["']password["']/.test(text)||!text.includes('dashboard'))throw Error('panel_invalid');
+ return {request,base};
+}
+export async function readPanel(username,password,base=BASE,options={}){
+ const {request}=await panelSession(username,password,base);
  // Provider-side filters can exclude usable idle active lines. Read the full
  // authenticated inventory and validate status and expiry locally. Playback
  // also validates the selected account before use.
@@ -43,4 +47,16 @@ export function validateServerUrl(value,panel=false){
  let u;try{u=new URL(String(value))}catch{throw Error('invalid_server_url')}
  const h=u.hostname.toLowerCase();if(!['http:','https:'].includes(u.protocol)||u.username||u.password||u.search||u.hash||!h.includes('.')||h==='localhost'||h.endsWith('.local')||h.endsWith('.internal')||h.startsWith('[')||/^(?:\d{1,3}\.){3}\d{1,3}$/.test(h)||/^(?:0|10|127|169\.254|192\.168)\./.test(h)||/^172\.(?:1[6-9]|2\d|3[01])\./.test(h))throw Error('invalid_server_url');
  if(!panel&&u.pathname!=='/')throw Error('invalid_server_url');if(panel){u.pathname=u.pathname.replace(/\/?$/,'/');return u.href}return u.origin;
+}
+
+export async function readPanelRecord(username,password,base,target){
+ if(typeof target!=='string'||!/^[A-Za-z0-9_.@-]{3,80}$/.test(target))throw Error('panel_record_input');
+ const session=await panelSession(username,password,base),query=new URLSearchParams({id:'lines',filter:'',reseller:'',draw:'1',start:'0',length:'100','search[value]':target,'order[0][column]':'0','order[0][dir]':'asc'}),data=JSON.parse(await session.request('table?'+query)),rows=data.data?.filter(r=>Array.isArray(r)&&plain(r[1]).toLowerCase()===target.toLowerCase());
+ if(rows?.length!==1)throw Error(rows?.length?'panel_record_ambiguous':'panel_record_missing');
+ const row=rows[0],id=plain(row[0]);if(!/^\d+$/.test(id))throw Error('panel_record_format');
+ const links=row.join(' ').matchAll(/href=["']([^"']+)["']/g);let detail;
+ for(const match of links){const url=new URL(plain(match[1]),session.base),last=url.pathname.split('/').at(-1);if(url.origin===new URL(session.base).origin&&url.pathname.startsWith(new URL(session.base).pathname)&&['line','line.php','edit_line','edit_line.php'].includes(last)&&[url.searchParams.get('edit'),url.searchParams.get('id')].includes(id)&&[...url.searchParams.keys()].every(k=>['edit','id'].includes(k))){detail=url.pathname.slice(new URL(session.base).pathname.length)+url.search;break;}}
+ if(!detail)throw Error('panel_record_detail');
+ const form=await session.request(detail);if(/name=["']password["']/.test(form)&&!form.includes('max_connections')&&!form.includes('exp_date'))throw Error('panel_invalid');
+ return {id,row,form,base:session.base};
 }

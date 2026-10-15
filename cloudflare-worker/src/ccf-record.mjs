@@ -1,0 +1,24 @@
+const decode=s=>String(s??'').replace(/&#(x[0-9a-f]+|\d+);/gi,(_,n)=>String.fromCodePoint(n[0].toLowerCase()==='x'?parseInt(n.slice(1),16):Number(n))).replace(/&(amp|quot|apos|lt|gt|nbsp);/g,(_,n)=>({amp:'&',quot:'"',apos:"'",lt:'<',gt:'>',nbsp:' '}[n]));
+const text=s=>decode(String(s??'').replace(/<br\s*\/?\s*>/gi,'\n').replace(/<[^>]*>/g,'')).trim();
+const attrs=s=>Object.fromEntries([...s.matchAll(/([\w\[\]-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/g)].map(m=>[m[1].toLowerCase(),decode(m[2]??m[3]??m[4])]));
+export function ccfFields(html){
+ const fields=[];for(const m of html.matchAll(/<input\b([^>]*)>/gi)){const a=attrs(m[1]);if(a.name)fields.push({name:a.name,type:a.type||'text',value:a.value??'',checked:/\bchecked\b/i.test(m[1])});}
+ for(const m of html.matchAll(/<textarea\b([^>]*)>([\s\S]*?)<\/textarea>/gi)){const a=attrs(m[1]);if(a.name)fields.push({name:a.name,type:'textarea',value:decode(m[2])});}
+ for(const m of html.matchAll(/<select\b([^>]*)>([\s\S]*?)<\/select>/gi)){const a=attrs(m[1]);if(!a.name)continue;const options=[...m[2].matchAll(/<option\b([^>]*)>([\s\S]*?)<\/option>/gi)].map(o=>({value:attrs(o[1]).value??text(o[2]),label:text(o[2]),selected:/\bselected\b/i.test(o[1])}));let values=options.filter(o=>o.selected).map(o=>o.value);if(!values.length&&!/\bmultiple\b/i.test(m[1])&&options.length)values=[options[0].value];fields.push({name:a.name,type:'select',value:values,options});}
+ return fields;
+}
+export function ccfPassword(record){const fields=ccfFields(record.form),value=fields.find(f=>f.name==='password')?.value;if(typeof value==='string'&&value)return value;const cell=String(record.row[2]||''),m=cell.match(/class=["']table-trunc-copy-cell__text[^"']*["'][^>]*title=["']([^"']*)["']/i);return m?decode(m[1]):text(cell);}
+export function normalizeCcfRecord(record,info,source){
+ const fields=ccfFields(record.form),field=name=>fields.find(f=>f.name===name)?.value,username=text(record.row[1]),password=ccfPassword(record),seconds=(v,label)=>{const n=Number(v);if(!Number.isSafeInteger(n)||n<=0||n>8640000000000)throw Error('panel_record_'+label);return n*1000;};
+ if(!/^[A-Za-z0-9_.@-]{3,80}$/.test(username)||typeof field('username')!=='string'||field('username')!==username||!password||password.length>256||String(info?.auth)!=='1'||String(info.username).toLowerCase()!==username.toLowerCase())throw Error('panel_record_unverified');
+ const connections=Number(info.max_connections);if(!Number.isSafeInteger(connections)||connections<1||connections>3)throw Error('panel_record_connections');
+ const notes=String(field('reseller_notes')||field('admin_notes')||''),label=String(field('name')||field('label')||username);if(notes.length>10000||label.length>1000)throw Error('panel_record_size');
+ return {format:'ccf-line-v2',source:{provider:source.source,origin:source.origin,sourceId:record.id,capturedAt:Date.now()},normalized:{username,password,label,notes,expiresAt:seconds(info.exp_date,'expiry'),createdAt:seconds(info.created_at,'created'),connections,status:/Disabled|Banned|Suspended/i.test(String(info.status)+' '+text(record.row[4]))?'suspended':'registered',packageName:String(field('package_name')||'CCF original'),paidState:'unknown'},original:{fields,table:record.row,userInfo:info}};
+}
+export function createCcfExporter({directory,unticket,readPanelRecord,fetcher=fetch}){return async(env,body)=>{
+ if(typeof body.username!=='string'||!/^[A-Za-z0-9_.@-]{3,80}$/.test(body.username))return Response.json({error:'bridge_input'},{status:400});
+ try{const providers=await (await directory(env,'/providers')).json(),sources=providers.filter(p=>p.mode==='panel'&&new URL(p.url||'http://ccf.center:8444/NYzkggyG/').hostname==='ccf.center');if(sources.length!==1)throw Error('panel_record_source');const provider=sources[0],credential=await unticket(env,provider.encrypted);if(credential?.kind!=='reseller')throw Error('panel_invalid');
+ const record=await readPanelRecord(credential.username,credential.password,provider.url||'http://ccf.center:8444/NYzkggyG/',body.username),origin=provider.origin||'http://ccf.center:8444';if(new URL(origin).hostname!=='ccf.center')throw Error('panel_record_source');
+ const api=new URL('/player_api.php',origin);api.search=new URLSearchParams({username:text(record.row[1]),password:ccfPassword(record)});const r=await fetcher(api,{redirect:'error',headers:{'User-Agent':'SnapMovieNow/1.0'},signal:AbortSignal.timeout(8000)});if(!r.ok)throw Error('panel_unavailable');const value=await r.json(),result=normalizeCcfRecord(record,value.user_info,{...provider,origin});return Response.json({ok:true,record:result});
+ }catch(e){return Response.json({error:'bridge_ccf_unavailable',reason:/^panel_[a-z_]{1,40}$/.test(e.message||'')?e.message:'panel_unavailable'},{status:503});}
+};}
