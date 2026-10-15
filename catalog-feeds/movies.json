@@ -1,153 +1,9 @@
 {
   "version": 1,
   "kind": "movies",
-  "requestId": "movies-recheck-20261015214919765",
-  "generatedAt": "2026-10-15T21:49:19.765Z",
+  "requestId": "movies-current-cinema-20261015221553148",
+  "generatedAt": "2026-10-15T22:15:53.148Z",
   "items": [
-    {
-      "id": "gnula-batman-v-superman",
-      "name": "Batman vs Superman: El Origen de la Justicia (2016)",
-      "year": 2016,
-      "page": "https://www2.gnula.one/movie/batman-vs-superman-el-origen-de-la-justicia/",
-      "poster": "https://image.tmdb.org/t/p/w92/mS3t9puIjLKgoex82cu9d6G0835.jpg",
-      "plot": ""
-    },
-    {
-      "id": "gnula-cover-up-un-periodista-en-las-trincheras",
-      "name": "Cover-Up: Un periodista en las trincheras (2025)",
-      "year": 2025,
-      "page": "https://www2.gnula.one/movie/cover-up-un-periodista-en-las-trincheras/",
-      "poster": "https://www2.gnula.one/wp-content/uploads/2025/12/8FAxigDCzdlpoRcYrABeGiesqgQ.jpg",
-      "plot": ""
-    },
-    {
-      "id": "gnula-heroe-en-dos-mundos",
-      "name": "Héroe en dos mundos (2021)",
-      "year": 2021,
-      "page": "https://www2.gnula.one/movie/heroe-en-dos-mundos/",
-      "poster": "https://www2.gnula.one/wp-content/uploads/2025/12/h71zxmiRNK41OfGZt66bHFaeD4F.jpg",
-      "plot": ""
-    },
-    {
-      "id": "gnula-zootropolis-2",
-      "name": "Zootrópolis 2 (2025)",
-      "year": 2025,
-      "page": "https://www2.gnula.one/movie/zootropolis-2/",
-      "poster": "https://www2.gnula.one/wp-content/uploads/2025/12/oDaWFIrBuOaFrTmBpAlMfmsa81N.jpg",
-      "plot": ""
-    },
-    {
-      "id": "gnula-popeye-the-slayer-man",
-      "name": "Popeye the Slayer Man (2025)",
-      "year": 2025,
-      "page": "https://www2.gnula.one/movie/popeye-the-slayer-man/",
-      "poster": "https://www2.gnula.one/wp-content/uploads/2025/12/nVwu3mN7hr1yF467pGct3yQFM41.jpg",
-      "plot": ""
-    },
-    {
-      "id": "gnula-adios-june",
-      "name": "Adiós, June (2025)",
-      "year": 2025,
-      "page": "https://www2.gnula.one/movie/adios-june/",
-      "poster": "https://www2.gnula.one/wp-content/uploads/2025/12/c6b7JgxtmN1ADVzFPeeY3J11kWt.jpg",
-      "plot": ""
-    },
-    {
-      "id": "gnula-santastein",
-      "name": "Santastein (2024)",
-      "year": 2024,
-      "page": "https://www2.gnula.one/movie/santastein/",
-      "poster": "https://www2.gnula.one/wp-content/uploads/2025/12/zUY57i43vmIbp7xod8BdE3MxQ0c.jpg",
-      "plot": ""
-    },
-    {
-      "id": "gnula-noche-de-paz-noche-de-muerte",
-      "name": "Noche de Paz, Noche de Muerte (2025)",
-      "year": 2025,
-      "page": "https://www2.gnula.one/movie/noche-de-paz-noche-de-muerte/",
-      "poster": "https://www2.gnula.one/wp-content/uploads/2025/12/oy5UMCnEYxwRz7HCQucZ01kKrSN.jpg",
-      "plot": ""
-    },
-    {
-      "id": "gnula-a-biltmore-christmas",
-      "name": "A Biltmore Christmas (2023)",
-      "year": 2023,
-      "page": "https://www2.gnula.one/movie/a-biltmore-christmas/",
-      "poster": "https://www2.gnula.one/wp-content/uploads/2025/12/gtiimCHYHb31iUPa0P60S2qEoPs.jpg",
-      "plot": ""
-    },
-    {
-      "id": "gnula-springsteen-deliver-me-from-nowhere",
-      "name": "Springsteen: Deliver Me from Nowhere (2025)",
-      "year": 2025,
-      "page": "https://www2.gnula.one/movie/springsteen-deliver-me-from-nowhere/",
-      "poster": "https://www2.gnula.one/wp-content/uploads/2025/12/e5Gl93objIeRZp2V52kd0wNB9qR.jpg",
-      "plot": ""
-    },
-    {
-      "id": "gnula-blue-sun-palace",
-      "name": "Blue Sun Palace (2025)",
-      "year": 2025,
-      "page": "https://www2.gnula.one/movie/blue-sun-palace/",
-      "poster": "https://www2.gnula.one/wp-content/uploads/2025/12/bg8Fi5Vt9DhtuzWmyUn9qkljblu.jpg",
-      "plot": ""
-    },
-    {
-      "id": "gnula-el-gran-diluvio",
-      "name": "El gran diluvio (2025)",
-      "year": 2025,
-      "page": "https://www2.gnula.one/movie/el-gran-diluvio/",
-      "poster": "https://www2.gnula.one/wp-content/uploads/2025/12/qIzSyT2AmDxkcQ0zOAeTbtZR9EQ.jpg",
-      "plot": ""
-    },
-    {
-      "id": "gnula-die-my-love",
-      "name": "Die My Love (2025)",
-      "year": 2025,
-      "page": "https://www2.gnula.one/movie/die-my-love/",
-      "poster": "https://www2.gnula.one/wp-content/uploads/2025/12/u2xyvEmgkXmfMeCQcGf6mERNFfd.jpg",
-      "plot": ""
-    },
-    {
-      "id": "gnula-la-sospecha-de-sofia",
-      "name": "La sospecha de Sofía (2025)",
-      "year": 2025,
-      "page": "https://www2.gnula.one/movie/la-sospecha-de-sofia/",
-      "poster": "https://www2.gnula.one/wp-content/uploads/2025/12/jt6mm0nqYdn6UFEGoEEI4Xt3VMi.jpg",
-      "plot": ""
-    },
-    {
-      "id": "gnula-carinena-vino-del-mar",
-      "name": "Cariñena, vino del mar (2025)",
-      "year": 2025,
-      "page": "https://www2.gnula.one/movie/carinena-vino-del-mar/",
-      "poster": "https://www2.gnula.one/wp-content/uploads/2025/12/mrcydPLFg2J3I5p56VtetNHMd5A.jpg",
-      "plot": ""
-    },
-    {
-      "id": "gnula-jay-kelly",
-      "name": "Jay Kelly (2025)",
-      "year": 2025,
-      "page": "https://www2.gnula.one/movie/jay-kelly/",
-      "poster": "https://www2.gnula.one/wp-content/uploads/2025/12/vO0cV3886E47tmZo0iJXzMPEEzr.jpg",
-      "plot": ""
-    },
-    {
-      "id": "gnula-selena-y-los-dinos",
-      "name": "Selena y Los Dinos (2025)",
-      "year": 2025,
-      "page": "https://www2.gnula.one/movie/selena-y-los-dinos/",
-      "poster": "https://www2.gnula.one/wp-content/uploads/2025/11/xkAS2BZ4SZGv9Iq9kqlq5q4rkYI.jpg",
-      "plot": ""
-    },
-    {
-      "id": "gnula-una-navidad-muy-jonas-brothers",
-      "name": "Una Navidad muy Jonas Brothers (2025)",
-      "year": 2025,
-      "page": "https://www2.gnula.one/movie/una-navidad-muy-jonas-brothers/",
-      "poster": "https://www2.gnula.one/wp-content/uploads/2025/11/rQp9P3CigiN3bgNm0NkYoSl3bMv.jpg",
-      "plot": ""
-    },
     {
       "id": "gnula-la-isla-olvidada",
       "name": "La isla olvidada (2026)",
@@ -155,6 +11,131 @@
       "page": "https://ww3.gnulahd.nu/ver/la-isla-olvidada/",
       "poster": "https://i1.wp.com/ww3.gnulahd.nu/wp-content/uploads/2026/10/Lr0Ng7Gg02RW1AyfYEL6P0WUvd-683x1024.jpg",
       "plot": "Jo y Raissa quedan varadas en la isla de Nakali y deben decidir qué recuerdos están dispuestas a sacrificar para volver a casa. Versión disponible en esta revisión: CAM, subtitulada."
+    },
+    {
+      "id": "gnula-el-corazon-de-la-bestia",
+      "name": "El corazón de la bestia (2026)",
+      "year": 2026,
+      "page": "https://ww3.gnulahd.nu/ver/el-corazon-de-la-bestia-2026/",
+      "poster": "https://i2.wp.com/ww3.gnulahd.nu/wp-content/uploads/2026/10/1ApfSA8JTqeha3GTFEY8syV4auq-683x1024.jpg",
+      "plot": "Un antiguo soldado de Fuerzas Especiales y su perro intentan sobrevivir tras un accidente aéreo en Alaska. Fuente anunciada como CAM/subtitulada; calidad y disponibilidad sujetas al proveedor."
     }
-  ]
+  ],
+  "retire": [
+    {
+      "id": "gnula-batman-v-superman",
+      "name": "Batman vs Superman: El Origen de la Justicia (2016)",
+      "year": 2016,
+      "reason": "outside_current_cinema_selection"
+    },
+    {
+      "id": "gnula-cover-up-un-periodista-en-las-trincheras",
+      "name": "Cover-Up: Un periodista en las trincheras (2025)",
+      "year": 2025,
+      "reason": "outside_current_cinema_selection"
+    },
+    {
+      "id": "gnula-heroe-en-dos-mundos",
+      "name": "Héroe en dos mundos (2021)",
+      "year": 2021,
+      "reason": "outside_current_cinema_selection"
+    },
+    {
+      "id": "gnula-zootropolis-2",
+      "name": "Zootrópolis 2 (2025)",
+      "year": 2025,
+      "reason": "outside_current_cinema_selection"
+    },
+    {
+      "id": "gnula-popeye-the-slayer-man",
+      "name": "Popeye the Slayer Man (2025)",
+      "year": 2025,
+      "reason": "outside_current_cinema_selection"
+    },
+    {
+      "id": "gnula-adios-june",
+      "name": "Adiós, June (2025)",
+      "year": 2025,
+      "reason": "outside_current_cinema_selection"
+    },
+    {
+      "id": "gnula-santastein",
+      "name": "Santastein (2024)",
+      "year": 2024,
+      "reason": "outside_current_cinema_selection"
+    },
+    {
+      "id": "gnula-noche-de-paz-noche-de-muerte",
+      "name": "Noche de Paz, Noche de Muerte (2025)",
+      "year": 2025,
+      "reason": "outside_current_cinema_selection"
+    },
+    {
+      "id": "gnula-a-biltmore-christmas",
+      "name": "A Biltmore Christmas (2023)",
+      "year": 2023,
+      "reason": "outside_current_cinema_selection"
+    },
+    {
+      "id": "gnula-springsteen-deliver-me-from-nowhere",
+      "name": "Springsteen: Deliver Me from Nowhere (2025)",
+      "year": 2025,
+      "reason": "outside_current_cinema_selection"
+    },
+    {
+      "id": "gnula-blue-sun-palace",
+      "name": "Blue Sun Palace (2025)",
+      "year": 2025,
+      "reason": "outside_current_cinema_selection"
+    },
+    {
+      "id": "gnula-el-gran-diluvio",
+      "name": "El gran diluvio (2025)",
+      "year": 2025,
+      "reason": "outside_current_cinema_selection"
+    },
+    {
+      "id": "gnula-die-my-love",
+      "name": "Die My Love (2025)",
+      "year": 2025,
+      "reason": "outside_current_cinema_selection"
+    },
+    {
+      "id": "gnula-la-sospecha-de-sofia",
+      "name": "La sospecha de Sofía (2025)",
+      "year": 2025,
+      "reason": "outside_current_cinema_selection"
+    },
+    {
+      "id": "gnula-carinena-vino-del-mar",
+      "name": "Cariñena, vino del mar (2025)",
+      "year": 2025,
+      "reason": "outside_current_cinema_selection"
+    },
+    {
+      "id": "gnula-jay-kelly",
+      "name": "Jay Kelly (2025)",
+      "year": 2025,
+      "reason": "outside_current_cinema_selection"
+    },
+    {
+      "id": "gnula-selena-y-los-dinos",
+      "name": "Selena y Los Dinos (2025)",
+      "year": 2025,
+      "reason": "outside_current_cinema_selection"
+    },
+    {
+      "id": "gnula-una-navidad-muy-jonas-brothers",
+      "name": "Una Navidad muy Jonas Brothers (2025)",
+      "year": 2025,
+      "reason": "outside_current_cinema_selection"
+    }
+  ],
+  "cinemaReview": {
+    "checkedAt": "2026-10-15T22:15:53.148Z",
+    "sources": [
+      "https://www.amctheatres.com/movies",
+      "https://www.regmovies.com/theatres/regal-warren-east-1444"
+    ]
+  }
 }
