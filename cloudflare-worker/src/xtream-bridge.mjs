@@ -1,3 +1,4 @@
+import {playbackMonitorClient,attachPlaybackQuality} from './native-playback-quality.mjs';
 import {requestConnectionClient} from './connection-monitor.mjs';
 import {handleXtream} from './xtream.mjs';
 
@@ -13,7 +14,7 @@ export function createXtreamBridge(deps) {
     const authenticate = async (username, password) => {
       const settings = await (await privateCall('/xtream-config')).json();
       if (!settings.enabled) return deps.json({user_info:{auth:0},error:'xtream_disabled'},403);
-      const authKey = await fingerprint(env.TICKET_SECRET, JSON.stringify([username.toLowerCase(),password,client,req.headers.get('user-agent')||'']));
+      const authKey = await fingerprint(env.TICKET_SECRET, JSON.stringify([username.toLowerCase(),password,client,req.headers.get('user-agent')||'',...(playbackMonitorClient(req)?[playbackMonitorClient(req)]:[])]));
       const checked = await privateCall('/xtream-login',{username,password,client,authKey});
       if (!checked.ok) return deps.json({user_info:{auth:0},...await checked.json()},checked.status);
       const user = await checked.json();
@@ -48,6 +49,7 @@ export function createXtreamBridge(deps) {
       const allocation=await deps.managedPlayback(env,mediaSession,item.server,ctx,excluded);
       if(!allocation.r.ok){if(lastFailure&&allocation.r.status===409)return deps.json({error:'upstream_unavailable'},lastFailure);return deps.json(await allocation.r.json(),allocation.r.status)}
       const {lease_id}=await allocation.r.json(),credentials=allocation.credentials;
+      const monitored=response=>attachPlaybackQuality(response,request,session,{lease_id,request_id},value=>deps.ticket(env,value));
       const encrypted=await deps.ticket(env,{sid:session.sid,username:credentials.username,password:credentials.password,origin:credentials.origin,lease_id,request_id,xtream:true,type:item.type,id:item.upstreamId,ext:item.ext,exp:session.exp});
       const target=new URL('/stream',request.url);target.searchParams.set('t',encrypted);
       try{
@@ -59,9 +61,9 @@ export function createXtreamBridge(deps) {
         // account allocation and retry logic, interrupting a healthy session.
         if(item.type==='live'&&item.ext==='m3u8'){
           await response.body?.cancel();
-          return new Response('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=8000000\n'+target.href+'\n',{headers:{'content-type':'application/vnd.apple.mpegurl','cache-control':'no-store'}});
+          return monitored(new Response('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=8000000\n'+target.href+'\n',{headers:{'content-type':'application/vnd.apple.mpegurl','cache-control':'no-store'}}));
         }
-        return response;
+        return monitored(response);
       }catch(error){lastFailure=502;await privateCall('/release',{sid:session.sid,lease_id,request_id});if(error.message!=='media_origin_unapproved'&&allocation.provider_id&&attempt<2){excluded.push(allocation.provider_id);continue}throw error}
       }
     };

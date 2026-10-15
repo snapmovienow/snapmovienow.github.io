@@ -147,6 +147,38 @@ assert.deepEqual(await (await api('get_vod_streams')).json(), movies, 'catalog r
 const channels = await (await api('get_live_streams')).json();
 const series = await (await api('get_series')).json();
 const seriesCategories = await (await api('get_series_categories')).json();
+
+// Real Worker route: three identical clients behind one router have separate
+// native receipts, even though aggregate telemetry is rate limited per account.
+const monitorHeader='X-SNAP-Playback-Monitor',monitorResponse='X-SNAP-Playback-Quality';
+const monitorNonces=Array.from({length:3},()=>crypto.randomUUID()),monitorTickets=[];
+for(const nonce of monitorNonces){
+ const response=await media('live',channels[0].stream_id,'m3u8',90,{headers:{[monitorHeader]:nonce}});
+ assert.equal(response.status,200);monitorTickets.push(response.headers.get(monitorResponse));assert.match(monitorTickets.at(-1),/^[A-Za-z0-9_-]{40,4096}$/);await response.text();
+}
+let monitoredLeases=await leases();assert.equal(monitoredLeases.length,3);assert.equal(new Set(monitoredLeases.map(l=>l.sid)).size,3,'same IP and user agent must not merge independent native players');
+const monitorAuth=await post({op:'auth',...customer});assert.equal(monitorAuth.status,200);
+const monitorMetric=(stallMs=0)=>({report_id:crypto.randomUUID(),platform:'android',type:'live',server:channels[0].smn_profile.server,quality:'1080',watchMs:10000,stallMs,stalls:stallMs?1:0,errors:0,decoded:300,dropped:0,bytes:300000,started:true,startupMs:500,attempted:true,failedStart:false});
+const reportQuality=(receipt,metric=monitorMetric(),access=monitorAuth.data.access_token,ageMs=0)=>post({op:'playback_metric',access_token:access,quality_ticket:receipt,metric,observation:{width:1920,height:1080,ageMs}});
+for(let i=0;i<3;i++){
+ const r=await reportQuality(monitorTickets[i],monitorMetric([0,400,1000][i]));assert.equal(r.status,200);assert.equal(r.data.qualityHandled,true);if(i)assert.equal(r.data.limited,true,'per-connection quality remains available when aggregate telemetry is throttled');
+}
+monitoredLeases=await leases();assert.deepEqual(monitoredLeases.map(l=>l.quality.level).sort(),['fair','good','poor']);assert.ok(monitoredLeases.every(l=>l.quality.width===1920&&l.quality.height===1080));
+const firstMonitored=monitoredLeases.find(l=>l.quality.level==='good');
+assert.equal((await reportQuality('A'.repeat(80))).data.qualityHandled,undefined);
+assert.equal((await reportQuality(monitorTickets[0],monitorMetric(9000),monitorAuth.data.access_token,46000)).data.qualityHandled,undefined);
+assert.equal((await reportQuality(monitorTickets[0],monitorMetric(9000))).data.qualityHandled,undefined,'a rapid additional quality report is bounded by its own lease rate');
+const foreignMonitor={username:'foreign-native',password:'foreign-native-password-test'};
+assert.equal((await admin('save',{create:true,...foreignMonitor,status:'active',expiresAt:Date.now()+86400000})).status,200);
+const foreignAuth=await post({op:'auth',...foreignMonitor});assert.equal((await reportQuality(monitorTickets[0],monitorMetric(9000),foreignAuth.data.access_token)).data.qualityHandled,undefined);
+assert.equal((await leases()).find(l=>l.sid===firstMonitored.sid).quality.level,'good','foreign credentials cannot update another customer receipt');
+const replacementMonitor=await media('live',channels[0].stream_id,'m3u8',90,{headers:{[monitorHeader]:monitorNonces[0]}}),replacementTicket=replacementMonitor.headers.get(monitorResponse);await replacementMonitor.text();
+assert.notEqual(replacementTicket,monitorTickets[0]);assert.equal((await leases()).find(l=>l.sid===firstMonitored.sid).quality,undefined,'a replacement reservation clears the old quality');
+await reportQuality(monitorTickets[0],monitorMetric(9000));assert.equal((await leases()).find(l=>l.sid===firstMonitored.sid).quality,undefined,'delayed old receipt cannot mark its replacement as poor');
+assert.equal((await reportQuality(replacementTicket)).data.qualityHandled,true);assert.equal((await leases()).find(l=>l.sid===firstMonitored.sid).quality.level,'good');
+for(const lease of await leases())await objects.get('__smn_accounts_v1').fetch(new Request('https://private/accounts/release-session',{method:'POST',body:JSON.stringify({sid:lease.sid})}));
+assert.equal((await leases()).length,0);
+
 const filteredSeries = await (await api('get_series', {category_id:seriesCategories[1].category_id})).json();
 assert.deepEqual(filteredSeries.map(s => s.name), ['Series 1']);
 const episodes = [];

@@ -1,3 +1,4 @@
+import {playbackQualityContext} from './native-playback-quality.mjs';
 import {requestConnectionClient} from './connection-monitor.mjs';
 import {createResellerPortal,matchesResellerPortal,PORTAL_ACCOUNT} from './reseller-portal.mjs';
 import {createResellerBridge} from './reseller-bridge.mjs';
@@ -237,7 +238,7 @@ if(op==='playback_metric'){
  if(!session.managed)return json({ok:true,ignored:true});
  const pool=await (await directory(env,'/pool')).json(),servers=new Set(['ccf','gnula',...(pool.lines||[]).map(l=>l.server||'ccf')]);
  if(!servers.has(b.metric?.server))return json({error:'invalid_metric'},400);
- const r=await env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_operations_v1')).fetch('https://private/operations/ingest',{method:'POST',body:JSON.stringify({uid:session.uid,metric:b.metric})});const data=await r.json();if(r.ok&&!data.limited&&b.lease_id&&b.request_id)await directory(env,'/playback-quality',{sid:session.sid,lease_id:b.lease_id,request_id:b.request_id,metric:b.metric,observation:b.observation}).catch(()=>{});return json(data,r.status);
+ const r=await env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_operations_v1')).fetch('https://private/operations/ingest',{method:'POST',body:JSON.stringify({uid:session.uid,metric:b.metric})});const data=await r.json();if(r.ok)try{const context=await playbackQualityContext(session,b,value=>unticket(env,value));if(context){const quality=await directory(env,'/playback-quality',context),result=await quality.json();if(quality.ok&&!result.limited)data.qualityHandled=true;}}catch{}return json(data,r.status);
 }
 if(op==='profile_get'||op==='profile_patch'){
  if(!session.managed)return json({error:'managed_profile_required'},403);

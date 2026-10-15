@@ -16,12 +16,16 @@ export async function recordConnectionLimit(store,user,body,used,now=Date.now())
 }
 export async function updateConnectionQuality(store,leases,body,now=Date.now()){
  const lease=await leases.get(body.lease_id),m=body.metric;
- if(!lease||lease.until<=now||lease.sid!==body.sid||lease.request_id!==body.request_id)return answer({ok:true,ignored:true});
+ if(!lease||lease.until<=now||lease.sid!==body.sid||lease.request_id!==body.request_id||lease.uid!==body.uid||lease.version!==body.version)return answer({ok:true,ignored:true});
+ const user=await store.get('user:'+lease.username),age=body.observation?.ageMs??0;
+ if(!user||user.id!==lease.uid||user.version!==lease.version||user.status!=='active'||user.expiresAt&&user.expiresAt<=now||!Number.isSafeInteger(age)||age<0||age>45000)return answer({ok:true,ignored:true});
  if(!m||typeof m.report_id!=='string'||m.report_id.length>100||!Number.isSafeInteger(m.watchMs)||m.watchMs<0||m.watchMs>300000||!Number.isSafeInteger(m.stallMs)||m.stallMs<0||m.stallMs>m.watchMs||!Number.isSafeInteger(m.decoded)||m.decoded<0||m.decoded>100000||!Number.isSafeInteger(m.dropped)||m.dropped<0||m.dropped>m.decoded||!Number.isSafeInteger(m.errors)||m.errors<0||m.errors>100)return answer({ok:true,ignored:true});
  if(lease.qualityReport===m.report_id||m.watchMs<5000&&!m.errors||!m.decoded&&!m.errors&&!m.stallMs)return answer({ok:true,ignored:true});
+ if(lease.qualityUpdatedAt>now-15000)return answer({ok:true,limited:true});
+ const observedAt=now-age;if(lease.quality&&observedAt<=lease.quality.observedAt)return answer({ok:true,ignored:true});
  const stalls=m.watchMs?m.stallMs*100/m.watchMs:0,drops=m.decoded?m.dropped*100/m.decoded:0,level=m.errors||stalls>5||drops>5?'poor':stalls>2||drops>2?'fair':'good';
  const dimension=n=>Number.isSafeInteger(n)&&n>0&&n<=16384?n:null;
- lease.quality={level,observedAt:now,stallPercent:Math.round(stalls*100)/100,width:dimension(body.observation?.width),height:dimension(body.observation?.height)};lease.qualityReport=m.report_id;await leases.put(body.lease_id,lease);return answer({ok:true});
+ lease.quality={level,observedAt,stallPercent:Math.round(stalls*100)/100,width:dimension(body.observation?.width),height:dimension(body.observation?.height)};lease.qualityReport=m.report_id;lease.qualityUpdatedAt=now;await leases.put(body.lease_id,lease);return answer({ok:true});
 }
 async function ownedUsers(store,accountId,now,activeOnly=true){const users=new Map();let startAfter;for(;;){const page=await store.list({prefix:'user:',limit:100,...(startAfter?{startAfter}:{})});for(const [key,u]of page){startAfter=key;const username=key.slice(5);if(u?.resellerBridge?.accountId===accountId&&identifier(u.resellerBridge.lineId)&&identifier(u.id)&&/^[a-z0-9_.@-]{3,80}$/.test(username)&&(!activeOnly||u.status==='active'&&(!u.expiresAt||u.expiresAt>now)))users.set(u.id,{...u,username});}if(page.size<100)break;}return users;}
 export async function closeResellerConnection(store,leases,body,now=Date.now()){
