@@ -50,9 +50,9 @@ export async function exclusiveCatalogRoute(store,path,body){
   if(path==='/exclusive-cover-save'){
    const image=coverData(body.data),id=[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(image.type+':'+image.data)))].map(n=>n.toString(16).padStart(2,'0')).join('');
    if(!await store.get(COVER+id)){
-    const existing=await store.list({prefix:COVER}),catalog=await exclusiveSnapshot(store),used=new Set(catalog.items.map(row=>row.poster));let size=0;
-    for(const [key,value]of existing)if(!used.has('/exclusive-cover/'+key.slice(COVER.length))&&value.createdAt<Date.now()-86400000)await store.delete(key);else size+=value.size||0;
-    if(size+image.size>512000)fail('exclusive_cover_capacity',409);await store.put(COVER+id,{...image,createdAt:Date.now()});
+    const existing=await store.list({prefix:COVER}),catalog=await exclusiveSnapshot(store),used=new Set(catalog.items.map(row=>row.poster));let size=0,count=0;
+    for(const [key,value]of existing)if(!used.has('/exclusive-cover/'+key.slice(COVER.length))&&value.createdAt<Date.now()-86400000)await store.delete(key);else{size+=value.size||0;count++;}
+    if(count>=300||size+image.size>512000)fail('exclusive_cover_capacity',409);await store.put(COVER+id,{...image,createdAt:Date.now()});
    }return Response.json({poster:'/exclusive-cover/'+id});
   }
   if(path==='/exclusive-save'){
@@ -70,5 +70,5 @@ export async function exclusiveCatalogRoute(store,path,body){
  }catch(error){return Response.json({error:error.status?error.message:'exclusive_unavailable'},{status:error.status||503});}
 }
 export async function exportExclusives(store){const value=await store.get(INDEX);if(!value)return undefined;const data=await exclusiveSnapshot(store);return {index:value,items:data.items,covers:[...await store.list({prefix:COVER})]};}
-export function validExclusiveBackup(data){try{return data&&Array.isArray(data.items)&&data.items.length<=MAX_ITEMS&&data.index&&Array.isArray(data.index.ids)&&data.index.ids.length===data.items.length&&new Set(data.index.ids).size===data.items.length&&data.items.every(row=>{try{return exclusiveId(row.id)&&data.index.ids.includes(row.id)&&Number.isSafeInteger(row.revision)&&row.revision>0&&Number.isSafeInteger(row.playbackRevision)&&row.playbackRevision>0&&!!clean(row,row)}catch{return false}})&&Array.isArray(data.covers)&&data.covers.length<=100&&data.covers.every(([key,value])=>/^exclusive:cover:[a-f0-9]{64}$/.test(key)&&!!coverData('data:'+value.type+';base64,'+value.data));}catch{return false;}}
+export function validExclusiveBackup(data){try{return data&&Array.isArray(data.items)&&data.items.length<=MAX_ITEMS&&data.index&&Array.isArray(data.index.ids)&&data.index.ids.length===data.items.length&&new Set(data.index.ids).size===data.items.length&&data.items.every(row=>{try{return exclusiveId(row.id)&&data.index.ids.includes(row.id)&&Number.isSafeInteger(row.revision)&&row.revision>0&&Number.isSafeInteger(row.playbackRevision)&&row.playbackRevision>0&&!!clean(row,row)}catch{return false}})&&Array.isArray(data.covers)&&data.covers.length<=300&&data.covers.reduce((sum,entry)=>sum+(entry[1]?.size||0),0)<=512000&&data.covers.every(([key,value])=>/^exclusive:cover:[a-f0-9]{64}$/.test(key)&&!!coverData('data:'+value.type+';base64,'+value.data));}catch{return false;}}
 export async function restoreExclusives(store,data){for(const prefix of [ITEM,COVER])for(const key of (await store.list({prefix})).keys())await store.delete(key);await store.delete(INDEX);if(!data)return;await store.put(INDEX,data.index);for(const row of data.items)await store.put(ITEM+row.id,row);for(const [key,value]of data.covers)await store.put(key,value);}

@@ -21,7 +21,7 @@ try{
   await route.fulfill({status,headers,contentType:'application/json',body:JSON.stringify(value)});
  });
  const page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));await page.goto(base+'/admin.html');await page.locator('#loginForm [name=username]').fill('owner');await page.locator('#loginForm [name=password]').fill('synthetic-admin-only');await page.locator('#loginForm button').click();
- const section=page.locator('#exclusiveSection');await section.locator('.exclusive-card').first().waitFor();assert.equal(await section.locator('.exclusive-card').count(),18);assert.equal(await page.evaluate(()=>window.injected),undefined);
+ await page.locator('#openExclusives').click();const section=page.locator('#exclusiveSection');await section.locator('.exclusive-card').first().waitFor();assert.equal(await section.locator('.exclusive-card').count(),18);assert.equal(await page.evaluate(()=>window.injected),undefined);
  await section.locator('.exclusive-card').first().getByRole('button',{name:'Editar',exact:true}).click();const form=section.locator('[data-editor]');assert.equal(await form.locator('[name=page]').inputValue(),'https://www2.gnula.one/title-0');
  await form.locator('[name=name]').fill('Título editado');assert.equal(await form.locator('[data-check]').isDisabled(),true);await form.getByRole('button',{name:'Guardar cambios',exact:true}).click();await section.locator('[data-state]').filter({hasText:'18 títulos guardados'}).waitFor();assert.equal(saves.at(-1).revision,1);assert.equal(saves.at(-1).item.name,'Título editado');
  await form.getByRole('button',{name:'Comprobar enlace'}).click();await section.locator('[data-state]').filter({hasText:'respondió como contenido multimedia'}).waitFor();

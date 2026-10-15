@@ -1,3 +1,4 @@
+import {selectExclusive,visibleExclusive} from './exclusive-catalog.mjs';
 import {createExclusiveService} from './exclusive-service.mjs';
 import {GNULA_CATALOG} from './exclusive-seed.mjs';
 import {playbackQualityContext} from './native-playback-quality.mjs';
@@ -165,6 +166,7 @@ const VOE_EMBED_HOSTS=new Set(["teresapoliticallearn.com"]);
 function allowedGnula(u){return u.protocol==="https:"&&(/^(?:strm\d+\.uqload\.vc|ugc-cdn-caching-[a-z0-9]+\.cloudwindow-route\.com)$/.test(u.hostname))&&!u.port&&!u.username&&!u.password}
 function proxiedMedia(origin,t,url){return origin+"/gnula-media?t="+encodeURIComponent(t)+"&path="+encodeURIComponent(url)}
 async function gnulaMedia(req,env,u,ctx){const t=u.searchParams.get("t")||"",d=await unticket(env,t);if(d?.kind!=="gnula"||!(await sessionCall(env,d.sid,"/check")).ok)return json({error:"session_expired"},401);
+ if(d.exclusiveId){const row=await directory(env,'/exclusive-item-read',{id:d.parentId});if(!row.ok)return json({error:'title_not_allowed'},410);const current=selectExclusive([await row.json()],d.exclusiveId);if(!current||!current.row.visible||current.row.playbackRevision!==d.playbackRevision)return json({error:'title_not_allowed'},410);}
  const base=new URL(d.source),target=new URL(u.searchParams.get("path")||d.source);const resourceDirectory=base.pathname.slice(0,base.pathname.lastIndexOf("/")+1);
  if(!allowedGnula(target)||target.hostname!==base.hostname||!target.pathname.startsWith(resourceDirectory))return json({error:"media_not_allowed"},403);
  const headers=new Headers({"User-Agent":"Mozilla/5.0"});if(req.headers.has("range"))headers.set("range",req.headers.get("range"));const r=await fetch(target.href,{headers,redirect:"manual"});if(r.status>=300&&r.status<400)return json({error:"media_redirect_not_allowed"},502);
@@ -260,10 +262,14 @@ if(op==="playback_heartbeat"){if(!session.managed||!b.lease_id)return json({ok:t
 if(op==="playback_release"){if(!session.managed||!b.lease_id)return json({ok:true});const r=await directory(env,"/release",{sid:session.sid,lease_id:b.lease_id,request_id:b.request_id});return json(await r.json(),r.status)}
 if(op==="logout"){await directory(env,"/release-session",{sid:session.sid});await sessionCall(env,session.sid,"/logout");return withSessionCookie(json({ok:true}),req,env,"session","",0)}
 b.username=session.username;b.password=session.password;
-if(op==='gnula_catalog')return json((await exclusives.catalog(env,permissions,u.origin)).items);
+if(op==='gnula_catalog')return json((await exclusives.catalog(env,permissions,u.origin,{legacy:!session.managed})).items);
 if(op==='gnula_series_info')try{return json(await exclusives.episodes(env,b.series_id,permissions,u.origin))}catch(e){return json({error:e.message},e.status||502)}
 if(op==='gnula_token'&&session.managed){try{return json(await exclusives.prepare(req,env,session,b.id,{request_id:b.request_id,revision:b.revision}))}catch(e){return json({error:e.message},e.status||502)}}
-if(op==="gnula_token"){const item=GNULA_CATALOG.find(x=>x.stream_id===b.id);let page=item?.page,preferred=item?.preferredEmbed;if(item&&!permissions.movies)return json({error:"content_disabled"},403);if(!permissions.adults&&isAdult(item))return json({error:"adult_content_disabled"},403);if(!page){const parent=GNULA_CATALOG.find(x=>x.episodes?.some(ep=>ep.id===b.id));const ep=parent?.episodes.find(ep=>ep.id===b.id);if(!permissions.adults&&(isAdult(parent)||isAdult(ep)))return json({error:"adult_content_disabled"},403);if(parent&&!permissions.series)return json({error:"content_disabled"},403);page=ep?.page;preferred=ep?.preferredEmbed}if(!page)return json({error:"title_not_allowed"},404);const source=await resolveGnula(page,preferred);const data={kind:"gnula",source,sid:session.sid,exp:Math.min(session.exp,Date.now()+3*60*60*1000)};const t=await ticket(env,data);return json({url:proxiedMedia(u.origin,t,source)})}
+if(op==="gnula_token"){
+ const selection=selectExclusive((await exclusives.read(env)).items,b.id);if(!selection||!visibleExclusive(selection.row,permissions)||selection.media.mode!=='gnula'||selection.row.type==='series'&&selection.row===selection.media)return json({error:'title_not_allowed'},404);
+ const source=await resolveGnula(selection.media.page,selection.media.preferredEmbed),data={kind:'gnula',source,sid:session.sid,exclusiveId:b.id,parentId:selection.row.id,playbackRevision:selection.row.playbackRevision,exp:Math.min(session.exp,Date.now()+3*60*60*1000)};
+ const t=await ticket(env,data);return json({url:proxiedMedia(u.origin,t,source)});
+}
 if(op==="stream_token"){
  if(!["movie","series","live"].includes(String(b.type||"movie"))||!/^\d+$/.test(String(b.id||"")))return json({error:"invalid_stream"},400);
  if(!permissions.adults){

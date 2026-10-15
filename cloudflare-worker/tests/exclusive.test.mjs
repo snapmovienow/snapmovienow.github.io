@@ -57,6 +57,10 @@ try{
  assert.equal((await admin('exclusive-save',{item:{...series,id:'custom-empty',episodes:[]},revision:0})).status,400);
  redirect=true;const checked=await admin('exclusive-check',{id:movie.id});assert.equal(checked.status,400);redirect=false;
  html=true;assert.equal((await admin('exclusive-check',{id:movie.id})).data.ok,false);html=false;assert.equal((await admin('exclusive-check',{id:movie.id})).data.ok,true);
+ const webLogin=await post({op:'auth',...customer});assert.equal(webLogin.status,200);const token=webLogin.data.access_token,request_id=crypto.randomUUID();
+ const web=await post({op:'gnula_token',access_token:token,id:movie.id,request_id,revision:1});assert.equal(web.status,200);assert.equal(web.data.request_id,request_id);assert.ok(web.data.lease_id);response=await worker.fetch(new Request(web.data.url,{headers:{Range:'bytes=0-3'}}),env);assert.equal(response.status,206);assert.equal(await response.text(),'abcd');
+ const replay=await post({op:'gnula_token',access_token:token,id:movie.id,request_id:crypto.randomUUID(),revision:1});assert.equal(replay.status,410,'an obsolete browser request cannot replace its playback');
+ const favorite=await post({op:'profile_patch',access_token:token,patches:[{kind:'favorite',key:'movie:exclusive:'+movie.id,type:'movie',id:movie.id,server:'exclusive',updatedAt:Date.now()}]});assert.equal(favorite.status,200);assert.equal(favorite.data.records[0].server,'exclusive');
  const store=objects.get('__smn_accounts_v1').state.storage;
  // A real, tiny PNG verifies cover upload, retrieval and encrypted backup persistence.
  const png='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aFeQAAAAASUVORK5CYII=';
