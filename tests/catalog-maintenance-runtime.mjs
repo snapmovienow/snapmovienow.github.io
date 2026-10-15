@@ -31,5 +31,8 @@ try{
  assert.equal(status.beerus.results.find(x=>x.id==='beerus-s1e2').status,'added');assert.equal(status.movies.results.find(x=>x.id==='new-film').status,'added');
  const after=await admin('exclusive-list');assert.equal(after.items.find(x=>x.id==='beerus').episodes.length,2);assert.equal(after.items.filter(x=>x.type==='movie'&&x.visible).length,1);
  await w.scheduled({cron:'*/5 * * * *'});assert.equal((await admin('exclusive-list')).items.find(x=>x.id==='beerus').episodes.length,2,'repeated real scheduled invocation is idempotent');
+ feeds.movies={...feeds.movies,generatedAt:new Date(Date.now()+1000).toISOString(),requestId:'sqlite-cinema-retirement',items:[],retire:[{id:'new-film',name:'New film',year:2026,reason:'outside_current_cinema_selection'}],cinemaReview:{checkedAt:new Date().toISOString(),sources:['https://www.amctheatres.com/movies','https://www.regmovies.com/theatres/regal-warren-east-1444']}};
+ await w.scheduled({cron:'*/5 * * * *'});const retired=(await(await w.fetch('https://local.test/health')).json()).catalog_maintenance.movies;
+ assert.equal(retired.results.find(x=>x.id==='new-film').status,'retired');const final=await admin('exclusive-list');assert.equal(final.items.filter(x=>x.type==='movie'&&x.visible).length,0);assert.equal(final.items.find(x=>x.id==='beerus').visible,true,'cinema retirement cannot hide series');
  console.log('PASS: actual scheduled workerd handler, private orchestration/self-requests, real HLS bytes, SQLite episode addition and film addition, heartbeat and idempotent repeat.');
 }finally{await mf.dispose()}
