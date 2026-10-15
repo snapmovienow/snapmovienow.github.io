@@ -1,0 +1,23 @@
+import assert from 'node:assert/strict';
+import {accountsFetch,passwordHash} from '../src/accounts.mjs';
+import {nativeResellerImport,nativeFingerprint} from '../src/native-reseller-import.mjs';
+class Store{constructor(){this.data=new Map();this.queue=Promise.resolve();}async get(k){return structuredClone(this.data.get(k));}async put(k,v){this.data.set(k,structuredClone(v));}async delete(k){this.data.delete(k);}async setAlarm(){}async list({prefix}){return new Map([...this.data].filter(([k])=>k.startsWith(prefix)).map(([k,v])=>[k,structuredClone(v)]));}transaction(fn){const p=this.queue.then(()=>fn(this));this.queue=p.catch(()=>{});return p;}}
+const storage=new Store(),state={storage},env={},accountId='reset-owner-test',oldPassword='Previous-secret-1234',newPassword='Replaced-secret-5678',salt='fixture-salt',original={id:'native-password-id',username:'nito',name:'Cliente anterior',comments:'Notas conservadas',createdAt:1,updatedAt:2,expiresAt:Date.now()+86400000,version:4,status:'active',hash:await passwordHash(oldPassword,salt),salt,permissions:{movies:true,series:true,tv:true,adults:false},messages:[{text:'Conservar mensaje'}]};
+await storage.put('user:nito',original);const fingerprint=await nativeFingerprint(original);assert.equal((await nativeResellerImport(storage,'/native-claim',{accountId,lineId:'native-password-line',username:'nito',sourceHash:fingerprint})).status,200);
+const req=(path,b)=>accountsFetch(state,env,new Request('https://private/accounts'+path,{method:'POST',body:JSON.stringify(b)})),login=(password,client='fixture')=>req('/login',{username:'nito',password,client});
+const prior=await (await login(oldPassword)).json();assert.equal(prior.version,4);
+const base={accountId,lineId:'native-password-line',username:'nito',version:2,revoke:false,legacy:true,name:original.name,comments:original.comments,status:'active',expiresAt:original.expiresAt,createdAt:original.createdAt,permissions:original.permissions,connections:3};
+assert.equal((await req('/reseller-apply',{...base,password:newPassword})).status,400);
+assert.equal((await req('/reseller-apply',{...base,preserveCredentials:true,password:newPassword})).status,409);
+assert.equal((await req('/reseller-apply',{...base,replaceNativeCredentials:true,preserveCredentials:true,password:newPassword})).status,409);
+assert.equal((await req('/reseller-apply',{...base,replaceNativeCredentials:true,password:'short'})).status,400);
+assert.equal((await req('/reseller-apply',{...base,accountId:'foreign',replaceNativeCredentials:true,password:newPassword})).status,409);
+assert.equal((await login(oldPassword,'before')).status,200);
+const command={...base,replaceNativeCredentials:true,password:newPassword},changed=await req('/reseller-apply',command);assert.equal(changed.status,200);assert.equal((await changed.json()).sessionsRevoked,true);
+assert.equal((await login(oldPassword,'old')).status,401);const accepted=await login(newPassword,'new');assert.equal(accepted.status,200);const current=await accepted.json();assert.equal(current.version,5);
+assert.equal((await req('/check',{uid:prior.id,username:'nito',version:prior.version})).status,401);assert.equal((await req('/check',{uid:current.id,username:'nito',version:current.version})).status,200);
+const after=await storage.get('user:nito');for(const key of ['id','username','name','comments','createdAt','expiresAt','permissions','messages'])assert.deepEqual(after[key],original[key]);assert.equal(after.resellerBridge.native,true);assert.notEqual(after.hash,original.hash);assert.ok(!JSON.stringify([...storage.data]).includes(newPassword));
+assert.equal((await (await req('/reseller-apply',command)).json()).replayed,true);assert.equal((await storage.get('user:nito')).version,5);
+assert.equal((await req('/reseller-apply',{...command,password:'Conflicting-secret-123'})).status,409);
+assert.equal((await req('/reseller-apply',{...command,version:3,name:'Nombre corregido'})).status,200);assert.equal((await storage.get('user:nito')).version,5);assert.equal((await login(newPassword,'after-edit')).status,200);
+console.log('PASS: explicit owner-signed native password reset changes real login, rejects old login/sessions, preserves customer data and replays safely without plaintext secrets.');

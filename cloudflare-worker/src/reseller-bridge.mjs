@@ -29,7 +29,7 @@ export function createResellerBridge(directory,trust=TRUSTED_RESELLER,{sealConfi
   if(signed.action==='presence.close'){const r=await directory(env,'/reseller-connection-close',body);return json({...await r.json(),accountId:trust.accountId},r.status);}
   if(signed.action==='presence.connections'){const r=await directory(env,'/reseller-live-connections',body);return json({...await r.json(),accountId:trust.accountId},r.status);}
   if(signed.action==='presence'){const r=await directory(env,'/reseller-presence',body);return json({...await r.json(),accountId:trust.accountId},r.status);}
-  if(signed.action==='probe')return json({ok:true,accountId:trust.accountId,protocol:1});
+  if(signed.action==='probe')return json({ok:true,accountId:trust.accountId,protocol:2,capabilities:{clientPassword:true}});
   const r=await directory(env,signed.action==='reserve'?'/reseller-reserve':signed.action==='release'?'/reseller-release':'/reseller-apply',body);return json({...await r.json(),accountId:trust.accountId},r.status);
  }catch{return json({error:'bridge_denied'},403);}
 };}
