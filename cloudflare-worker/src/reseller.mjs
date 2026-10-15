@@ -51,8 +51,11 @@ export function validateServerUrl(value,panel=false){
 
 export async function readPanelRecord(username,password,base,target){
  if(typeof target!=='string'||!/^[A-Za-z0-9_.@-]{3,80}$/.test(target))throw Error('panel_record_input');
- const session=await panelSession(username,password,base),query=new URLSearchParams({id:'lines',filter:'',reseller:'',draw:'1',start:'0',length:'100','search[value]':target,'order[0][column]':'0','order[0][dir]':'asc'}),data=JSON.parse(await session.request('table?'+query)),rows=data.data?.filter(r=>Array.isArray(r)&&plain(r[1]).toLowerCase()===target.toLowerCase());
- if(rows?.length!==1)throw Error(rows?.length?'panel_record_ambiguous':'panel_record_missing');
+ const session=await panelSession(username,password,base),rows=[];
+ // Some provider tables ignore the DataTables search field. Scan every page and
+ // match the exact username locally, as the normal inventory connector does.
+ for(let start=0;start<10000;start+=1000){const query=new URLSearchParams({id:'lines',filter:'',reseller:'',draw:'1',start:String(start),length:'1000','search[value]':'','order[0][column]':'0','order[0][dir]':'asc'}),data=JSON.parse(await session.request('table?'+query));if(!Array.isArray(data.data))throw Error('panel_format_changed');rows.push(...data.data.filter(r=>Array.isArray(r)&&plain(r[1]).toLowerCase()===target.toLowerCase()));if(!data.data.length||data.data.length<1000||start+1000>=Number(data.recordsFiltered??data.recordsTotal))break;if(start===9000)throw Error('panel_too_many_lines');}
+ if(rows.length!==1)throw Error(rows.length?'panel_record_ambiguous':'panel_record_missing');
  const row=rows[0],id=plain(row[0]);if(!/^\d+$/.test(id))throw Error('panel_record_format');
  const links=row.join(' ').matchAll(/href=["']([^"']+)["']/g);let detail;
  for(const match of links){const url=new URL(plain(match[1]),session.base),last=url.pathname.split('/').at(-1);if(url.origin===new URL(session.base).origin&&url.pathname.startsWith(new URL(session.base).pathname)&&['line','line.php','edit_line','edit_line.php'].includes(last)&&[url.searchParams.get('edit'),url.searchParams.get('id')].includes(id)&&[...url.searchParams.keys()].every(k=>['edit','id'].includes(k))){detail=url.pathname.slice(new URL(session.base).pathname.length)+url.search;break;}}
