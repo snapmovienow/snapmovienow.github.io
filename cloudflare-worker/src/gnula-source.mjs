@@ -35,7 +35,7 @@ async function episodeEmbeds(page,html,options){
   for(const m of html.matchAll(/data-iframe="([^"]+)"/g))try{html+=' '+atob(m[1]);}catch{}
   return html.match(/https:\/\/(?:voe\.sx\/e\/[a-z0-9]+|uqload\.(?:com|vc)\/embed-[a-z0-9]+\.html)/g)||[];
  }
- const config=html.match(/window\.GNRD\s*=\s*\{\s*pid\s*:\s*(\d+)\s*,\s*tok\s*:\s*"([A-Za-z0-9._-]{1,200})"\s*,\s*k\s*:\s*"([A-Za-z0-9+/=]{1,200})"\s*\}/);
+ const config=html.match(/window\.GNRD\s*=\s*\{\s*pid\s*:\s*(\d+)\s*,\s*tok\s*:\s*"([A-Za-z0-9._-]{1,200})"\s*,\s*k\s*:\s*"([A-Za-z0-9+/=]{1,200})"(?:\s*,\s*(?:firstEp|lastEp)\s*:\s*\d+){0,2}\s*\}/);
  if(!config)throw Error('unsupported_source');
  const api=new URL('/wp-json/gnrd/v1/player',page);api.search=new URLSearchParams({id:config[1],t:config[2]});
  const reply=JSON.parse(await sourceText(api.href,u=>u.origin===page.origin,{...options,headers:{'X-Requested-With':'gnrd','Referer':page.href}}));

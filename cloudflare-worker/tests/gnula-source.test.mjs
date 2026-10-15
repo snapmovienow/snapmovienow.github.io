@@ -22,6 +22,8 @@ const fetcher=async(value,options={})=>{
 };
 assert.equal(await resolveGnula(page,null,{fetcher}),cdn+'?signed=1');
 assert.equal(await resolveGnula(page,null,{fetcher}),cdn+'?signed=2','every playback obtains a new signature from the saved page');
+const moviePage='https://ww3.gnulahd.nu/ver/test-film/';
+assert.equal(await resolveGnula(moviePage,null,{fetcher:async(url,options)=>url===moviePage?new Response(html.replace('};',',firstEp:0,lastEp:0};')):fetcher(url,{...options,headers:{...options.headers,Referer:page}})}),cdn+'?signed=2','movie player configuration with firstEp/lastEp uses the same validated resolver');
 assert.ok(!calls.some(url=>url.includes('wrongdub')||url.includes('127.0.0.1')||url.includes('vidaraa.cc')),'unsupported hosts and other dubs are never fetched');
 assert.ok(calls.some(url=>url.startsWith('https://megankiddifference.com/')),'the current verified VOE redirect is supported');
 for(const destination of ['https://127.0.0.1/private','https://untrusted.invalid/e/episode123','https://user:pass@megankiddifference.com/e/episode123','https://megankiddifference.com/e/differentepisode']){
