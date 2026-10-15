@@ -13,7 +13,7 @@ export async function prepareWebPlayback(body,session,requestUrl,env,ctx,deps){
   let credentials=session,lease_id,provider_id;
   if(session.managed){
    let allocation;
-   try{allocation=await deps.managedPlayback(env,{...session,request_id,mediaKey:type+'|'+server+'|'+body.id+'|'+ext,...(activity?{activity}:{})},server,ctx,excluded)}
+   try{allocation=await deps.managedPlayback(env,{...session,request_id,client:deps.client,mediaKey:type+'|'+server+'|'+body.id+'|'+ext,...(activity?{activity}:{})},server,ctx,excluded)}
    catch(error){return deps.json({error:error.message.startsWith('panel_')?error.message:'provider_not_configured'},503)}
    if(!allocation.r.ok)return deps.json(await allocation.r.json(),allocation.r.status);
    credentials=allocation.credentials;provider_id=allocation.provider_id;lease_id=(await allocation.r.json()).lease_id;

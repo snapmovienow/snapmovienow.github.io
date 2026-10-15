@@ -1,3 +1,4 @@
+import {requestConnectionClient} from './connection-monitor.mjs';
 import {handleXtream} from './xtream.mjs';
 
 import {createProviderCatalog,fingerprint} from './provider-catalog.mjs';
@@ -43,7 +44,7 @@ export function createXtreamBridge(deps) {
       const begun=await privateCall('/playback-begin',{sid:session.sid,request_id});if(!begun.ok)return deps.json(await begun.json(),begun.status);
       const excluded=[];let lastFailure=null;
       for(let attempt=0;attempt<3;attempt++){
-      const mediaSession={...session,request_id,mediaKey:item.type+'|'+item.server+'|'+item.upstreamId+'|'+item.ext,...(activity?{activity}:{})};
+      const mediaSession={...session,request_id,client:requestConnectionClient(request),mediaKey:item.type+'|'+item.server+'|'+item.upstreamId+'|'+item.ext,...(activity?{activity}:{})};
       const allocation=await deps.managedPlayback(env,mediaSession,item.server,ctx,excluded);
       if(!allocation.r.ok){if(lastFailure&&allocation.r.status===409)return deps.json({error:'upstream_unavailable'},lastFailure);return deps.json(await allocation.r.json(),allocation.r.status)}
       const {lease_id}=await allocation.r.json(),credentials=allocation.credentials;

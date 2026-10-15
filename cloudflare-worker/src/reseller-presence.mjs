@@ -34,3 +34,5 @@ export async function resellerPlaybackSummary(store,leases,b,now=Date.now()){
  }
  return answer({ok:true,checkedAt:now,connectionsUsed,linesOnline});
 }
+
+export {resellerLiveConnections} from './connection-monitor.mjs';

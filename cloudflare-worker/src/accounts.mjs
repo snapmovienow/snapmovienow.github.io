@@ -1,4 +1,5 @@
-import {resellerPresence,resellerPlaybackSummary,recordCustomerActivity} from './reseller-presence.mjs';
+import {cleanConnectionClient,recordConnectionLimit,updateConnectionQuality,closeResellerConnection} from './connection-monitor.mjs';
+import {resellerPresence,resellerPlaybackSummary,resellerLiveConnections,recordCustomerActivity} from './reseller-presence.mjs';
 import {resellerAccounts} from './reseller-accounts.mjs';
 import {nativeResellerImport} from './native-reseller-import.mjs';
 // Private Durable Object routes. This module is never served as an HTTP endpoint.
@@ -27,6 +28,9 @@ export async function accountsFetch(state,env,req){
  const leases=await openLeaseStore(store);
  if(p==='/reseller-presence')return store.transaction(tx=>resellerPresence(tx,leases.in(tx),b));
  if(p==='/reseller-playback-summary')return store.transaction(tx=>resellerPlaybackSummary(tx,leases.in(tx),b));
+ if(p==='/reseller-connection-close')return store.transaction(tx=>closeResellerConnection(tx,leases.in(tx),b));
+ if(p==='/playback-quality')return store.transaction(tx=>updateConnectionQuality(tx,leases.in(tx),b));
+ if(p==='/reseller-live-connections')return store.transaction(tx=>resellerLiveConnections(tx,leases.in(tx),b));
  if(['/native-list','/native-record','/native-claim','/native-verify'].includes(p))return nativeResellerImport(store,p,b);
  if(p==='/reseller-portal-recipient')return answer(await store.get('reseller-portal-recipient:'+b.accountId)||null);
  if(p==='/reseller-portal-recipient-ensure')return store.transaction(async tx=>{const key='reseller-portal-recipient:'+b.accountId,current=await tx.get(key);if(current)return answer(current);if(!b.accountId||typeof b.encrypted!=='string'||b.encrypted.length>12000)return answer({error:'bridge_input'},400);const value={encrypted:b.encrypted};await tx.put(key,value);return answer(value);});
@@ -139,9 +143,9 @@ export async function accountsFetch(state,env,req){
   const sessionLeases=await local.active({sid:b.sid});
   if(b.request_id){const previous=[...sessionLeases].find(([,l])=>l.mediaKey===b.mediaKey&&!(b.exclude||[]).includes(l.provider_id));if(previous){const [id,l]=previous;l.until=Date.now()+90000;l.request_id=b.request_id;const activity=cleanPlaybackActivity(b.activity,String(b.mediaKey||'').split('|')[0]);if(activity)l.activity=activity;await local.put(id,l);await recordCustomerActivity(tx,u.id);const pool=await tx.get('pool'),line=pool?.lines?.find(x=>x.id===l.provider_id);return answer({lease_id:id,provider_id:l.provider_id,encrypted:line?.encrypted,maxConnections:line?.maxConnections,reused:true,request_id:b.request_id})}}
   await local.removeFor({sid:b.sid});
-  if((b.xtream||u.resellerBridge)&&await local.count({uid:b.uid})>=3)return answer({error:'user_connection_limit'},409);
+  if(b.xtream||u.resellerBridge){const used=await local.count({uid:b.uid});if(used>=3){await recordConnectionLimit(tx,u,b,used);return answer({error:'user_connection_limit'},409);}}
   const activity=cleanPlaybackActivity(b.activity,String(b.mediaKey||'').split('|')[0]);
-  const extra={...(b.xtream?{xtream:true}:{}),...(b.request_id?{mediaKey:b.mediaKey,request_id:b.request_id}:{}),...(activity?{activity}:{})};
+  const extra={startedAt:Date.now(),client:cleanConnectionClient(b.client),...(b.xtream?{xtream:true}:{}),...(b.request_id?{mediaKey:b.mediaKey,request_id:b.request_id}:{}),...(activity?{activity}:{})};
   if(provider.mode==='panel'){
    // Inventory refresh stays off the streaming path. Counts use an index,
    // rather than deserializing all leases once for every provider candidate.

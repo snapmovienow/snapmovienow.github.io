@@ -1,3 +1,4 @@
+import {requestConnectionClient} from './connection-monitor.mjs';
 import {createResellerPortal,matchesResellerPortal,PORTAL_ACCOUNT} from './reseller-portal.mjs';
 import {createResellerBridge} from './reseller-bridge.mjs';
 import {profileRoute} from './profiles.mjs';
@@ -236,7 +237,7 @@ if(op==='playback_metric'){
  if(!session.managed)return json({ok:true,ignored:true});
  const pool=await (await directory(env,'/pool')).json(),servers=new Set(['ccf','gnula',...(pool.lines||[]).map(l=>l.server||'ccf')]);
  if(!servers.has(b.metric?.server))return json({error:'invalid_metric'},400);
- const r=await env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_operations_v1')).fetch('https://private/operations/ingest',{method:'POST',body:JSON.stringify({uid:session.uid,metric:b.metric})});return json(await r.json(),r.status);
+ const r=await env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_operations_v1')).fetch('https://private/operations/ingest',{method:'POST',body:JSON.stringify({uid:session.uid,metric:b.metric})});const data=await r.json();if(r.ok&&!data.limited&&b.lease_id&&b.request_id)await directory(env,'/playback-quality',{sid:session.sid,lease_id:b.lease_id,request_id:b.request_id,metric:b.metric,observation:b.observation}).catch(()=>{});return json(data,r.status);
 }
 if(op==='profile_get'||op==='profile_patch'){
  if(!session.managed)return json({error:'managed_profile_required'},403);
@@ -263,7 +264,7 @@ if(op==="stream_token"){
   if(b.type==='series'&&!parentId)parentId=(await (await registry(env,'/xtream-episode',{server:b.server||'ccf',id:b.id})).json())?.parentId;
   if(!await adultPolicy.allowed({kind:b.type==='series'?'episode':b.type||'movie',server:b.server||'ccf',upstreamId:b.id,parentId}))return json({error:'adult_content_disabled'},403);
  }
- return await prepareWebPlayback(b,session,req.url,env,ctx,{directory,managedPlayback,ticket,serverStream,json,cleanExt,origin:ORIGIN,activity:async item=>{
+ return await prepareWebPlayback(b,session,req.url,env,ctx,{directory,managedPlayback,ticket,serverStream,json,cleanExt,origin:ORIGIN,client:requestConnectionClient(req),activity:async item=>{
   if(item.type==='series'&&!item.parentId){const record=await (await registry(env,'/xtream-episode',{server:item.server,id:item.id})).json();if(record?.activity)return record.activity;item.parentId=record?.parentId}
   return cachedPlaybackActivity(catalog,item);
  }});

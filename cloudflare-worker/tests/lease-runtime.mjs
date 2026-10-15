@@ -54,6 +54,7 @@ try{
   const summaryStarts=[customer(0),{...customer(0),sid:'second-device-0',request_id:'second-request-0'},customer(100),customer(200)];
   for(const playback of summaryStarts){assert.equal((await call(totalsObject,'/accounts/playback-begin',playback)).status,200);assert.equal((await call(totalsObject,'/accounts/acquire',playback)).status,200);}
   const totals=await call(totalsObject,'/accounts/reseller-playback-summary',{accountId:totalsAccount});assert.equal(totals.status,200);assert.equal(totals.data.connectionsUsed,4);assert.equal(totals.data.linesOnline,3);
+  const liveRows=await call(totalsObject,'/accounts/reseller-live-connections',{accountId:totalsAccount,page:1,pageSize:50});assert.equal(liveRows.status,200);assert.equal(liveRows.data.rows.length,4);assert.equal(liveRows.data.connectionsUsed,4);assert.equal(liveRows.data.rows.filter(r=>r.username==='customer0').length,2);assert.ok(!JSON.stringify(liveRows.data).includes('request_id'));
   await call(totalsObject,'/accounts/release-session',{sid:'s0'});await call(totalsObject,'/accounts/release-session',{sid:'second-device-0'});
   const fewer=await call(totalsObject,'/accounts/reseller-playback-summary',{accountId:totalsAccount});assert.equal(fewer.data.connectionsUsed,2);assert.equal(fewer.data.linesOnline,2);
   report.checks.push('real SQLite dashboard totals span 201 paginated customers and distinguish concurrent devices from online users');
