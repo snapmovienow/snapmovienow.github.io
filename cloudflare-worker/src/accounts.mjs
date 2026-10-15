@@ -3,7 +3,7 @@ import {cleanConnectionClient,recordConnectionLimit,updateConnectionQuality,clos
 import {resellerPresence,resellerPlaybackSummary,resellerLiveConnections,recordCustomerActivity} from './reseller-presence.mjs';
 import {resellerAccounts} from './reseller-accounts.mjs';
 import {nativeResellerImport} from './native-reseller-import.mjs';
-import {catalogMaintenanceRoute} from './catalog-maintenance.mjs';
+import {catalogMaintenanceRoute,runCatalogMaintenance} from './catalog-maintenance.mjs';
 // Private Durable Object routes. This module is never served as an HTTP endpoint.
 import {contentPermissions} from './content-permissions.mjs';
 import {catalogCacheRoute} from './catalog-cache.mjs';
@@ -28,7 +28,10 @@ export async function accountsFetch(state,env,req){
  const p=new URL(req.url).pathname.replace('/accounts','');const b=await req.json();const store=state.storage;
  try{
  const leases=await openLeaseStore(store);
- if(['/catalog-maintenance-status','/catalog-maintenance-start','/catalog-maintenance-probe'].includes(p))return await catalogMaintenanceRoute(store,leases,p,b);
+ if(p==='/catalog-maintenance-tick'){
+  await runCatalogMaintenance(env,{directory:(env,path,body={})=>env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_accounts_v1')).fetch('https://private/accounts'+path,{method:'POST',body:JSON.stringify(body)})});return answer({ok:true});
+ }
+ if(['/catalog-maintenance-status','/catalog-maintenance-start','/catalog-maintenance-probe','/catalog-maintenance-observe'].includes(p))return await catalogMaintenanceRoute(store,leases,p,b);
  if(['/exclusive-read','/exclusive-item-read','/exclusive-save','/exclusive-cover-save','/exclusive-cover-read'].includes(p))return store.transaction(async tx=>{
   const response=await exclusiveCatalogRoute(tx,p,b);
   if(p==='/exclusive-save'&&response.ok){const {item}=await response.clone().json();await leases.in(tx).removeMatching(l=>l.exclusiveParentId===item.id&&(!item.visible||l.playbackRevision!==item.playbackRevision));}

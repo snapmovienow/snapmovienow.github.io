@@ -41,7 +41,7 @@ async function save(store,leases,row,revision){
 function planMovies(rows,feed){
  const proposals=new Map(feed.items.map(x=>[x.id,x]));const items=[];
  for(const row of rows.filter(x=>managedMovie(x)&&x.visible)){
-  const proposal=proposals.get(row.id);if(proposal&&(proposal.year!==row.year||norm(proposal.name)!==norm(row.name)))fail('movie_identity_changed');
+  const candidate=proposals.get(row.id),proposal=candidate&&candidate.year===row.year&&norm(candidate.name)===norm(row.name)?candidate:null;
   items.push({key:row.id,id:row.id,title:row.name,type:'movie',category:'check',before:row.page,beforeMode:row.mode,page:proposal?.page||row.page,mode:proposal?'gnula':row.mode,preferredEmbed:proposal&&proposal.page!==row.page?null:row.preferredEmbed||null,proposal});proposals.delete(row.id);
  }
  for(const item of proposals.values()){
@@ -57,7 +57,11 @@ function planEpisodes(rows,discovered){
  return items.slice(0,100);
 }
 export async function catalogMaintenanceRoute(store,leases,path,body,{probe=inspectCatalogSource,now=Date.now}={}){
- if(path==='/catalog-maintenance-status')return Response.json(Object.fromEntries(await Promise.all(kinds.map(async kind=>[kind,report(await store.get(jobKey(kind)))]))));
+ if(path==='/catalog-maintenance-status')return Response.json({...Object.fromEntries(await Promise.all(kinds.map(async kind=>[kind,report(await store.get(jobKey(kind)))]))),runner:await store.get('catalog-maintenance:runner')||null});
+ if(path==='/catalog-maintenance-observe'){
+  const phases=new Set(['started','feed','discovery','start','probes','completed','failed']);if(!phases.has(body.phase)||body.kind!==undefined&&!kinds.includes(body.kind))return Response.json({error:'invalid_catalog_observation'},{status:400});
+  await store.transaction(async tx=>{const old=await tx.get('catalog-maintenance:runner')||{};await tx.put('catalog-maintenance:runner',{...old,...(body.phase==='started'?{startedAt:now()}:{lastStepAt:now()}),phase:body.phase,...(body.kind?{kind:body.kind}:{}),...(body.reason?{reason:String(body.reason).replace(/[^a-z_]/g,'').slice(0,60)}:body.phase==='started'?{reason:null}:{})});});return Response.json({ok:true});
+ }
  const kind=body.kind;if(!kinds.includes(kind))return Response.json({error:'invalid_catalog_kind'},{status:400});
  if(path==='/catalog-maintenance-start')return store.transaction(async tx=>{
   const feed=validateCatalogFeed(body.feed,kind),old=await tx.get(jobKey(kind));
@@ -71,14 +75,14 @@ export async function catalogMaintenanceRoute(store,leases,path,body,{probe=insp
  const claimed=await store.transaction(async tx=>{
   const job=await tx.get(jobKey(kind)),item=job?.items.find(x=>x.key===body.key);
   if(!job||job.hash!==body.hash||!item||item.result||item.claimUntil>now())return null;
-  item.claim=crypto.randomUUID();item.claimUntil=now()+60000;await tx.put(jobKey(kind),job);return structuredClone(item);
+  item.claim=crypto.randomUUID();item.claimUntil=now()+120000;await tx.put(jobKey(kind),job);return structuredClone(item);
  });if(!claimed)return Response.json({ok:true,skipped:true});
- let check;try{check=await probe(claimed);}catch{check={ok:false};}
+ let check,fallback=false;try{check=await probe(claimed);if(!check.ok&&claimed.before&&claimed.before!==claimed.page){const original=await probe({...claimed,page:claimed.before,mode:claimed.beforeMode||claimed.mode,preferredEmbed:null});if(original.ok){check=original;fallback=true;}}}catch{check={ok:false};}
  return store.transaction(async tx=>{
   const job=await tx.get(jobKey(kind)),item=job?.items.find(x=>x.key===body.key);
   if(!job||job.hash!==body.hash||!item||item.claim!==claimed.claim||item.result)return Response.json({ok:true,skipped:true});
-  const result={status:check.ok?'online':'unavailable',checkedAt:now(),check:check.ok?check.check:'unavailable'};
-  if(check.ok){
+  const result={status:check.ok?'online':'unavailable',checkedAt:now(),check:check.ok?check.check:'unavailable',...(fallback?{replacementUnavailable:true}:{})};
+  if(check.ok&&!fallback){
    const snapshot=await exclusiveSnapshot(tx);let row=snapshot.items.find(x=>x.id===(item.parentId||item.id));
    if(item.type==='episode'){
     const ep=row?.episodes?.find(x=>x.id===item.id);
@@ -112,24 +116,26 @@ async function boundedText(response,max){
 }
 export async function runCatalogMaintenance(env,{directory,fetcher=fetch}={}){
  if(env.ENVIRONMENT==='staging'||env.CATALOG_MAINTENANCE_ENABLED!=='true')return;
+ const observe=async(phase,kind,reason)=>{const r=await directory(env,'/catalog-maintenance-observe',{phase,...(kind?{kind}:{}),...(reason?{reason}:{})});await r.body?.cancel();};await observe('started');
  const stateResponse=await directory(env,'/catalog-maintenance-status'),state=stateResponse.ok?await stateResponse.json():{};
- for(const kind of kinds){try{
+ let failed=false;for(const kind of kinds){let phase='feed';try{
   const url='https://raw.githubusercontent.com/snapmovienow/snapmovienow.github.io/'+CATALOG_FEED_BRANCH+'/catalog-feeds/'+kind+'.json';
-  const text=await boundedText(await fetcher(url,{redirect:'error',headers:{Accept:'application/json'},signal:AbortSignal.timeout(10000)}),64000),feed=validateCatalogFeed(JSON.parse(text),kind);
+  const text=await boundedText(await fetcher(url,{redirect:'manual',headers:{Accept:'application/json'},signal:AbortSignal.timeout(10000)}),64000),feed=validateCatalogFeed(JSON.parse(text),kind);
   const hash=[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(text)))].map(x=>x.toString(16).padStart(2,'0')).join('');
   if(state[kind]?.hash===hash&&state[kind]?.state==='completed')continue;
+  phase='discovery';
   let discovered=[],discoveryError=false;
-  if(kind==='beerus'&&state[kind]?.hash!==hash)try{discovered=discoverBeerusEpisodes(await boundedText(await fetcher(BEERUS_PAGE,{redirect:'error',headers:{'User-Agent':'Mozilla/5.0'},signal:AbortSignal.timeout(20000)}),1000000));if(!discovered.length)discoveryError=true;}catch{discoveryError=true;}
-  const begun=await directory(env,'/catalog-maintenance-start',{kind,feed,hash,discovered,discoveryError});if(!begun.ok){await begun.body?.cancel();continue;}
+  if(kind==='beerus'&&state[kind]?.hash!==hash)try{discovered=discoverBeerusEpisodes(await boundedText(await fetcher(BEERUS_PAGE,{redirect:'manual',headers:{'User-Agent':'Mozilla/5.0'},signal:AbortSignal.timeout(20000)}),1000000));if(!discovered.length)discoveryError=true;}catch{discoveryError=true;}
+  phase='start';const begun=await directory(env,'/catalog-maintenance-start',{kind,feed,hash,discovered,discoveryError});if(!begun.ok){await begun.body?.cancel();throw Error('job_start_failed');}
   const {pending}=await begun.json();
   // Separate private object requests keep each media probe within its own
   // network budget. Checks precede additions so rotation sees actual health.
-  const selected=pending.slice(0,kind==='beerus'?8:24);
+  phase='probes';const selected=pending.slice(0,kind==='beerus'?8:24);
   for(const category of ['check','addition']){
    const items=selected.filter(x=>x.category===category);
    for(let at=0;at<items.length;at+=4)await Promise.all(items.slice(at,at+4).map(async item=>{const response=await directory(env,'/catalog-maintenance-probe',{kind,hash,key:item.key});await response.body?.cancel();}));
   }
- }catch{console.error({event:'catalog_maintenance_failed',kind});}}
+ }catch{failed=true;await observe('failed',kind,phase+'_failed');console.error({event:'catalog_maintenance_failed',kind});}}if(!failed)await observe('completed');
 }
 export async function catalogMaintenanceStatus(env,directory){
  if(env.CATALOG_MAINTENANCE_ENABLED!=='true')return {enabled:false};
