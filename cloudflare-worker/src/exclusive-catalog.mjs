@@ -1,4 +1,5 @@
 import {GNULA_CATALOG} from './exclusive-seed.mjs';
+import {GNULA_PAGE_HOSTS} from './gnula-source.mjs';
 import {isAdult} from './content-permissions.mjs';
 import {writeAudit} from './security.mjs';
 const INDEX='exclusive:index',ITEM='exclusive:item:',COVER='exclusive:cover:',MAX_ITEMS=300;
@@ -12,7 +13,7 @@ export function exclusiveURL(value,{poster=false}={}){
  if(u.protocol!=='https:'||u.username||u.password||u.port&&u.port!=='443'||u.hash||!host.includes('.')||! /^[a-z0-9.-]+$/.test(host)||/^\d+(?:\.\d+)*$/.test(host)||host.includes('..')||/(?:^|\.)(?:localhost|local|internal|test|invalid|example|onion)$/.test(host)||/(?:^|\.)(?:nip\.io|sslip\.io|localtest\.me|metadata\.google\.internal)$/.test(host)||host==='api.snaptvnow.com'||host.endsWith('.chatgpt.site'))fail('exclusive_url');
  return u.href;
 }
-function address(value,mode){const url=exclusiveURL(value);if(mode==='gnula'&&!['www2.gnula.one','gnula.one','www.gnula.one'].includes(new URL(url).hostname))fail('exclusive_source');if(mode==='direct'&&!/\.(?:m3u8|mp4|mkv|webm|m4v|mov)$/i.test(new URL(url).pathname))fail('exclusive_source');return url;}
+function address(value,mode){const url=exclusiveURL(value);if(mode==='gnula'&&!GNULA_PAGE_HOSTS.has(new URL(url).hostname))fail('exclusive_source');if(mode==='direct'&&!/\.(?:m3u8|mp4|mkv|webm|m4v|mov)$/i.test(new URL(url).pathname))fail('exclusive_source');return url;}
 const plain=(value,max,required=false)=>{if(typeof value!=='string'||value.length>max||/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(value)||required&&!value.trim())fail();return value.trim()};
 function clean(input,old){
  if(!input||!exclusiveId(input.id)||!['movie','series'].includes(input.type)||!['gnula','direct'].includes(input.mode)||typeof input.visible!=='boolean'||typeof input.adult!=='boolean')fail();
