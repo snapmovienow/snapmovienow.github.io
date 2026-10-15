@@ -1,8 +1,8 @@
 {
   "version": 1,
   "kind": "movies",
-  "requestId": "movies-initial-20261015",
-  "generatedAt": "2026-10-15T20:57:07.695Z",
+  "requestId": "movies-review-20261015210326068",
+  "generatedAt": "2026-10-15T21:03:26.068Z",
   "items": [
     {
       "id": "gnula-batman-v-superman",
@@ -147,6 +147,14 @@
       "page": "https://www2.gnula.one/movie/una-navidad-muy-jonas-brothers/",
       "poster": "https://www2.gnula.one/wp-content/uploads/2025/11/rQp9P3CigiN3bgNm0NkYoSl3bMv.jpg",
       "plot": ""
+    },
+    {
+      "id": "gnula-la-isla-olvidada",
+      "name": "La isla olvidada (2026)",
+      "year": 2026,
+      "page": "https://ww3.gnulahd.nu/ver/la-isla-olvidada/",
+      "poster": "https://i1.wp.com/ww3.gnulahd.nu/wp-content/uploads/2026/10/Lr0Ng7Gg02RW1AyfYEL6P0WUvd-683x1024.jpg",
+      "plot": "Jo y Raissa quedan varadas en la isla de Nakali y deben decidir qué recuerdos están dispuestas a sacrificar para volver a casa. Versión disponible en esta revisión: CAM, subtitulada."
     }
   ]
 }
