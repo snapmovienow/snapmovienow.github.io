@@ -20,7 +20,15 @@ export function validateCatalogFeed(feed,kind){
  const ids=new Set();const items=feed.items.map(item=>{
   if(!item||!exclusiveId(item.id)||ids.has(item.id)||typeof item.name!=='string'||!item.name.trim()||item.name.length>180||!Number.isInteger(item.year)||item.year<1880||item.year>2200)fail('invalid_catalog_movie');ids.add(item.id);
   return {id:item.id,name:item.name.trim(),year:item.year,page:page(item.page),poster:item.poster?exclusiveURL(item.poster):'',plot:typeof item.plot==='string'?item.plot.slice(0,3000):''};
- });return {...feed,items};
+ });
+ if(feed.retire!==undefined&&!Array.isArray(feed.retire)||feed.retire?.length>20)fail('invalid_catalog_retirement');
+ const retire=(feed.retire||[]).map(item=>{if(!item||!exclusiveId(item.id)||ids.has(item.id)||typeof item.name!=='string'||!item.name.trim()||item.name.length>180||!Number.isInteger(item.year)||item.year<1880||item.year>2200||item.reason!=='outside_current_cinema_selection')fail('invalid_catalog_retirement');ids.add(item.id);return {id:item.id,name:item.name.trim(),year:item.year,reason:item.reason};});
+ let cinemaReview;
+ if(feed.cinemaReview){const review=feed.cinemaReview,checked=Date.parse(review.checkedAt);if(!Number.isFinite(checked)||checked>Date.now()+3600000||checked<Date.now()-8*86400000||!Array.isArray(review.sources)||review.sources.length<2||review.sources.length>4)fail('invalid_cinema_review');
+  const sources=review.sources.map(value=>exclusiveURL(value));if(!sources.every(value=>['www.amctheatres.com','www.regmovies.com'].includes(new URL(value).hostname))||!sources.some(value=>new URL(value).hostname==='www.amctheatres.com')||!sources.some(value=>new URL(value).hostname==='www.regmovies.com'&&new URL(value).pathname.startsWith('/theatres/regal-warren-')))fail('invalid_cinema_review');cinemaReview={checkedAt:review.checkedAt,sources};
+ }
+ if(retire.length&&!cinemaReview)fail('cinema_review_required');
+ return {...feed,items,retire,...(cinemaReview?{cinemaReview}:{})};
 }
 export function discoverBeerusEpisodes(html){
  const found=new Map();for(const match of html.matchAll(/https:\/\/ww3\.gnulahd\.nu\/dragon-ball-super-beerus-(\d{1,3})x(\d{1,4})\//g)){
@@ -40,14 +48,16 @@ async function save(store,leases,row,revision){
 }
 function planMovies(rows,feed){
  const proposals=new Map(feed.items.map(x=>[x.id,x]));const items=[];
+ const retiring=new Map((feed.retire||[]).map(x=>[x.id,x]));
  for(const row of rows.filter(x=>managedMovie(x)&&x.visible)){
+  const retirement=retiring.get(row.id);if(retirement){items.push({key:row.id,id:row.id,title:row.name,type:'retirement',category:'retirement',before:row.page,beforeMode:row.mode,beforeRevision:row.revision,proposal:retirement});continue;}
   const candidate=proposals.get(row.id),proposal=candidate&&candidate.year===row.year&&norm(candidate.name)===norm(row.name)?candidate:null;
   items.push({key:row.id,id:row.id,title:row.name,type:'movie',category:'check',before:row.page,beforeMode:row.mode,page:proposal?.page||row.page,mode:proposal?'gnula':row.mode,preferredEmbed:proposal&&proposal.page!==row.page?null:row.preferredEmbed||null,proposal});proposals.delete(row.id);
  }
  for(const item of proposals.values()){
   if(rows.some(x=>x.id===item.id||x.type==='movie'&&x.year===item.year&&norm(x.name)===norm(item.name)))continue;
   items.push({key:item.id,id:item.id,title:item.name,type:'movie',category:'addition',page:item.page,mode:'gnula',proposal:item});
- }return items;
+ }return items.sort((a,b)=>(a.category==='retirement'?0:1)-(b.category==='retirement'?0:1));
 }
 function planEpisodes(rows,discovered){
  const matches=rows.filter(row=>row.type==='series'&&norm(row.name)==='dragon ball super beerus');if(matches.length!==1)fail('beerus_series_not_unique');
@@ -77,14 +87,17 @@ export async function catalogMaintenanceRoute(store,leases,path,body,{probe=insp
   if(!job||job.hash!==body.hash||!item||item.result||item.claimUntil>now())return null;
   item.claim=crypto.randomUUID();item.claimUntil=now()+120000;await tx.put(jobKey(kind),job);return structuredClone(item);
  });if(!claimed)return Response.json({ok:true,skipped:true});
- let check,fallback=false;try{check=await probe(claimed);if(!check.ok&&claimed.before&&claimed.before!==claimed.page){const original=await probe({...claimed,page:claimed.before,mode:claimed.beforeMode||claimed.mode,preferredEmbed:null});if(original.ok){check=original;fallback=true;}}}catch{check={ok:false};}
+ let check,fallback=false;try{check=claimed.type==='retirement'?{ok:true,check:'cinema_review'}:await probe(claimed);if(!check.ok&&claimed.before&&claimed.before!==claimed.page){const original=await probe({...claimed,page:claimed.before,mode:claimed.beforeMode||claimed.mode,preferredEmbed:null});if(original.ok){check=original;fallback=true;}}}catch{check={ok:false};}
  return store.transaction(async tx=>{
   const job=await tx.get(jobKey(kind)),item=job?.items.find(x=>x.key===body.key);
   if(!job||job.hash!==body.hash||!item||item.claim!==claimed.claim||item.result)return Response.json({ok:true,skipped:true});
   const result={status:check.ok?'online':'unavailable',checkedAt:now(),check:check.ok?check.check:'unavailable',...(fallback?{replacementUnavailable:true}:{})};
   if(check.ok&&!fallback){
    const snapshot=await exclusiveSnapshot(tx);let row=snapshot.items.find(x=>x.id===(item.parentId||item.id));
-   if(item.type==='episode'){
+   if(item.type==='retirement'){
+    if(!row?.visible||!managedMovie(row)||row.revision!==item.beforeRevision||row.page!==item.before||row.mode!==item.beforeMode||row.year!==item.proposal.year||norm(row.name)!==norm(item.proposal.name))result.status='catalog_changed';
+    else{await save(tx,leases,{...row,visible:false},row.revision);result.status='retired';result.reason=item.proposal.reason;}
+   }else if(item.type==='episode'){
     const ep=row?.episodes?.find(x=>x.id===item.id);
     if(!row?.visible||row.mode!=='gnula'||item.before&&ep?.page!==item.before||!item.before&&row.episodes.some(x=>x.season===item.season&&x.episode_num===item.episode_num))result.status='catalog_changed';
     else if(!ep||ep.page!==item.page){
@@ -129,9 +142,10 @@ export async function runCatalogMaintenance(env,{directory,fetcher=fetch}={}){
   phase='start';const begun=await directory(env,'/catalog-maintenance-start',{kind,feed,hash,discovered,discoveryError});if(!begun.ok){await begun.body?.cancel();throw Error('job_start_failed');}
   const {pending}=await begun.json();
   // Separate private object requests keep each media probe within its own
-  // network budget. Checks precede additions so rotation sees actual health.
+  // network budget. Explicit cinema retirements free slots, then source checks
+  // precede additions so rotation sees actual health.
   phase='probes';const selected=pending.slice(0,kind==='beerus'?8:24);
-  for(const category of ['check','addition']){
+  for(const category of ['retirement','check','addition']){
    const items=selected.filter(x=>x.category===category);
    for(let at=0;at<items.length;at+=4)await Promise.all(items.slice(at,at+4).map(async item=>{const response=await directory(env,'/catalog-maintenance-probe',{kind,hash,key:item.key});await response.body?.cancel();}));
   }

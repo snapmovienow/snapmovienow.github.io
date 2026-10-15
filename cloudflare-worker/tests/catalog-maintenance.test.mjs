@@ -24,6 +24,11 @@ assert.throws(()=>validateCatalogFeed(feed('movies',1,[{...movie(1),page:'https:
 assert.throws(()=>validateCatalogFeed(feed('movies',1,[movie(1),movie(1)]),'movies'));
 assert.throws(()=>validateCatalogFeed({...feed('beerus',1),seriesPage:'https://gnula.one/other/'},'beerus'));
 assert.throws(()=>validateCatalogFeed(feed('beerus',1,[episode(1),episode(1)]),'beerus'));
+const cinemaReview={checkedAt:stamp(1),sources:['https://www.amctheatres.com/movies','https://www.regmovies.com/theatres/regal-warren-east-1444']},retire=item=>({id:item.id,name:item.name,year:item.year,reason:'outside_current_cinema_selection'});
+assert.throws(()=>validateCatalogFeed({...feed('movies',1),retire:[retire(movie(1))]},'movies'),'retirements require a dated cinema review');
+assert.throws(()=>validateCatalogFeed({...feed('movies',1,[movie(1)]),cinemaReview,retire:[retire(movie(1))]},'movies'),'a title cannot be selected and retired together');
+assert.throws(()=>validateCatalogFeed({...feed('movies',1),retire:[retire(movie(1))],cinemaReview:{...cinemaReview,sources:['https://www.amctheatres.com/movies','https://untrusted.net/']}},'movies'));
+assert.throws(()=>validateCatalogFeed({...feed('movies',1),retire:[retire(movie(1))],cinemaReview:{...cinemaReview,checkedAt:new Date(time-9*86400000).toISOString()}},'movies'));
 assert.equal(discoverBeerusEpisodes([episode(2).page,episode(1).page,episode(2).page,'https://evil.net/dragon-ball-super-beerus-1x03/'].join(' ')).length,2);
 
 const series=movie(100,{id:'beerus-series',name:'Dragon ball super beerus',type:'series',page:BEERUS_PAGE,episodes:[episode(1)]}),s=await catalog([series]);
@@ -55,6 +60,14 @@ let resolve;const hold=new Promise(r=>resolve=r),running=probe(repair,'movies',1
 snap=await exclusiveSnapshot(repair);assert.equal(snap.items[0].id,'movie-1');assert.equal(snap.items[0].poster,'https://images.snapcdn.net/user.jpg');assert.ok(leases.revoked.length>0,'changed playback revokes obsolete leases without allocating a customer connection');
 await begin(repair,'movies',2,[movie(1,{page:page('bad-replacement')})]);assert.equal((await probe(repair,'movies',2,'movie-1',async item=>item.page===page('bad-replacement')?bad():good())).data.replacementUnavailable,true);assert.equal((await exclusiveSnapshot(repair)).items[0].page,page('replacement'),'a failed replacement cannot overwrite an online original');
 const renamed=await catalog([movie(1,{name:'User edited title'})]);await begin(renamed,'movies',1,[movie(1)]);assert.equal((await probe(renamed,'movies',1,'movie-1')).data.status,'online','metadata edits cannot prevent checks of the rest of the catalog');
+const personal=movie(80,{source:'Personal',mode:'direct',page:'https://media.snapcdn.net/personal.mp4'}),retirement=await catalog([movie(1),movie(2),personal,series]);
+const retirementFeed={...feed('movies',1,[movie(3)]),cinemaReview,retire:[movie(1),movie(2),personal,series].map(retire)};
+started=await call(retirement,'start',{kind:'movies',hash:hash(1),feed:retirementFeed});assert.deepEqual(started.data.pending.map(x=>x.category),['retirement','retirement','addition']);
+assert.equal((await probe(retirement,'movies',1,'movie-1',async()=>{throw Error('retirement must not fetch media')})).data.status,'retired');
+await retirement.put('exclusive:item:movie-2',movie(2,{revision:2}));assert.equal((await probe(retirement,'movies',1,'movie-2')).data.status,'catalog_changed','manual edits supersede an explicit retirement');
+assert.equal((await probe(retirement,'movies',1,'movie-3')).data.status,'added');
+snap=await exclusiveSnapshot(retirement);assert.equal(snap.items.find(x=>x.id==='movie-1').visible,false);assert.equal(snap.items.find(x=>x.id==='movie-2').visible,true);assert.equal(snap.items.find(x=>x.id===personal.id).visible,true);assert.equal(snap.items.find(x=>x.id===series.id).visible,true);
+await call(retirement,'start',{kind:'movies',hash:hash(2),feed:{...retirementFeed,generatedAt:stamp(2),requestId:'retirement-repeat'}});assert.ok(!(await call(retirement,'status')).data.movies.results.some(x=>x.id==='movie-1'),'hidden retired rows are retained without repeating a removal');
 
 const requests=[];let deny=false,privateRedirect=false;
 const fetcher=async(url,options)=>{requests.push(url);assert.equal(options.redirect,'manual');assert.ok(options.headers.Range);const u=new URL(url);
