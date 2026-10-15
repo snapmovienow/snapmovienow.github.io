@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import {chromium} from 'playwright';
-const root=process.cwd(),errors=[],saves=[];let browser;
+const root=process.cwd(),errors=[],saves=[];let browser,launchCalls=0;
 const users=['cliente-demo1','cliente-demo2','cliente-demo3'].map((username,i)=>({username,name:['Cliente de ejemplo 1','Cliente de ejemplo 2','Cliente de ejemplo 3'][i],comments:i?'':'Cliente mensual.\nUsa Fire TV Cube.',status:'active',expiresAt:Date.now()+86400000+12345,updatedAt:Date.now()+i,permissions:{movies:true,series:true,tv:true,adults:false}}));
 const assignments=[{username:'cliente-demo1',accountUsername:'cuenta-demo1',type:'live',activity:{title:'ESPN 1 · 1080'}},{username:'cliente-demo2',accountUsername:'cuenta-demo2',type:'series',activity:{title:'El regreso',seriesTitle:'La casa de papel',season:2,episode:3}}].map(a=>({...a,client:'xtream',lastSeenAt:Date.now(),until:Date.now()+90000}));
 const inventory={accounts:[],assignments,sources:[],generatedAt:Date.now(),summary:{accounts:10,activeAccounts:10,totalCapacity:30,reported:2,reserved:2,available:26}};
@@ -17,6 +17,7 @@ try{
   if(request.method()==='OPTIONS'){await route.fulfill({status:204,headers});return;}
   const body=request.postDataJSON()||{},action=body.action;let value=[];
   if(action==='exclusive-list')value={items:[],revision:1};
+  if(action==='reseller-admin-launch'){launchCalls++;assert.equal(body.access_token,'synthetic-admin-preview-only');value={ok:true,url:'https://snaptvnow-resellers.juancanta89.chatgpt.site/api/owner-access?code=synthetic-single-use-code'};}
   if(action==='status')value={configured:true};
   if(action==='login')value={access_token:'synthetic-admin-preview-only'};
   if(action==='users')value=users;
@@ -59,7 +60,10 @@ try{
  await page.locator('#filter').fill('CLIENTE-DEMO2');assert.equal(await page.locator('#rows .admin-user-card').count(),1);await page.locator('#filter').fill('');
  await first.getByRole('button',{name:'Editar cliente-demo1',exact:true}).click();await form.locator('[name="password"]').fill('another-synthetic-password');await form.locator('[name="comments"]').fill('unsaved comments');
  await page.evaluate(()=>document.querySelector('#exit').click());await page.waitForFunction(()=>!document.querySelector('#editor').open);assert.equal(await form.locator('[name="password"]').inputValue(),'');assert.equal(await page.locator('#rows .admin-user-card').count(),0);assert.equal(await page.locator('#providerAssignments article').count(),0);
+ await page.locator('#loginForm [name="username"]').fill('owner');await page.locator('#loginForm [name="password"]').fill('synthetic-preview-password');await page.locator('#loginForm button').click();await page.locator('#notice').filter({hasText:'Sesión iniciada'}).waitFor();
+ await context.route('https://snaptvnow-resellers.juancanta89.chatgpt.site/api/owner-access?**',route=>route.fulfill({status:200,contentType:'text/html',body:'<h1>Synthetic protected handoff</h1>'}));
+ await page.getByRole('button',{name:'Panel admin reseller',exact:true}).click();await page.waitForURL('https://snaptvnow-resellers.juancanta89.chatgpt.site/api/owner-access?**');assert.equal(launchCalls,1);assert.ok(!page.url().includes('synthetic-admin-preview-only'));
  assert.deepEqual(errors,[],'no script errors');
- fs.writeFileSync('artifacts/admin-users-runtime.json',JSON.stringify({testedAt:new Date().toISOString(),data:'synthetic only',viewports:[360,390,1280],checks:['horizontal actions','below-user permissions','trusted titles and episodes','visible new password','notes persistence','expiry precision','cancel and logout cleanup','comment text safety','permissions preserve notes']},null,2)+'\n');
+ fs.writeFileSync('artifacts/admin-users-runtime.json',JSON.stringify({testedAt:new Date().toISOString(),data:'synthetic only',viewports:[360,390,1280],checks:['horizontal actions','below-user permissions','trusted titles and episodes','visible new password','notes persistence','expiry precision','cancel and logout cleanup','comment text safety','permissions preserve notes','authenticated reseller administrator button']},null,2)+'\n');
  console.log('PASS: mobile/desktop user cards, playback titles, visible password, comments, expiry precision, permission edits and private dialog/logout cleanup.');
 }finally{await browser?.close();server.close();}
