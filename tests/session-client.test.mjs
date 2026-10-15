@@ -8,4 +8,10 @@ const api=client.transport({url:'https://api.snaptvnow.com',cookieMode:true,getS
 const old=api('profile_get',{username:'bob',password:'bad',access_token:'bad',op:'logout'});assert.equal(JSON.parse(last.body).username,'alice');assert.equal(JSON.parse(last.body).op,'profile_get');assert.equal(JSON.parse(last.body).access_token,undefined);assert.equal(last.credentials,'include');session={username:'bob',access_token:'cookie'};release({records:[]});await assert.rejects(old,/session_changed/);
 const pending=api('profile_get');generation++;release({records:[]});await assert.rejects(pending,/session_changed/);
 session=null;await assert.rejects(api('vod'),/session_required/);
+const timed=vm.createContext({performance,AbortSignal:{timeout:ms=>({deadline:ms})}});vm.runInContext(readFileSync(new URL('../session-client.js',import.meta.url),'utf8'),timed);
+const current={username:'alice',access_token:'cookie'};let responseTime=25000;
+const timedApi=timed.SMNSessionClient.transport({url:'https://api.snaptvnow.com',cookieMode:true,getSession:()=>current,getGeneration:()=>1,request:async(_url,{signal})=>{if(responseTime>signal.deadline)throw Error('connection_timeout');return {url:'prepared-video'};}});
+assert.equal((await timedApi('gnula_token')).url,'prepared-video','a source that resolves after 25 seconds can finish inside the server budget');
+await assert.rejects(timedApi('vod'),/connection_timeout/,'catalog requests retain the shorter timeout');
+responseTime=60000;await assert.rejects(timedApi('gnula_token'),/connection_timeout/,'source preparation still has a finite deadline');
 console.log('PASS: password-free persistence, own-domain cookie sentinel, captured credentials and stale account/generation rejection.');

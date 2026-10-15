@@ -1,6 +1,7 @@
 import {selectExclusive,visibleExclusive} from './exclusive-catalog.mjs';
 import {createExclusiveService} from './exclusive-service.mjs';
 import {GNULA_CATALOG} from './exclusive-seed.mjs';
+import {resolveGnula,allowedGnula} from './gnula-source.mjs';
 import {playbackQualityContext} from './native-playback-quality.mjs';
 import {requestConnectionClient} from './connection-monitor.mjs';
 import {createResellerPortal,matchesResellerPortal,PORTAL_ACCOUNT} from './reseller-portal.mjs';
@@ -151,19 +152,7 @@ async function adminRequest(req,env,ctx){
  }
  if(!paths[action])return json({error:"operation_not_allowed"},403);const r=await directory(env,paths[action],b);if(r.ok&&['save','delete'].includes(action))await record(action==='save'?'user_saved':'user_deleted',b.username);return json(await r.json(),r.status);
 }
-const GNULA_PAGE="https://www2.gnula.one/movie/batman-vs-superman-el-origen-de-la-justicia/";
-const gnulaMovie=GNULA_CATALOG.find(x=>x.stream_id==="gnula-batman-v-superman");
 function publicTitle(x){const {page,episodes,preferredEmbed,...item}=x;return item}
-async function sourceHtml(url,signal){const r=await fetch(url,{headers:{"User-Agent":"Mozilla/5.0"},signal:signal?AbortSignal.any([signal,AbortSignal.timeout(20000)]):AbortSignal.timeout(20000)});if(!r.ok)throw Error("source_unavailable");return r.text()}
-function decodeVoe(text){for(const match of text.matchAll(/<script[^>]*type="application\/json"[^>]*>([\s\S]*?)<\/script>/g)){try{const a=JSON.parse(match[1]);if(!Array.isArray(a)||typeof a[0]!=="string")continue;let v=a[0].replace(/[a-zA-Z]/g,c=>String.fromCharCode(c.charCodeAt(0)+(c.toLowerCase()<="m"?13:-13)));v=v.replace(/@\$|\^\^|~@|%\?|\*~|!!|#&/g,"");v=atob(v);v=Array.from(v,c=>String.fromCharCode(c.charCodeAt(0)-3)).reverse().join("");const config=JSON.parse(atob(v));return config.source}catch{}}throw Error("unsupported_config")}
-async function resolveGnula(pageUrl=GNULA_PAGE,preferredEmbed=null,{signal}={}){let html=await sourceHtml(pageUrl,signal);for(const m of html.matchAll(/data-iframe="([^"]+)"/g)){try{html+=" "+atob(m[1])}catch{}}
-const embeds=[...new Set([...(preferredEmbed?[preferredEmbed]:[]),...(html.match(/https:\/\/(?:voe\.sx\/e\/[a-z0-9]+|uqload\.(?:com|vc)\/embed-[a-z0-9]+\.html)/g)||[])])];
-for(const embed of embeds){try{let text=await sourceHtml(embed,signal),source;
-if(new URL(embed).hostname==="voe.sx"){const redirect=text.match(/window\.location\.href\s*=\s*'(https:\/\/[^']+)'/)?.[1];if(redirect){const dest=new URL(redirect);if(dest.protocol!=="https:"||!VOE_EMBED_HOSTS.has(dest.hostname)||dest.port)throw Error("redirect_not_allowed");text=await sourceHtml(dest.href,signal)}source=decodeVoe(text)}else{let config=text;const packed=text.match(/\}\('((?:\\.|[^'])*)',(\d+),(\d+),'([^']*)'\.split\('\|'\)/);if(packed){const radix=Number(packed[2]),words=packed[4].split("|");if(radix<2||radix>36)throw Error("unsupported_config");config=packed[1].replace(/\b[0-9a-z]+\b/g,v=>{const i=parseInt(v,radix);return Number.isFinite(i)&&words[i]?words[i]:v})}source=config.match(/file\s*:\s*"(https:[^"]+\.m3u8[^"]*)"/)?.[1]}
-if(source&&allowedGnula(new URL(source))){const r=await fetch(source,{headers:{"User-Agent":"Mozilla/5.0"},signal:signal?AbortSignal.any([signal,AbortSignal.timeout(15000)]):AbortSignal.timeout(15000)});if(r.ok&&(await r.text()).startsWith("#EXTM3U"))return source}
-}catch{}}throw Error("media_missing")}
-const VOE_EMBED_HOSTS=new Set(["teresapoliticallearn.com"]);
-function allowedGnula(u){return u.protocol==="https:"&&(/^(?:strm\d+\.uqload\.vc|ugc-cdn-caching-[a-z0-9]+\.cloudwindow-route\.com)$/.test(u.hostname))&&!u.port&&!u.username&&!u.password}
 function proxiedMedia(origin,t,url){return origin+"/gnula-media?t="+encodeURIComponent(t)+"&path="+encodeURIComponent(url)}
 async function gnulaMedia(req,env,u,ctx){const t=u.searchParams.get("t")||"",d=await unticket(env,t);if(d?.kind!=="gnula"||!(await sessionCall(env,d.sid,"/check")).ok)return json({error:"session_expired"},401);
  if(d.exclusiveId){const row=await directory(env,'/exclusive-item-read',{id:d.parentId});if(!row.ok)return json({error:'title_not_allowed'},410);const current=selectExclusive([await row.json()],d.exclusiveId);if(!current||!current.row.visible||current.row.playbackRevision!==d.playbackRevision)return json({error:'title_not_allowed'},410);}

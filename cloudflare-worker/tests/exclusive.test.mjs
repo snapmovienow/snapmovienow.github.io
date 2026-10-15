@@ -55,11 +55,14 @@ try{
  assert.equal((await admin('exclusive-save',{item:series,revision:0})).status,200);const info=await(await api('get_exclusive_series_info',{series_id:series.id})).json();assert.equal(info.episodes['1'][0].id,'custom-ep-one');assert.equal(info.episodes['1'][0].smn_profile.episodeId,'custom-ep-one');assert.ok(!JSON.stringify(info).includes('media.snapcdn.net'));
  assert.equal((await admin('exclusive-save',{item:{...series,id:'custom-duplicate'},revision:0})).status,409,'episodes belong to one series only');
  assert.equal((await admin('exclusive-save',{item:{...series,id:'custom-empty',episodes:[]},revision:0})).status,400);
+ response=await play('custom-ep-one','mp4');assert.equal(response.status,200);assert.equal(await response.text(),'abcd','the native episode route delivers the selected episode');
  redirect=true;const checked=await admin('exclusive-check',{id:movie.id});assert.equal(checked.status,400);redirect=false;
  html=true;assert.equal((await admin('exclusive-check',{id:movie.id})).data.ok,false);html=false;assert.equal((await admin('exclusive-check',{id:movie.id})).data.ok,true);
  const webLogin=await post({op:'auth',...customer});assert.equal(webLogin.status,200);const token=webLogin.data.access_token,request_id=crypto.randomUUID();
  const web=await post({op:'gnula_token',access_token:token,id:movie.id,request_id,revision:1});assert.equal(web.status,200);assert.equal(web.data.request_id,request_id);assert.ok(web.data.lease_id);response=await worker.fetch(new Request(web.data.url,{headers:{Range:'bytes=0-3'}}),env);assert.equal(response.status,206);assert.equal(await response.text(),'abcd');
  const replay=await post({op:'gnula_token',access_token:token,id:movie.id,request_id:crypto.randomUUID(),revision:1});assert.equal(replay.status,410,'an obsolete browser request cannot replace its playback');
+ const webEpisode=await post({op:'gnula_token',access_token:token,id:'custom-ep-two',request_id:crypto.randomUUID(),revision:2});assert.equal(webEpisode.status,200);response=await worker.fetch(new Request(webEpisode.data.url),env);assert.equal(response.status,200);assert.equal(await response.text(),'abcd','browser episode preparation uses the selected episode, not the series parent');
+ assert.equal((await admin('exclusive-save',{item:{...series,mode:'gnula',episodes:series.episodes.map(ep=>({...ep,page:'https://ww3.gnulahd.nu/dragon-ball-super-beerus-1x01/'}))},revision:1})).status,200,'the editor accepts stable GnulaHD episode pages instead of expiring CDN URLs');
  const favorite=await post({op:'profile_patch',access_token:token,patches:[{kind:'favorite',key:'movie:exclusive:'+movie.id,type:'movie',id:movie.id,server:'exclusive',updatedAt:Date.now()}]});assert.equal(favorite.status,200);assert.equal(favorite.data.records[0].server,'exclusive');
  const store=objects.get('__smn_accounts_v1').state.storage;
  // A real, tiny PNG verifies cover upload, retrieval and encrypted backup persistence.
