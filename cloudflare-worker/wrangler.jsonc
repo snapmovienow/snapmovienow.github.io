@@ -59,6 +59,11 @@
       "pattern": "juanito.resellers.snaptvnow.com",
       "custom_domain": true,
       "zone_id": "17501b8eeff61147b9fd949f1885d74a"
+    },
+    {
+      "pattern": "resellers.snaptvnow.com",
+      "custom_domain": true,
+      "zone_id": "17501b8eeff61147b9fd949f1885d74a"
     }
   ],
   "durable_objects": {
