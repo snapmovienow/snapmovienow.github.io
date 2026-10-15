@@ -67,8 +67,8 @@ export function createXtreamBridge(deps) {
       }catch(error){lastFailure=502;await privateCall('/release',{sid:session.sid,lease_id,request_id});if(error.message!=='media_origin_unapproved'&&allocation.provider_id&&attempt<2){excluded.push(allocation.provider_id);continue}throw error}
       }
     };
-    try { return await handleXtream(req,{authenticate,catalog,register,resolve,play,adultPolicy:createAdultPolicy(catalog),json:deps.json}); }
-    catch(error) { return deps.json({error:['media_origin_unapproved','provider_unavailable','provider_inactive','panel_unavailable'].includes(error.message)?error.message:'xtream_unavailable'},502); }
+    try { const special=deps.exclusives?await deps.exclusives.xtream(req,env,ctx,authenticate):null;return special||await handleXtream(req,{authenticate,catalog,register,resolve,play,adultPolicy:createAdultPolicy(catalog),json:deps.json}); }
+    catch(error) { if(error.status)return deps.json({error:error.message},error.status);return deps.json({error:['media_origin_unapproved','provider_unavailable','provider_inactive','panel_unavailable'].includes(error.message)?error.message:'xtream_unavailable'},502); }
   };
 }
 

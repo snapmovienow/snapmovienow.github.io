@@ -1,3 +1,4 @@
+import {exportExclusives,validExclusiveBackup,restoreExclusives} from './exclusive-catalog.mjs';
 import {seal,unseal,hashSecret,writeAudit} from './security.mjs';
 const format='SNAP-encrypted-backup-v1';
 const keys=['provider','providers','source-pools','pool','xtream-config'];
@@ -6,7 +7,7 @@ const drillKey='backup-drill-status',freshness=36*3600000;
 export const backupSettingKeys=Object.freeze([...keys]);
 const validUser=u=>u&&/^[a-z0-9_.@-]{3,80}$/.test(u.username)&&typeof u.hash==='string'&&/^[a-f0-9]{64}$/.test(u.hash)&&typeof u.salt==='string'&&u.salt.length>0&&['active','suspended'].includes(u.status)&&Number.isSafeInteger(u.version)&&u.version>=1&&u.version<Number.MAX_SAFE_INTEGER&&(u.comments===undefined||typeof u.comments==='string'&&u.comments.length<=2000)&&(u.expiresAt==null||Number.isFinite(u.expiresAt)&&u.expiresAt>0)&&(u.permissions===undefined||u.permissions&&typeof u.permissions==='object'&&['movies','series','tv','adults'].every(k=>u.permissions[k]===undefined||typeof u.permissions[k]==='boolean'));
 function validSnapshot(snapshot,env){
- return snapshot?.format===format&&snapshot.environment===(env.ENVIRONMENT||'production')&&Array.isArray(snapshot.users)&&snapshot.users.length<=10000&&snapshot.users.every(validUser)&&new Set(snapshot.users.map(u=>u.username)).size===snapshot.users.length&&snapshot.settings&&typeof snapshot.settings==='object'&&!Array.isArray(snapshot.settings)&&Object.keys(snapshot.settings).every(k=>keys.includes(k))&&Number.isSafeInteger(snapshot.createdAt)&&snapshot.createdAt>0&&snapshot.createdAt<=Date.now()+60000;
+ return snapshot?.format===format&&snapshot.environment===(env.ENVIRONMENT||'production')&&Array.isArray(snapshot.users)&&snapshot.users.length<=10000&&snapshot.users.every(validUser)&&new Set(snapshot.users.map(u=>u.username)).size===snapshot.users.length&&snapshot.settings&&typeof snapshot.settings==='object'&&!Array.isArray(snapshot.settings)&&Object.keys(snapshot.settings).every(k=>keys.includes(k)||k==='exclusive-content')&&(!snapshot.settings['exclusive-content']||validExclusiveBackup(snapshot.settings['exclusive-content']))&&Number.isSafeInteger(snapshot.createdAt)&&snapshot.createdAt>0&&snapshot.createdAt<=Date.now()+60000;
 }
 const planFor=snapshot=>({users:snapshot.users.length,providers:snapshot.settings.providers?.length||(snapshot.settings.provider?1:0),createdAt:snapshot.createdAt});
 export async function readBackup(env,blob){
@@ -17,6 +18,7 @@ async function exportSnapshot(store,env){
  const snapshot=await store.transaction(async tx=>{
   const users=[...(await tx.list({prefix:'user:'})).values()],settings={};
   for(const key of keys){const value=await tx.get(key);if(value!==undefined)settings[key]=value}
+  const exclusives=await exportExclusives(tx);if(exclusives)settings['exclusive-content']=exclusives;
   return {format,environment:env.ENVIRONMENT||'production',createdAt:Date.now(),users,settings};
  });
  if(JSON.stringify(snapshot).length>2000000||snapshot.users.length>10000)return null;
@@ -152,6 +154,7 @@ export async function backupRoute(store,env,path,b,leases){
   const old=await tx.list({prefix:'user:'});for(const name of old.keys())await tx.delete(name);
   for(const user of snapshot.users)await tx.put('user:'+user.username,{...user,id:crypto.randomUUID(),version:user.version+1,updatedAt:Date.now()});
   for(const key of keys){if(Object.hasOwn(snapshot.settings,key))await tx.put(key,snapshot.settings[key]);else await tx.delete(key)}
+  await restoreExclusives(tx,snapshot.settings['exclusive-content']);
   await leases.in(tx).clear();await writeAudit(tx,b.actor,'backup_restored');
   return answer({ok:true,users:plan.users,providers:plan.providers,customersMustSignInAgain:true});
  });

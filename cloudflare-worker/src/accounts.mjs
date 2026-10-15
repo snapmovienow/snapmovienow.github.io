@@ -1,3 +1,4 @@
+import {exclusiveCatalogRoute,exclusiveSnapshot,selectExclusive,visibleExclusive} from './exclusive-catalog.mjs';
 import {cleanConnectionClient,recordConnectionLimit,updateConnectionQuality,closeResellerConnection} from './connection-monitor.mjs';
 import {resellerPresence,resellerPlaybackSummary,resellerLiveConnections,recordCustomerActivity} from './reseller-presence.mjs';
 import {resellerAccounts} from './reseller-accounts.mjs';
@@ -26,6 +27,11 @@ export async function accountsFetch(state,env,req){
  const p=new URL(req.url).pathname.replace('/accounts','');const b=await req.json();const store=state.storage;
  try{
  const leases=await openLeaseStore(store);
+ if(['/exclusive-read','/exclusive-item-read','/exclusive-save','/exclusive-cover-save','/exclusive-cover-read'].includes(p))return store.transaction(async tx=>{
+  const response=await exclusiveCatalogRoute(tx,p,b);
+  if(p==='/exclusive-save'&&response.ok){const {item}=await response.clone().json();await leases.in(tx).removeMatching(l=>l.exclusiveParentId===item.id&&(!item.visible||l.playbackRevision!==item.playbackRevision));}
+  return response;
+ });
  if(p==='/reseller-presence')return store.transaction(tx=>resellerPresence(tx,leases.in(tx),b));
  if(p==='/reseller-playback-summary')return store.transaction(tx=>resellerPlaybackSummary(tx,leases.in(tx),b));
  if(p==='/reseller-connection-close')return store.transaction(tx=>closeResellerConnection(tx,leases.in(tx),b));
@@ -134,6 +140,15 @@ export async function accountsFetch(state,env,req){
   if(old.cancelled[b.request_id]||(Number.isSafeInteger(b.revision)&&b.revision<=old.revision&&old.request_id!==b.request_id))return answer({error:'playback_superseded'},410);
   old.request_id=b.request_id;old.revision=Number.isSafeInteger(b.revision)?b.revision:old.revision+1;
   await tx.put(key,old);return answer({ok:true});
+ });
+ if(p==='/exclusive-acquire')return store.transaction(async tx=>{
+  if(!b.request_id||(await tx.get('playback:'+b.sid))?.request_id!==b.request_id)return answer({error:'playback_superseded'},410);
+  const user=await tx.get('user:'+normal(b.username));if(!alive(user)||user.id!==b.uid||user.version!==b.version)return answer({error:'account_inactive'},401);
+  const found=selectExclusive((await exclusiveSnapshot(tx)).items,b.exclusiveId);if(!found||!visibleExclusive(found.row,contentPermissions(user.permissions))||found.row.playbackRevision!==b.playbackRevision)return answer({error:'title_not_allowed'},404);
+  const local=leases.in(tx);await local.prune();await local.removeFor({sid:b.sid});const used=await local.count({uid:b.uid});
+  const mediaKey=found.row.type+'|'+found.row.profileServer+'|'+b.exclusiveId+'|'+(found.media.mode==='gnula'?'m3u8':new URL(found.media.page).pathname.split('.').at(-1));
+  if(used>=3){await recordConnectionLimit(tx,user,{...b,mediaKey,activity:{title:found.media===found.row?found.row.name:found.row.name+' · '+found.media.title}},used);return answer({error:'user_connection_limit'},409);}
+  const id=crypto.randomUUID();await local.put(id,{sid:b.sid,uid:b.uid,username:user.username,version:user.version,request_id:b.request_id,exclusiveId:b.exclusiveId,exclusiveParentId:found.row.id,playbackRevision:b.playbackRevision,mediaKey,activity:{title:found.media===found.row?found.row.name:found.row.name+' · '+found.media.title},client:cleanConnectionClient(b.client),startedAt:Date.now(),until:Date.now()+90000,...(b.xtream?{xtream:true}:{})});await recordCustomerActivity(tx,user.id);return answer({lease_id:id});
  });
  if(p==='/acquire')return store.transaction(async tx=>{
   if(b.request_id&&(await tx.get('playback:'+b.sid))?.request_id!==b.request_id)return answer({error:'playback_superseded'},410);

@@ -17,7 +17,7 @@ const permission = kind => kind === 'live' ? 'tv' : kind === 'movie' ? 'movies' 
 const entry = (kind, server, id, extra = {}) => ({kind, server, upstreamId: String(id), ...extra});
 
 export function matchesXtream(path) {
-  return path === '/player_api.php' || /^\/(live|movie|series)\//.test(path);
+  return path === '/player_api.php' || /^\/(live|movie|series|exclusive)\//.test(path);
 }
 
 function playbackURL(base, login, kind, id, ext) {

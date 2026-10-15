@@ -20,6 +20,7 @@ try{
   if(op==='vod_info')value={info:{plot:'Descripción de prueba'}};
   if(op==='profile_get')value={records:[...profile.values()]};
   if(op==='profile_patch'){for(const p of b.patches)profile.set(p.kind+':'+p.key,p);value={records:[...profile.values()]}}
+  if(op==='exclusive-list')value={items:[],revision:1};
   if(op==='status')value={configured:true};if(op==='login')value={access_token:'synthetic-admin-token'};
   if(op==='users')value=[{username:'testuser',name:'Prueba',status:'active',permissions:{movies:true,series:true,tv:true,adults:false}}];
   if(op==='overview')value={provider:null,connections:0};if(op==='xtream-settings')value={enabled:true,url:'https://api.snaptvnow.com',port:'443'};

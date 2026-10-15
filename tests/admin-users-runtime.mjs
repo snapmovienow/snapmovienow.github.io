@@ -16,6 +16,7 @@ try{
   const request=route.request(),headers={'Access-Control-Allow-Origin':base,'Access-Control-Allow-Methods':'POST,GET,OPTIONS','Access-Control-Allow-Headers':'content-type'};
   if(request.method()==='OPTIONS'){await route.fulfill({status:204,headers});return;}
   const body=request.postDataJSON()||{},action=body.action;let value=[];
+  if(action==='exclusive-list')value={items:[],revision:1};
   if(action==='status')value={configured:true};
   if(action==='login')value={access_token:'synthetic-admin-preview-only'};
   if(action==='users')value=users;
