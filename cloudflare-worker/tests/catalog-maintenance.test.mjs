@@ -53,6 +53,8 @@ const changed=await catalog([movie(1)]);await begin(changed,'movies',1,[movie(1,
 const repair=await catalog([movie(1,{poster:'https://images.snapcdn.net/user.jpg'})]);await begin(repair,'movies',1,[movie(1,{page:page('replacement')})]);
 let resolve;const hold=new Promise(r=>resolve=r),running=probe(repair,'movies',1,'movie-1',async()=>{await hold;return good()});await new Promise(r=>setTimeout(r,0));assert.equal((await probe(repair,'movies',1,'movie-1')).data.skipped,true,'concurrent ticks cannot duplicate a probe');resolve();await running;
 snap=await exclusiveSnapshot(repair);assert.equal(snap.items[0].id,'movie-1');assert.equal(snap.items[0].poster,'https://images.snapcdn.net/user.jpg');assert.ok(leases.revoked.length>0,'changed playback revokes obsolete leases without allocating a customer connection');
+await begin(repair,'movies',2,[movie(1,{page:page('bad-replacement')})]);assert.equal((await probe(repair,'movies',2,'movie-1',async item=>item.page===page('bad-replacement')?bad():good())).data.replacementUnavailable,true);assert.equal((await exclusiveSnapshot(repair)).items[0].page,page('replacement'),'a failed replacement cannot overwrite an online original');
+const renamed=await catalog([movie(1,{name:'User edited title'})]);await begin(renamed,'movies',1,[movie(1)]);assert.equal((await probe(renamed,'movies',1,'movie-1')).data.status,'online','metadata edits cannot prevent checks of the rest of the catalog');
 
 const requests=[];let deny=false,privateRedirect=false;
 const fetcher=async(url,options)=>{requests.push(url);assert.equal(options.redirect,'manual');assert.ok(options.headers.Range);const u=new URL(url);

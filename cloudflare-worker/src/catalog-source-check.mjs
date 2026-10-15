@@ -7,7 +7,7 @@ async function request(url,origin,options,range){
  let target=new URL(exclusiveURL(url));
  for(let hop=0;hop<4;hop++){
   if(target.origin!==origin)throw Error('media_origin_changed');
-  const response=await options.fetcher(target.href,{redirect:'manual',headers:{'User-Agent':'Mozilla/5.0',...(range?{Range:range}:{})},signal:options.signal});
+  const fetcher=options.fetcher,response=await fetcher(target.href,{redirect:'manual',headers:{'User-Agent':'Mozilla/5.0',...(range?{Range:range}:{})},signal:options.signal});
   if(response.status<300||response.status>=400){if(!response.ok){await response.body?.cancel();throw Error('media_unavailable');}return response;}
   const location=response.headers.get('location');await response.body?.cancel();if(!location)throw Error('media_redirect');target=new URL(exclusiveURL(new URL(location,target).href));
  }throw Error('media_redirect');
