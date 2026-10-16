@@ -1,3 +1,5 @@
+import {createOwnerPortal} from '../src/owner-portal.mjs';
+import {PORTAL_ACCOUNT,PORTAL_SOURCE} from '../src/reseller-portal.mjs';
 import assert from 'node:assert/strict';
 import worker,{PlaybackSession} from '../src/index.js';
 import {createOwnerAdminAccess,ownerAccessState,OWNER_ADMIN_ORIGIN} from '../src/owner-admin-access.mjs';
@@ -19,7 +21,7 @@ assert.equal((await api('setup',{setupSecret:env.ADMIN_SETUP_SECRET,username:'sy
 const login=await (await api('login',{username:'synthetic-owner',password:'synthetic-owner-password'})).json(),access_token=login.access_token;
 assert.equal((await api('reseller-admin-launch',{access_token},'https://evil.test')).status,403);
 assert.equal((await api('reseller-admin-launch',{access_token},'')).status,403);
-async function launch(){const response=await api('reseller-admin-launch',{access_token});assert.equal(response.status,200);const value=await response.json(),url=new URL(value.url);assert.equal(url.origin,OWNER_ADMIN_ORIGIN);assert.equal(url.pathname,'/api/owner-access');assert.ok(!url.href.includes(access_token));return url.searchParams.get('code');}
+async function launch(){const response=await api('reseller-admin-launch',{access_token});assert.equal(response.status,200);const value=await response.json(),url=new URL(value.url);assert.equal(url.origin,'https://api.snaptvnow.com');assert.equal(url.pathname,'/owner-panel/enter');assert.ok(!url.href.includes(access_token));return url.searchParams.get('code');}
 const code=await launch(),identityId='synthetic-sites-owner';
 assert.equal((await signed('owner.check',{token:code,identityId})).status,403,'a launch cannot be used as a gate');
 assert.equal((await signed('owner.consume',{token:code.slice(0,-3)+'abc',identityId})).status,403,'tampered encrypted launch denied');
@@ -30,9 +32,18 @@ assert.equal((await signed('owner.check',{token:gate.token,identityId:'another-o
 assert.equal((await signed('owner.check',{token:gate.token,identityId})).status,200);
 assert.equal((await signed('owner.revoke',{token:gate.token,identityId})).status,200);
 assert.equal((await signed('owner.check',{token:gate.token,identityId})).status,403,'explicit logout revokes gate');
+// Exercise the public handoff using the actual administrator session and signed bridge.
+let gatewayCalls=0;const portal=createOwnerPortal({getConfig:async()=>({accountId:PORTAL_ACCOUNT,sourceOrigin:PORTAL_SOURCE,gatewaySecret:'a'.repeat(64),siteToken:'synthetic-private-dispatch-token'}),fetcher:async(url,options)=>{gatewayCalls++;assert.equal(url,PORTAL_SOURCE+'/api/owner-portal');assert.equal(options.redirect,'manual');assert.equal(options.headers['OAI-Sites-Authorization'],'Bearer synthetic-private-dispatch-token');const b=JSON.parse(options.body);assert.equal(b.accountId,PORTAL_ACCOUNT);if(b.action==='enter')return signed('owner.consume',{token:b.token,identityId});const check=await signed('owner.check',{token:b.token,identityId});if(!check.ok)return Response.json({error:'owner_entry_required'},{status:401});if(b.action==='logout')return signed('owner.revoke',{token:b.token,identityId});return Response.json(b.action==='read'?{actor:{id:'owner',role:'owner'},target:{id:b.query.slug||'owner'},overview:!b.query.slug,accounts:[],lines:[]}:{ok:true,actorId:'owner'});}});
+const request=(path,options={})=>portal(new Request('https://api.snaptvnow.com/owner-panel'+path,options),env);
+assert.equal((await request('/')).status,403);assert.equal((await request('/api/panel')).status,401);assert.equal(gatewayCalls,0);
+const entryCode=await launch(),entered=await request('/enter?code='+encodeURIComponent(entryCode));assert.equal(entered.status,303);assert.equal(entered.headers.get('Location'),'/owner-panel/');const setCookie=entered.headers.get('Set-Cookie'),ownerCookie=setCookie.split(';')[0];for(const flag of ['HttpOnly','Secure','SameSite=Strict'])assert.ok(setCookie.includes(flag));assert.equal((await request('/enter?code='+encodeURIComponent(entryCode))).status,403);
+const protectedPage=await request('/',{headers:{Cookie:ownerCookie}});assert.equal(protectedPage.status,200);const html=await protectedPage.text();assert.ok(html.includes('data-portal-mode="owner"'));assert.ok(!html.includes(entryCode));assert.ok(!html.includes('synthetic-private-dispatch-token'));assert.ok(!html.includes(access_token));assert.equal(protectedPage.headers.get('Referrer-Policy'),'no-referrer');
+const martin=await request('/api/panel?slug=martin-vela',{headers:{Cookie:ownerCookie}});assert.equal(martin.status,200);assert.equal((await martin.json()).target.id,'martin-vela');
+const before=gatewayCalls;for(const origin of ['', 'https://evil.test'])assert.equal((await request('/api/panel',{method:'POST',headers:{Cookie:ownerCookie,'Content-Type':'application/json',Origin:origin},body:'{}'})).status,403);assert.equal(gatewayCalls,before);
+assert.equal((await request('/api/panel?endpoint=https://evil.test',{headers:{Cookie:ownerCookie}})).status,400);assert.equal((await request('/api/panel',{headers:{Cookie:ownerCookie+'; '+ownerCookie}})).status,401);
 const nextCode=await launch(),next=await (await signed('owner.consume',{token:nextCode,identityId})).json();
 assert.equal((await api('logout',{access_token})).status,200);
-assert.equal((await signed('owner.check',{token:next.token,identityId})).status,403,'main administrator logout revokes gate');
+assert.equal((await signed('owner.check',{token:next.token,identityId})).status,403,'main administrator logout revokes gate');assert.equal((await request('/',{headers:{Cookie:ownerCookie}})).status,403,'main logout also blocks the real public owner route');
 assert.equal((await signed('owner.consume',{token:await ticket(env,{kind:'owner_launch',sid:'unknown',nonce:'forged',exp:Date.now()+120000}),identityId})).status,403);
 const time=1000000,storage=new Store();const state=(path,body={},now=time)=>ownerAccessState(storage,'/owner-access/'+path,body,time+3600000,true,now);
 const old=await (await state('issue')).json();assert.equal((await state('consume',{nonce:old.nonce,identityId},time+120001)).status,403,'expired launch denied');

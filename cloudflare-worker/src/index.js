@@ -1,3 +1,4 @@
+import {createOwnerPortal,matchesOwnerPortal} from './owner-portal.mjs';
 import {createCcfExporter} from './ccf-record.mjs';
 import {createOwnerAdminAccess,ownerAccessState} from './owner-admin-access.mjs';
 import {selectExclusive,visibleExclusive} from './exclusive-catalog.mjs';
@@ -208,9 +209,11 @@ async function portalRecipient(env){let stored=await (await directory(env,'/rese
 const ownerAdminAccess=createOwnerAdminAccess({ticket,unticket,sessionCall});
 const ccfExporter=createCcfExporter({directory,unticket,readPanelRecord});
 const resellerBridgeRequest=createResellerBridge(directory,undefined,{ccfExport:(env,body)=>ccfExporter(env,body),ownerAccess:(env,action,body)=>ownerAdminAccess.bridge(env,action,body),sealConfig:(env,body)=>sealPortalConfig(env,body),portalRecipient});
-const resellerPortalRequest=createResellerPortal({getConfig:async env=>{const stored=await (await directory(env,'/reseller-portal-config',{accountId:PORTAL_ACCOUNT})).json();return stored?.encrypted?openPortalConfig(env,stored.encrypted):null;}});
+const portalConfig=async env=>{const stored=await (await directory(env,'/reseller-portal-config',{accountId:PORTAL_ACCOUNT})).json();return stored?.encrypted?openPortalConfig(env,stored.encrypted):null;};
+const resellerPortalRequest=createResellerPortal({getConfig:portalConfig});
+const ownerPortalRequest=createOwnerPortal({getConfig:portalConfig});
 async function handleRequest(req,env,ctx){
-if(matchesResellerPortal(req))return resellerPortalRequest(req,env);const u=new URL(req.url);
+if(matchesOwnerPortal(req))return ownerPortalRequest(req,env);if(matchesResellerPortal(req))return resellerPortalRequest(req,env);const u=new URL(req.url);
 if(req.method==='POST'&&req.headers.get('Cookie')?.includes('__Host-smn_')&&!canUseCookie(req,env))return json({error:'origin_not_allowed'},403);
 if(req.headers.get('Origin')&&!allowedOrigins(env).has(req.headers.get('Origin'))&&req.method==='POST')return json({error:'origin_not_allowed'},403);
 if(req.method==="OPTIONS")return new Response(null,{status:204,headers:cors});

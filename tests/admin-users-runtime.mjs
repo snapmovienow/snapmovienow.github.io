@@ -17,7 +17,7 @@ try{
   if(request.method()==='OPTIONS'){await route.fulfill({status:204,headers});return;}
   const body=request.postDataJSON()||{},action=body.action;let value=[];
   if(action==='exclusive-list')value={items:[],revision:1};
-  if(action==='reseller-admin-launch'){launchCalls++;assert.equal(body.access_token,'synthetic-admin-preview-only');value={ok:true,url:'https://snaptvnow-resellers.juancanta89.chatgpt.site/api/owner-access?code=synthetic-single-use-code'};}
+  if(action==='reseller-admin-launch'){launchCalls++;assert.equal(body.access_token,'synthetic-admin-preview-only');value={ok:true,url:'https://api.snaptvnow.com/owner-panel/enter?code=synthetic-single-use-code'};}
   if(action==='status')value={configured:true};
   if(action==='login')value={access_token:'synthetic-admin-preview-only'};
   if(action==='users')value=users;
@@ -61,8 +61,8 @@ try{
  await first.getByRole('button',{name:'Editar cliente-demo1',exact:true}).click();await form.locator('[name="password"]').fill('another-synthetic-password');await form.locator('[name="comments"]').fill('unsaved comments');
  await page.evaluate(()=>document.querySelector('#exit').click());await page.waitForFunction(()=>!document.querySelector('#editor').open);assert.equal(await form.locator('[name="password"]').inputValue(),'');assert.equal(await page.locator('#rows .admin-user-card').count(),0);assert.equal(await page.locator('#providerAssignments article').count(),0);
  await page.locator('#loginForm [name="username"]').fill('owner');await page.locator('#loginForm [name="password"]').fill('synthetic-preview-password');await page.locator('#loginForm button').click();await page.locator('#notice').filter({hasText:'Sesión iniciada'}).waitFor();
- await context.route('https://snaptvnow-resellers.juancanta89.chatgpt.site/api/owner-access?**',route=>route.fulfill({status:200,contentType:'text/html',body:'<h1>Synthetic protected handoff</h1>'}));
- await page.getByRole('button',{name:'Panel admin reseller',exact:true}).click();await page.waitForURL('https://snaptvnow-resellers.juancanta89.chatgpt.site/api/owner-access?**');assert.equal(launchCalls,1);assert.ok(!page.url().includes('synthetic-admin-preview-only'));
+ await context.route('https://api.snaptvnow.com/owner-panel/enter?**',route=>route.fulfill({status:200,contentType:'text/html',body:'<h1>Synthetic protected handoff</h1>'}));
+ await page.getByRole('button',{name:'Panel admin reseller',exact:true}).click();await page.waitForURL('https://api.snaptvnow.com/owner-panel/enter?**');assert.equal(launchCalls,1);assert.ok(!page.url().includes('synthetic-admin-preview-only'));
  assert.deepEqual(errors,[],'no script errors');
  fs.writeFileSync('artifacts/admin-users-runtime.json',JSON.stringify({testedAt:new Date().toISOString(),data:'synthetic only',viewports:[360,390,1280],checks:['horizontal actions','below-user permissions','trusted titles and episodes','visible new password','notes persistence','expiry precision','cancel and logout cleanup','comment text safety','permissions preserve notes','authenticated reseller administrator button']},null,2)+'\n');
  console.log('PASS: mobile/desktop user cards, playback titles, visible password, comments, expiry precision, permission edits and private dialog/logout cleanup.');

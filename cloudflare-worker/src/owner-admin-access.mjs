@@ -1,6 +1,7 @@
 // These records live inside the authenticated main administrator's session DO.
 // A launch is consumed atomically; logging out deletes its launches and gates.
 export const OWNER_ADMIN_ORIGIN='https://snaptvnow-resellers.juancanta89.chatgpt.site';
+export const OWNER_ADMIN_ENTRY='https://api.snaptvnow.com/owner-panel/enter';
 const denied=()=>Response.json({error:'bridge_owner_access'},{status:403});
 const identity=value=>typeof value==='string'&&value.length>0&&value.length<=200&&!/[\u0000-\u0020\u007f]/.test(value);
 export async function ownerAccessState(storage,path,body,exp,admin,now=Date.now()){
@@ -30,7 +31,7 @@ export function createOwnerAdminAccess({ticket,unticket,sessionCall}){
   async issue(env,session){
    const r=await sessionCall(env,session.sid,'/owner-access/issue',{});if(!r.ok)return r;
    const launch=await r.json(),code=await ticket(env,{kind:'owner_launch',sid:session.sid,nonce:launch.nonce,exp:launch.exp});
-   return Response.json({ok:true,url:OWNER_ADMIN_ORIGIN+'/api/owner-access?code='+encodeURIComponent(code)},{headers:{'Cache-Control':'no-store','Referrer-Policy':'no-referrer'}});
+   return Response.json({ok:true,url:OWNER_ADMIN_ENTRY+'?code='+encodeURIComponent(code)},{headers:{'Cache-Control':'no-store','Referrer-Policy':'no-referrer'}});
   },
   async bridge(env,action,body){
    if(!identity(body.identityId)||typeof body.token!=='string'||body.token.length>2000)return denied();
