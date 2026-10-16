@@ -1,6 +1,7 @@
 // Private signed migration of existing native users. No passwords are reset and
 // no user, session, message, comment or expiry is removed by adoption.
 import {contentPermissions} from './content-permissions.mjs';
+import {writeAudit} from './security.mjs';
 const answer=(value,status=200)=>Response.json(value,{status});
 const username=value=>typeof value==='string'&&/^[a-z0-9_.@-]{3,80}$/.test(value);
 const id=value=>typeof value==='string'&&/^[A-Za-z0-9_.:-]{1,80}$/.test(value);
@@ -20,6 +21,15 @@ export async function nativeResellerImport(store,path,b){
   const original=saved?.original||u;return answer({ok:true,record:original,sourceHash:saved?.sourceHash||await nativeFingerprint(original)});
  }
  if(!id(b.lineId)||typeof b.sourceHash!=='string'||!/^[a-f0-9]{64}$/.test(b.sourceHash))return answer({error:'bridge_input'},400);
+ if(path==='/native-recover')return store.transaction(async tx=>{
+  const u=await tx.get('user:'+b.username),saved=await tx.get(key),receipt=await tx.get('reseller-line:'+b.accountId+':'+b.lineId);
+  if(!saved||saved.lineId!==b.lineId||saved.sourceHash!==b.sourceHash||saved.original?.username!==b.username||await nativeFingerprint(saved.original)!==b.sourceHash||receipt?.username!==b.username||receipt.revoked)return answer({error:'bridge_import_conflict'},409);
+  if(u)return u.resellerBridge?.accountId===b.accountId&&u.resellerBridge.lineId===b.lineId?answer({ok:true,lineId:b.lineId,recovered:false}):answer({error:'bridge_username_conflict'},409);
+  const original=saved.original;if(!/^[a-f0-9]{64}$/.test(original.hash||'')||typeof original.salt!=='string'||!original.salt||!Number.isSafeInteger(original.version))return answer({error:'bridge_import_credentials'},409);
+  await tx.put('user:'+b.username,{...original,id:crypto.randomUUID(),version:original.version+1,updatedAt:Date.now(),resellerBridge:{accountId:b.accountId,lineId:b.lineId,native:true}});
+  await writeAudit(tx,'reseller:'+b.accountId,'reseller_native_recovered',b.lineId);
+  return answer({ok:true,lineId:b.lineId,recovered:true,credentialsPreserved:true});
+ });
  return store.transaction(async tx=>{
   const u=await tx.get('user:'+b.username),saved=await tx.get(key);if(!u)return answer({error:'bridge_import_missing'},404);
   if(saved){

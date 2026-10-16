@@ -3,6 +3,7 @@ import {cleanConnectionClient,recordConnectionLimit,updateConnectionQuality,clos
 import {resellerPresence,resellerPlaybackSummary,resellerLiveConnections,recordCustomerActivity} from './reseller-presence.mjs';
 import {resellerAccounts} from './reseller-accounts.mjs';
 import {nativeResellerImport} from './native-reseller-import.mjs';
+import {resellerIntegrity} from './reseller-integrity.mjs';
 import {catalogMaintenanceRoute,runCatalogMaintenance} from './catalog-maintenance.mjs';
 // Private Durable Object routes. This module is never served as an HTTP endpoint.
 import {contentPermissions} from './content-permissions.mjs';
@@ -42,7 +43,8 @@ export async function accountsFetch(state,env,req){
  if(p==='/reseller-connection-close')return store.transaction(tx=>closeResellerConnection(tx,leases.in(tx),b));
  if(p==='/playback-quality')return store.transaction(tx=>updateConnectionQuality(tx,leases.in(tx),b));
  if(p==='/reseller-live-connections')return store.transaction(tx=>resellerLiveConnections(tx,leases.in(tx),b));
- if(['/native-list','/native-record','/native-claim','/native-verify'].includes(p))return nativeResellerImport(store,p,b);
+ if(p==='/reseller-integrity')return resellerIntegrity(store,b);
+ if(['/native-list','/native-record','/native-claim','/native-verify','/native-recover'].includes(p))return nativeResellerImport(store,p,b);
  if(p==='/reseller-portal-recipient')return answer(await store.get('reseller-portal-recipient:'+b.accountId)||null);
  if(p==='/reseller-portal-recipient-ensure')return store.transaction(async tx=>{const key='reseller-portal-recipient:'+b.accountId,current=await tx.get(key);if(current)return answer(current);if(!b.accountId||typeof b.encrypted!=='string'||b.encrypted.length>12000)return answer({error:'bridge_input'},400);const value={encrypted:b.encrypted};await tx.put(key,value);return answer(value);});
  if(p==='/reseller-portal-config')return answer(await store.get('reseller-portal:'+b.accountId)||null);

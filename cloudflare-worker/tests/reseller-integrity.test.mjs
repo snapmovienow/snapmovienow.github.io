@@ -1,0 +1,14 @@
+import assert from 'node:assert/strict';
+import {resellerIntegrity} from '../src/reseller-integrity.mjs';
+import {nativeResellerImport,nativeFingerprint} from '../src/native-reseller-import.mjs';
+const data=new Map(),store={get:async k=>structuredClone(data.get(k)),put:async(k,v)=>data.set(k,structuredClone(v)),transaction:async fn=>fn(store)};
+const accountId='juanito-test',lineId='native-test',username='nito',user={id:'original-id',username,hash:'a'.repeat(64),salt:'test-salt',version:4,status:'active',expiresAt:Date.now()+86400000,permissions:{tv:true},comments:'Original',messages:[{text:'Keep'}]},sourceHash=await nativeFingerprint(user);
+data.set('native-adoption:'+accountId+':'+username,{lineId,sourceHash,original:user});data.set('reseller-line:'+accountId+':'+lineId,{version:2,username,revoked:false});
+const input={accountId,lines:[{lineId,username}]},inspect=async b=>{const r=await resellerIntegrity(store,b);return {status:r.status,body:await r.json()};},recover=async b=>{const r=await nativeResellerImport(store,'/native-recover',{accountId,lineId,username,sourceHash,...b});return {status:r.status,body:await r.json()};};
+assert.equal((await inspect(input)).body.lines[0].state,'missing');assert.equal((await inspect(input)).body.lines[0].recoverableNative,true);
+for(const b of [{sourceHash:'b'.repeat(64)},{accountId:'martin'},{lineId:'wrong'},{username:'foreign'}])assert.equal((await recover(b)).status,409);
+assert.equal((await recover({})).body.recovered,true);let after=data.get('user:'+username);assert.equal(after.hash,user.hash);assert.equal(after.salt,user.salt);assert.deepEqual(after.messages,user.messages);assert.equal(after.comments,user.comments);assert.notEqual(after.id,user.id);assert.equal(after.version,5);
+assert.equal((await inspect(input)).body.lines[0].state,'present');assert.equal((await recover({})).body.recovered,false);
+data.set('user:'+username,{...after,resellerBridge:{accountId:'martin',lineId:'foreign'}});assert.equal((await inspect(input)).body.lines[0].state,'conflict');assert.equal((await recover({})).status,409);
+assert.ok(!JSON.stringify(await inspect(input)).includes(user.hash));assert.ok(!JSON.stringify(await inspect(input)).includes(user.salt));assert.equal((await inspect({...input,lines:[]})).status,400);
+console.log('PASS: missing native records recover only from matching signed adoption receipts; credentials and messages survive, foreign users are never replaced.');
