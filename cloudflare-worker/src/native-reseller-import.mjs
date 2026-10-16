@@ -24,9 +24,9 @@ export async function nativeResellerImport(store,path,b){
  if(path==='/native-recover')return store.transaction(async tx=>{
   const u=await tx.get('user:'+b.username),saved=await tx.get(key),receipt=await tx.get('reseller-line:'+b.accountId+':'+b.lineId);
   if(!saved||saved.lineId!==b.lineId||saved.sourceHash!==b.sourceHash||saved.original?.username!==b.username||await nativeFingerprint(saved.original)!==b.sourceHash||receipt?.username!==b.username||receipt.revoked)return answer({error:'bridge_import_conflict'},409);
-  if(u)return u.resellerBridge?.accountId===b.accountId&&u.resellerBridge.lineId===b.lineId?answer({ok:true,lineId:b.lineId,recovered:false}):answer({error:'bridge_username_conflict'},409);
+  if(u){if(u.resellerBridge?.accountId!==b.accountId||u.resellerBridge.lineId!==b.lineId)return answer({error:'bridge_username_conflict'},409);if(u.id===saved.original.id)return answer({ok:true,lineId:b.lineId,recovered:false});if(u.resellerBridge.native!==true)return answer({error:'bridge_import_conflict'},409);await tx.put('user:'+b.username,{...u,id:saved.original.id,version:Math.max(u.version,saved.original.version)+1,updatedAt:Date.now()});await writeAudit(tx,'reseller:'+b.accountId,'reseller_native_identity_recovered',b.lineId);return answer({ok:true,lineId:b.lineId,recovered:true,identityRestored:true,credentialsPreserved:true});}
   const original=saved.original;if(!/^[a-f0-9]{64}$/.test(original.hash||'')||typeof original.salt!=='string'||!original.salt||!Number.isSafeInteger(original.version))return answer({error:'bridge_import_credentials'},409);
-  await tx.put('user:'+b.username,{...original,id:crypto.randomUUID(),version:original.version+1,updatedAt:Date.now(),resellerBridge:{accountId:b.accountId,lineId:b.lineId,native:true}});
+  await tx.put('user:'+b.username,{...original,version:original.version+1,updatedAt:Date.now(),resellerBridge:{accountId:b.accountId,lineId:b.lineId,native:true}});
   await writeAudit(tx,'reseller:'+b.accountId,'reseller_native_recovered',b.lineId);
   return answer({ok:true,lineId:b.lineId,recovered:true,credentialsPreserved:true});
  });
