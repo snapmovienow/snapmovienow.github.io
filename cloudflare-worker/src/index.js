@@ -230,7 +230,7 @@ try{const b=await readLimitedJSON(req),op=String(b.op||"");if(!["auth","logout",
 if(op==="auth"){
  if(!b.username||!b.password)return json({error:'credentials_required'},400);
  const has=await (await directory(env,"/has",{username:b.username})).json();let session,a;
- if(has.exists){const r=await directory(env,"/login",{username:b.username,password:b.password,client:req.headers.get("CF-Connecting-IP")||"unknown"});if(!r.ok)return json(await r.json(),r.status);const user=await r.json();session=await ownSession(env,user);a=accountInfo(session)}
+ if(has.exists){const r=await directory(env,"/login",{username:b.username,password:b.password,client:req.headers.get("CF-Connecting-IP")||"unknown",connection:requestConnectionClient(req)});if(!r.ok)return json(await r.json(),r.status);const user=await r.json();session=await ownSession(env,user);a=accountInfo(session)}
  else{if(env.ENVIRONMENT==='staging')return json({error:'invalid_credentials'},401);a=await validateAccount(String(b.username),String(b.password));if(!a)return json({error:"invalid_credentials"},401);session=await createSession(env,String(b.username),String(b.password),Number(a.user_info.exp_date)>0?Number(a.user_info.exp_date)*1000:null);a={...a,server_time:Date.now(),session_expires_at:session.exp,account_expires_at:session.accountExpiresAt}}
  const old=await unticket(env,String(b.access_token||""));if(old?.kind==="session"&&old.username===session.username){await directory(env,"/release-session",{sid:old.sid});await sessionCall(env,old.sid,"/logout")}
  const token=await ticket(env,session);return withSessionCookie(json({...a,access_token:b.browser_cookie&&canUseCookie(req,env)?null:token}),req,env,"session",token,Math.max(0,Math.floor((session.exp-Date.now())/1000)));
@@ -258,7 +258,7 @@ if(required&&!permissions[required])return json({error:'content_disabled'},403);
 if(op==="playback_cancel"){if(!session.managed)return json({ok:true});const r=await directory(env,"/playback-cancel",{sid:session.sid,request_id:b.request_id,revision:b.revision});return json(await r.json(),r.status)}
 if(op==="playback_heartbeat"){if(!session.managed||!b.lease_id)return json({ok:true});const r=await directory(env,"/heartbeat",{sid:session.sid,lease_id:b.lease_id,request_id:b.request_id});return json(await r.json(),r.status)}
 if(op==="playback_release"){if(!session.managed||!b.lease_id)return json({ok:true});const r=await directory(env,"/release",{sid:session.sid,lease_id:b.lease_id,request_id:b.request_id});return json(await r.json(),r.status)}
-if(op==="logout"){await directory(env,"/release-session",{sid:session.sid});await sessionCall(env,session.sid,"/logout");return withSessionCookie(json({ok:true}),req,env,"session","",0)}
+if(op==="logout"){if(session.managed)await directory(env,"/customer-logout",{uid:session.uid,username:session.username,connection:requestConnectionClient(req)}).catch(()=>{});await directory(env,"/release-session",{sid:session.sid});await sessionCall(env,session.sid,"/logout");return withSessionCookie(json({ok:true}),req,env,"session","",0)}
 b.username=session.username;b.password=session.password;
 if(op==='gnula_catalog')return json((await exclusives.catalog(env,permissions,u.origin,{legacy:!session.managed})).items);
 if(op==='gnula_series_info')try{return json(await exclusives.episodes(env,b.series_id,permissions,u.origin))}catch(e){return json({error:e.message},e.status||502)}

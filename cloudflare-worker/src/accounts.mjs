@@ -4,6 +4,7 @@ import {resellerPresence,resellerPlaybackSummary,resellerLiveConnections,recordC
 import {resellerAccounts} from './reseller-accounts.mjs';
 import {nativeResellerImport} from './native-reseller-import.mjs';
 import {resellerIntegrity} from './reseller-integrity.mjs';
+import {readClientHistory,recordClientAccess,safelyRecord,touchPlayback} from './client-history.mjs';
 import {catalogMaintenanceRoute,runCatalogMaintenance} from './catalog-maintenance.mjs';
 // Private Durable Object routes. This module is never served as an HTTP endpoint.
 import {contentPermissions} from './content-permissions.mjs';
@@ -43,6 +44,8 @@ export async function accountsFetch(state,env,req){
  if(p==='/reseller-connection-close')return store.transaction(tx=>closeResellerConnection(tx,leases.in(tx),b));
  if(p==='/playback-quality')return store.transaction(tx=>updateConnectionQuality(tx,leases.in(tx),b));
  if(p==='/reseller-live-connections')return store.transaction(tx=>resellerLiveConnections(tx,leases.in(tx),b));
+ if(p==='/reseller-client-history'){await leases.prune();return store.transaction(tx=>readClientHistory(tx,store.sql,b));}
+ if(p==='/customer-logout'){const user=await store.get('user:'+normal(b.username));if(user?.id===b.uid)await safelyRecord(()=>recordClientAccess(store,store.sql,user,'logout',b.connection));return answer({ok:true});}
  if(p==='/reseller-integrity')return resellerIntegrity(store,b);
  if(['/native-list','/native-record','/native-claim','/native-verify','/native-recover'].includes(p))return nativeResellerImport(store,p,b);
  if(p==='/reseller-portal-recipient')return answer(await store.get('reseller-portal-recipient:'+b.accountId)||null);
@@ -90,12 +93,13 @@ export async function accountsFetch(state,env,req){
   if(!allowed)return answer({error:'try_later'},429);
   const u=await store.get(p==='/admin-login'?'admin':'user:'+username);
   const hash=await passwordHash(String(b.password||'').slice(0,256),u?.salt||'missing-account-salt');
-  if(!u||!await same(hash,u.hash)||(p==='/admin-login'&&username!==u.username)||(p==='/login'&&!alive(u)))return answer({error:'invalid_credentials'},401);
+  if(!u||!await same(hash,u.hash)||(p==='/admin-login'&&username!==u.username)||(p==='/login'&&!alive(u))){if(p==='/login')await safelyRecord(()=>recordClientAccess(store,store.sql,u,'login_failed',b.connection,b.authKey?'xtream':'api'));return answer({error:'invalid_credentials'},401);}
   if(p==='/admin-login'){
    const factor=await store.transaction(async tx=>{const current=await tx.get('admin');if(current?.version!==u.version)return {valid:false};const r=await checkFactor(env,current,b.code);if(r.valid&&current.mfa?.enabled)await tx.put('admin',r.admin);return r});
    if(!factor.valid)return answer({error:b.code?'mfa_invalid':'mfa_required'},401);
    await store.transaction(tx=>writeAudit(tx,u.username,'admin_login'));
   }
+  if(p==='/login')await safelyRecord(()=>recordClientAccess(store,store.sql,u,'login',b.connection,b.authKey?'xtream':'api'));
   await store.delete(bucket);return answer({id:u.id,username:u.username,version:u.version,expiresAt:u.expiresAt,permissions:contentPermissions(u.permissions)});
  }
  if(p==='/check'){
@@ -183,10 +187,11 @@ export async function accountsFetch(state,env,req){
  });
  if(p==='/lease-check'||p==='/heartbeat'||p==='/release')return store.transaction(async tx=>{
   const local=leases.in(tx),l=await local.get(b.lease_id);if(!l||l.sid!==b.sid)return answer({error:'playback_expired'},410);
-  if(p==='/release'){if(b.request_id&&l.request_id!==b.request_id)return answer({ok:true,reused:true});await local.remove(b.lease_id);return answer({ok:true})}
+  if(p==='/release'){if(b.request_id&&l.request_id!==b.request_id)return answer({ok:true,reused:true});await local.remove(b.lease_id,'player_closed');return answer({ok:true})}
   if(b.request_id&&l.request_id!==b.request_id)return answer({error:'playback_superseded'},410);
   if(b.request_id&&(await tx.get('playback:'+b.sid))?.request_id!==b.request_id)return answer({error:'playback_superseded'},410);
   const u=await tx.get('user:'+normal(l.username));if(l.until<=Date.now()||!alive(u)||u.id!==l.uid||u.version!==l.version){await local.remove(b.lease_id);return answer({error:'playback_expired'},410)}
+  if(p==='/lease-check')await safelyRecord(()=>touchPlayback(tx,store.sql,b.lease_id,Date.now(),true));
   if(p==='/heartbeat'){await local.renew(b.lease_id,Date.now()+90000);await recordCustomerActivity(tx,u.id);}return answer({ok:true});
  });
  if(p==='/release-session'){await store.transaction(async tx=>{await leases.in(tx).removeFor({sid:b.sid});await tx.delete('playback:'+b.sid)});return answer({ok:true})}

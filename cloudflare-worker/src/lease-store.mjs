@@ -1,12 +1,13 @@
 // Each playback is one row. Heartbeats never read or rewrite another lease.
 // SQL indexes bound session/customer lookups; the KV adapter is for test stores.
+import {clientHistorySchema,safelyRecord,recordPlayback,touchPlayback,finishPlayback,finishLeaseSelection} from './client-history.mjs';
 const opened=new WeakMap();
 const PREFIX='playback-lease:';
 const filters=new Set(['sid','uid','provider_id','xtream']);
 export async function openLeaseStore(storage){
  if(!opened.has(storage)){
   const opening=storage.transaction(async tx=>{
-   const repo=new LeaseStore(tx,storage.sql);
+   const repo=new LeaseStore(tx,storage.sql,false);
    if(storage.sql)storage.sql.exec(`CREATE TABLE IF NOT EXISTS smn_playback_leases (
     id TEXT PRIMARY KEY, sid TEXT NOT NULL, uid TEXT NOT NULL,
     provider_id TEXT NOT NULL, until INTEGER NOT NULL, xtream INTEGER NOT NULL,
@@ -16,6 +17,7 @@ export async function openLeaseStore(storage){
    CREATE INDEX IF NOT EXISTS smn_lease_customer ON smn_playback_leases(uid,until);
    CREATE INDEX IF NOT EXISTS smn_lease_provider ON smn_playback_leases(provider_id,until);
    CREATE INDEX IF NOT EXISTS smn_lease_expiry ON smn_playback_leases(until);`);
+   await safelyRecord(async()=>clientHistorySchema(storage.sql));
    if(!await tx.get('lease-schema-v2')){
     const legacy=await tx.get('leases')||{};
     for(const [id,lease]of Object.entries(legacy))if(lease.until>Date.now())await repo.put(id,lease);
@@ -31,8 +33,8 @@ export async function openLeaseStore(storage){
 }
 function decode(row){return {...JSON.parse(row.data),until:row.until}}
 export class LeaseStore{
- constructor(storage,sql){this.storage=storage;this.sql=sql}
- in(tx){return new LeaseStore(tx,this.sql)}
+ constructor(storage,sql,history=true){this.storage=storage;this.sql=sql;this.history=history}
+ in(tx){return new LeaseStore(tx,this.sql,this.history)}
  where(filter={},now=Date.now()){
   const terms=['until > ?'],values=[now];
   for(const [key,value]of Object.entries(filter)){
@@ -48,6 +50,7 @@ export class LeaseStore{
   return rows.length?decode(rows[0]):undefined;
  }
  async put(id,lease){
+  if(this.history){const historyId=await safelyRecord(()=>recordPlayback(this.storage,this.sql,id,lease));if(historyId)lease={...lease,historyId};}
   if(!this.sql)return this.storage.put(PREFIX+id,lease);
   this.sql.exec(`INSERT INTO smn_playback_leases(id,sid,uid,provider_id,until,xtream,data)
    VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET sid=excluded.sid,
@@ -56,10 +59,12 @@ export class LeaseStore{
    String(lease.provider_id||''),lease.until,Number(!!lease.xtream),JSON.stringify(lease));
  }
  async renew(id,until){
+  if(this.history&&this.sql)await safelyRecord(()=>touchPlayback(this.storage,this.sql,id));
   if(this.sql){this.sql.exec('UPDATE smn_playback_leases SET until = ? WHERE id = ?',until,String(id));return}
   const lease=await this.get(id);if(lease)await this.put(id,{...lease,until});
  }
- async remove(id){
+ async remove(id,reason='closed'){
+  if(this.history)await safelyRecord(()=>finishPlayback(this.storage,this.sql,id,reason));
   if(this.sql){this.sql.exec('DELETE FROM smn_playback_leases WHERE id = ?',String(id));return}
   await this.storage.delete(PREFIX+id);
  }
@@ -87,15 +92,18 @@ export class LeaseStore{
   }
   const wanted=new Set(ids),grouped=new Map();for(const l of (await this.active({},now)).values())if(wanted.has(l.uid)){const k=l.uid+'|'+l.version,old=grouped.get(k)||{uid:l.uid,version:l.version,count:0,lastObservedAt:0};old.count++;old.lastObservedAt=Math.max(old.lastObservedAt,l.until-90000);grouped.set(k,old);}for(const row of grouped.values())add(row.uid,row.version,row.count,row.lastObservedAt);return out;
  }
- async removeFor(filter,now=Date.now()){
+ async removeFor(filter,now=Date.now(),reason='session_closed'){
+  if(this.history){if(this.sql){const where=this.where(filter,now);await safelyRecord(()=>finishLeaseSelection(this.sql,where.text,where.values,reason,now));}else for(const id of (await this.active(filter,now)).keys())await safelyRecord(()=>finishPlayback(this.storage,this.sql,id,reason,now));}
   if(this.sql){const where=this.where(filter,now);this.sql.exec('DELETE FROM smn_playback_leases WHERE '+where.text,...where.values);return}
   for(const id of (await this.active(filter,now)).keys())await this.remove(id);
  }
  async prune(now=Date.now()){
+  if(this.history){if(this.sql)await safelyRecord(()=>finishLeaseSelection(this.sql,'until<=?',[now],'timeout',now));else{const expired=[...await this.storage.list({prefix:PREFIX})].filter(([,l])=>l.until<=now).map(([k])=>k.slice(PREFIX.length));for(const id of expired)await safelyRecord(()=>finishPlayback(this.storage,this.sql,id,'timeout',now));}}
   if(this.sql){this.sql.exec('DELETE FROM smn_playback_leases WHERE until <= ?',now);return}
   for(const [k,l]of await this.storage.list({prefix:PREFIX}))if(l.until<=now)await this.storage.delete(k);
  }
  async clear(){
+  if(this.history){if(this.sql)await safelyRecord(()=>finishLeaseSelection(this.sql,'1=1',[],'access_changed'));else for(const id of (await this.active()).keys())await safelyRecord(()=>finishPlayback(this.storage,this.sql,id,'access_changed'));}
   if(this.sql){this.sql.exec('DELETE FROM smn_playback_leases');return}
   for(const key of (await this.storage.list({prefix:PREFIX})).keys())await this.storage.delete(key);
  }

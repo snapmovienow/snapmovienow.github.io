@@ -15,7 +15,7 @@ export function createXtreamBridge(deps) {
       const settings = await (await privateCall('/xtream-config')).json();
       if (!settings.enabled) return deps.json({user_info:{auth:0},error:'xtream_disabled'},403);
       const authKey = await fingerprint(env.TICKET_SECRET, JSON.stringify([username.toLowerCase(),password,client,req.headers.get('user-agent')||'',...(playbackMonitorClient(req)?[playbackMonitorClient(req)]:[])]));
-      const checked = await privateCall('/xtream-login',{username,password,client,authKey});
+      const checked = await privateCall('/xtream-login',{username,password,client,authKey,connection:requestConnectionClient(req)});
       if (!checked.ok) return deps.json({user_info:{auth:0},...await checked.json()},checked.status);
       const user = await checked.json();
       const sid = 'xtream:'+await fingerprint(env.TICKET_SECRET,JSON.stringify([authKey,user.version,settings.version]));
