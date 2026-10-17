@@ -16,6 +16,7 @@ for(const [username,id] of [['juanito','juanito-fixture'],['martinvela2326','mar
  const login=await request('/api/portal/login','POST',{username,password:'00000123456789012',accountId:'owner',mode:'owner'});assert.equal(login.status,200);assert.deepEqual(await login.json(),{ok:true});assert.equal(calls.at(-1).username,username);assert.equal(calls.at(-1).mode,'unified');
  const cookie=login.headers.get('Set-Cookie');for(const value of ['__Host-SNAP_Resellers=','Path=/','Secure','HttpOnly','SameSite=Strict'])assert.ok(cookie.includes(value));const header=cookie.split(';')[0];cookies.push(header);
  const response=await request('/api/panel?view=lines','GET',undefined,{Cookie:header,'oai-authenticated-user-id':'forged-owner'}),view=await response.json();assert.equal(response.status,200);assert.equal(view.actor.id,id);assert.equal(view.lines[0].account_id,id);assert.equal(view.target.panelAccess.url,origin);assert.ok(!JSON.stringify(view).includes(header.split('=')[1]));
+ assert.equal((await request('/api/panel?view=connections&connectionAccount='+id,'GET',undefined,{Cookie:header})).status,200);assert.equal(calls.at(-1).query.connectionAccount,id);
  assert.equal((await request('/api/panel','GET',undefined,{Cookie:header+'; '+header})).status,401);
 }
 assert.notEqual(cookies[0],cookies[1]);
