@@ -5,21 +5,30 @@ const decode=s=>String(s??'').replace(/&#(x[0-9a-f]+|\d+);/gi,(_,v)=>String.from
 const plain=v=>decode(String(v??'').replace(/<[^>]*>/g,' ')).replace(/\s+/g,' ').trim();
 const safe=(v,n)=>{const text=plain(v);return text&&!/https?:\/\/|password=|username=|authorization|bearer /i.test(text)?text.slice(0,n):null;};
 const answer=(data,status=200)=>Response.json(data,{status,headers:{'Cache-Control':'no-store'}});
-async function table(request,kind,filters){const rows=[];let total;for(let start=0;start<10000;){const q=new URLSearchParams({id:kind,...filters,draw:'1',start:String(start),length:'1000','search[value]':'','order[0][column]':'0','order[0][dir]':'asc'}),d=JSON.parse(await request('table?'+q)),n=Number(d.recordsFiltered);if(!Array.isArray(d.data)||!Number.isSafeInteger(n)||n<0||n>10000||total!==undefined&&n!==total)throw Error('panel_origin_format');total=n;rows.push(...d.data);if(rows.length===total)return rows;if(!d.data.length||rows.length>total)throw Error('panel_origin_incomplete');start+=d.data.length;}throw Error('panel_origin_size');}
+async function table(request,kind,filters){const rows=[];let total;for(let start=0;start<10000;){const q=new URLSearchParams({id:kind,...filters,draw:'1',start:String(start),length:'1000','search[value]':'','order[0][column]':'0','order[0][dir]':'asc'}),d=JSON.parse(await request('table?'+q)),n=Number(d.recordsFiltered);if(!Array.isArray(d.data)||!Number.isSafeInteger(n)||n<0||n>10000||total!==undefined&&n!==total)throw Error('panel_origin_table');total=n;rows.push(...d.data);if(rows.length===total)return rows;if(!d.data.length||rows.length>total)throw Error('panel_origin_incomplete');start+=d.data.length;}throw Error('panel_origin_size');}
 // All rows visible to an already configured provider. Never changes CCF accounts.
 export async function readOriginSnapshot({username,password,base,fetcher=fetch}){
  const {request}=await panelSession(username,password,base,{timeoutMs:20000,maxBytes:4000000,fetcher});
- const inventory=await table(request,'lines',{reseller:'',filter:''}),users=[];
- for(const row of inventory){if(!Array.isArray(row)||row.length<9)throw Error('panel_origin_format');const sourceId=plain(row[0]),username=plain(row[1]).toLowerCase(),connections=Number(plain(row[7]));if(!/^\d{1,20}$/.test(sourceId)||!/^[a-z0-9_.@-]{3,80}$/.test(username)||!Number.isSafeInteger(connections)||connections<0||connections>100)throw Error('panel_origin_format');users.push({sourceId,username,connections,reseller:safe(row[3],100)});}
- if(new Set(users.map(u=>u.sourceId)).size!==users.length||new Set(users.map(u=>u.username)).size!==users.length)throw Error('panel_origin_ambiguous');
- const owned=new Map(users.map(u=>[u.sourceId,u])),rows=[];let sessions;try{sessions=await table(request,'live_connections',{user:'',line:'',stream:''});}catch{return {checkedAt:Date.now(),users:users.filter(u=>u.connections>0),rows,detailsAvailable:false};}
- for(const row of sessions){if(!Array.isArray(row)||row.length<10)throw Error('panel_origin_format');const line=String(row[2]).match(/href=["'](?:\.\/)?line(?:\.php)?\?(?:id|edit)=(\d+)["']/i),u=line&&owned.get(line[1]);if(!u)continue;const id=plain(row[0]);if(!/^\d{1,20}$/.test(id))throw Error('panel_origin_format');
+ const inventory=await table(request,'lines',{reseller:'',filter:''}),users=[];let unparsedRows=0;
+ for(const row of inventory){
+  if(!Array.isArray(row)||row.length<9){unparsedRows++;continue;}
+  const sourceId=plain(row[0]),username=plain(row[1]).toLowerCase(),count=plain(row[7]).match(/^(\d+)(?:\s*\/\s*\d+)?$/),connections=count?Number(count[1]):NaN;
+  // An origin username is a display observation, not a new local login. CCF
+  // legacy names need not satisfy SNAPTVNOW's creation/password policies.
+  if(!/^\d{1,20}$/.test(sourceId)||!username||username.length>128||!safe(username,128)||/[\u0000-\u001f\u007f]/.test(username)||!Number.isSafeInteger(connections)||connections<0||connections>100000){unparsedRows++;continue;}
+  users.push({sourceId,username,connections,reseller:safe(row[3],100)});
+ }
+ if(new Set(users.map(u=>u.sourceId)).size!==users.length)throw Error('panel_origin_ambiguous');
+ if(unparsedRows&&!users.length)throw Error('panel_origin_rows');
+ const owned=new Map(users.map(u=>[u.sourceId,u])),rows=[];let sessions;try{sessions=await table(request,'live_connections',{user:'',line:'',stream:''});}catch{return {checkedAt:Date.now(),users:users.filter(u=>u.connections>0),rows,detailsAvailable:false,unparsedRows,incomplete:unparsedRows>0};}
+ try{for(const row of sessions){if(!Array.isArray(row)||row.length<10)throw Error('panel_origin_format');const line=String(row[2]).match(/href=["'](?:\.\/)?line(?:\.php)?\?(?:id|edit)=(\d+)["']/i),u=line&&owned.get(line[1]);if(!u)continue;const id=plain(row[0]);if(!/^\d{1,20}$/.test(id))throw Error('panel_origin_format');
   const duration=plain(row[7]),d=duration.match(/^(?:(\d+)d\s*)?(?:(\d+)h\s*)?(?:(\d+)m\s*)?(?:(\d+)s)?$/i),seconds=d&&d[0]?Number(d[1]||0)*86400+Number(d[2]||0)*3600+Number(d[3]||0)*60+Number(d[4]||0):null;
   const rawIp=plain(row[6]).match(/\b(?:\d{1,3}\.){3}\d{1,3}\b/)?.[0]||null,country=String(row[6]).match(/flag-icon-([a-z]{2})\b/i)?.[1]?.toUpperCase()||null;
   rows.push({sourceSessionId:id,sourceId:u.sourceId,username:u.username,title:safe(row[3],200),client:cleanConnectionClient({player:safe(row[4],160),isp:safe(row[5],100),ip:rawIp,country}),durationSeconds:Number.isSafeInteger(seconds)&&seconds>=0&&seconds<=31536000?seconds:null,output:safe(row[8],40)});
  }
  if(new Set(rows.map(r=>r.sourceSessionId)).size!==rows.length)throw Error('panel_origin_ambiguous');
- return {checkedAt:Date.now(),users:users.filter(u=>u.connections>0),rows:rows.filter(r=>owned.get(r.sourceId).connections>0),detailsAvailable:true};
+ return {checkedAt:Date.now(),users:users.filter(u=>u.connections>0),rows:rows.filter(r=>owned.get(r.sourceId).connections>0),detailsAvailable:true,unparsedRows,incomplete:unparsedRows>0};
+ }catch{return {checkedAt:Date.now(),users:users.filter(u=>u.connections>0),rows:[],detailsAvailable:false,unparsedRows,incomplete:unparsedRows>0};}
 }
 // Each provider has an isolated cache; viewers coalesce into one background read.
 export async function originSnapshotResponse(instance,load,now=Date.now()){
@@ -39,7 +48,7 @@ export function createAllOriginConnections({sources,snapshot}){return async(env,
  const results=[];
  for(let at=0;at<providers.length;at+=4)results.push(...await Promise.all(providers.slice(at,at+4).map(async p=>{
   const label=safe(p.name||p.username,100)||'Panel CCF';
-  try{const origin=new URL(p.origin||p.url||'http://ccf.center:8444').origin,r=await snapshot(env,p.source,await originProviderKey(p));if(!r.ok){const e=await r.json();throw Error(/^panel_[a-z_]{1,50}$/.test(e.reason||'')?e.reason:'panel_unavailable');}const data=await r.json();if(!Number.isSafeInteger(data.checkedAt)||Math.abs(Date.now()-data.checkedAt)>45000||!Array.isArray(data.users)||!Array.isArray(data.rows)||data.users.length>10000||data.rows.length>10000)throw Error('invalid');return {source:p.source,name:label,origin,state:'live',checkedAt:data.checkedAt,users:data.users,rows:data.rows,detailsAvailable:data.detailsAvailable===true};}
+  try{const origin=new URL(p.origin||p.url||'http://ccf.center:8444').origin,r=await snapshot(env,p.source,await originProviderKey(p));if(!r.ok){const e=await r.json();throw Error(/^panel_[a-z_]{1,50}$/.test(e.reason||'')?e.reason:'panel_unavailable');}const data=await r.json();if(!Number.isSafeInteger(data.checkedAt)||Math.abs(Date.now()-data.checkedAt)>45000||!Array.isArray(data.users)||!Array.isArray(data.rows)||data.users.length>10000||data.rows.length>10000)throw Error('invalid');return {source:p.source,name:label,origin,state:'live',checkedAt:data.checkedAt,users:data.users,rows:data.rows,detailsAvailable:data.detailsAvailable===true,unparsedRows:data.unparsedRows||0,incomplete:data.incomplete===true};}
   catch(error){return {source:p.source,name:label,state:'unavailable',reason:/^panel_[a-z_]{1,50}$/.test(error?.message||'')?error.message:'panel_unavailable'};}
  })));
  return answer({ok:true,source:'ccf',checkedAt:Date.now(),providers:results,deletionSafe:false});
