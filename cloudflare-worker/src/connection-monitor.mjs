@@ -3,9 +3,10 @@ const answer=(value,status=200)=>Response.json(value,{status});
 const identifier=x=>typeof x==='string'&&/^[A-Za-z0-9_.:-]{1,80}$/.test(x);
 const text=(value,max)=>typeof value==='string'&&!/https?:\/\/|password=|username=|authorization|bearer /i.test(value)?value.replace(/[\u0000-\u001f\u007f]/g,' ').trim().slice(0,max):null;
 function ip(value){if(typeof value!=='string'||value.length>45)return null;if(/^\d+\.\d+\.\d+\.\d+$/.test(value))return value.split('.').every(x=>Number(x)<=255)?value:null;try{return value.includes(':')&&new URL('http://['+value+']/').hostname?'2a06:98c0:3600::103'===value?null:value:null}catch{return null}}
-export function cleanConnectionClient(value){return {ip:ip(value?.ip),player:text(value?.player,160),isp:text(value?.isp,100),country:/^[A-Z]{2}$/.test(value?.country||'')?value.country:null};}
+export function connectionTimezone(value){if(typeof value!=='string'||!value||value.length>100)return null;try{return new Intl.DateTimeFormat('en',{timeZone:value}).resolvedOptions().timeZone;}catch{return null;}}
+export function cleanConnectionClient(value){const timeZone=connectionTimezone(value?.timeZone);return {ip:ip(value?.ip),player:text(value?.player,160),isp:text(value?.isp,100),country:/^[A-Z]{2}$/.test(value?.country||'')?value.country:null,...(timeZone?{timeZone}:{})};}
 // These fields come from the edge request, never from a customer's JSON body.
-export function requestConnectionClient(request){return cleanConnectionClient({ip:request.cf?request.headers.get('CF-Connecting-IPv6')||request.headers.get('CF-Connecting-IP'):null,player:request.headers.get('User-Agent'),isp:request.cf?.asOrganization,country:request.cf?.country});}
+export function requestConnectionClient(request){return cleanConnectionClient({ip:request.cf?request.headers.get('CF-Connecting-IPv6')||request.headers.get('CF-Connecting-IP'):null,player:request.headers.get('User-Agent'),isp:request.cf?.asOrganization,country:request.cf?.country,timeZone:request.cf?.timezone});}
 export async function connectionIdentifier(accountId,lineId,id,lease){const raw=JSON.stringify([accountId,lineId,id,lease.sid,lease.request_id||'',lease.version]);return [...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(raw)))].map(n=>n.toString(16).padStart(2,'0')).join('');}
 export async function recordConnectionLimit(store,user,body,used,now=Date.now()){
  const accountId=user?.resellerBridge?.accountId,lineId=user?.resellerBridge?.lineId;if(!identifier(accountId)||!identifier(lineId))return;

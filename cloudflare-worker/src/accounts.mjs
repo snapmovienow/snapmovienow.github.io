@@ -74,7 +74,7 @@ export async function accountsFetch(state,env,req){
  if(p==='/xtream-count')return answer({connections:await leases.count({uid:b.uid})});
  if(p==='/xtream-login'){
   const username=normal(b.username),u=await store.get('user:'+username),key='xtream-auth:'+username+':'+b.authKey;
-  const cached=await store.get(key);if(cached&&cached.until>Date.now()&&alive(u)&&u.id===cached.uid&&u.version===cached.version)return answer({...publicUser(u),version:u.version});
+  const cached=await store.get(key);if(cached&&cached.until>Date.now()&&alive(u)&&u.id===cached.uid&&u.version===cached.version){await safelyRecord(()=>recordCustomerActivity(store,u.id,Date.now(),b.connection));return answer({...publicUser(u),version:u.version});}
   const r=await accountsFetch(state,env,new Request('https://private/accounts/login',{method:'POST',body:JSON.stringify(b)}));if(!r.ok)return r;
   const user=await r.json(),current=await store.get('user:'+username);if(!alive(current)||current.version!==user.version)return answer({error:'invalid_credentials'},401);await store.put(key,{uid:user.id,version:user.version,until:Date.now()+15*60000});return answer({...publicUser(current),version:user.version});
  }
@@ -99,7 +99,7 @@ export async function accountsFetch(state,env,req){
    if(!factor.valid)return answer({error:b.code?'mfa_invalid':'mfa_required'},401);
    await store.transaction(tx=>writeAudit(tx,u.username,'admin_login'));
   }
-  if(p==='/login')await safelyRecord(()=>recordClientAccess(store,store.sql,u,'login',b.connection,b.authKey?'xtream':'api'));
+  if(p==='/login'){await safelyRecord(()=>recordClientAccess(store,store.sql,u,'login',b.connection,b.authKey?'xtream':'api'));await safelyRecord(()=>recordCustomerActivity(store,u.id,Date.now(),b.connection));}
   await store.delete(bucket);return answer({id:u.id,username:u.username,version:u.version,expiresAt:u.expiresAt,permissions:contentPermissions(u.permissions)});
  }
  if(p==='/check'){
@@ -159,7 +159,7 @@ export async function accountsFetch(state,env,req){
   const local=leases.in(tx);await local.prune();await local.removeFor({sid:b.sid});const used=await local.count({uid:b.uid});
   const mediaKey=found.row.type+'|'+found.row.profileServer+'|'+b.exclusiveId+'|'+(found.media.mode==='gnula'?'m3u8':new URL(found.media.page).pathname.split('.').at(-1));
   if(used>=3){await recordConnectionLimit(tx,user,{...b,mediaKey,activity:{title:found.media===found.row?found.row.name:found.row.name+' · '+found.media.title}},used);return answer({error:'user_connection_limit'},409);}
-  const id=crypto.randomUUID();await local.put(id,{sid:b.sid,uid:b.uid,username:user.username,version:user.version,request_id:b.request_id,exclusiveId:b.exclusiveId,exclusiveParentId:found.row.id,playbackRevision:b.playbackRevision,mediaKey,activity:{title:found.media===found.row?found.row.name:found.row.name+' · '+found.media.title},client:cleanConnectionClient(b.client),startedAt:Date.now(),until:Date.now()+90000,...(b.xtream?{xtream:true}:{})});await recordCustomerActivity(tx,user.id);return answer({lease_id:id});
+  const id=crypto.randomUUID();await local.put(id,{sid:b.sid,uid:b.uid,username:user.username,version:user.version,request_id:b.request_id,exclusiveId:b.exclusiveId,exclusiveParentId:found.row.id,playbackRevision:b.playbackRevision,mediaKey,activity:{title:found.media===found.row?found.row.name:found.row.name+' · '+found.media.title},client:cleanConnectionClient(b.client),startedAt:Date.now(),until:Date.now()+90000,...(b.xtream?{xtream:true}:{})});await recordCustomerActivity(tx,user.id,Date.now(),b.client);return answer({lease_id:id});
  });
  if(p==='/acquire')return store.transaction(async tx=>{
   if(b.request_id&&(await tx.get('playback:'+b.sid))?.request_id!==b.request_id)return answer({error:'playback_superseded'},410);
@@ -167,7 +167,7 @@ export async function accountsFetch(state,env,req){
   const u=await tx.get('user:'+normal(b.username));if(!alive(u)||u.id!==b.uid||u.version!==b.version)return answer({error:'account_inactive'},401);
   const local=leases.in(tx);await local.prune();
   const sessionLeases=await local.active({sid:b.sid});
-  if(b.request_id){const previous=[...sessionLeases].find(([,l])=>l.mediaKey===b.mediaKey&&!(b.exclude||[]).includes(l.provider_id));if(previous){const [id,l]=previous;l.until=Date.now()+90000;if(l.request_id!==b.request_id){delete l.quality;delete l.qualityReport;delete l.qualityUpdatedAt;}l.request_id=b.request_id;const activity=cleanPlaybackActivity(b.activity,String(b.mediaKey||'').split('|')[0]);if(activity)l.activity=activity;await local.put(id,l);await recordCustomerActivity(tx,u.id);const pool=await tx.get('pool'),line=pool?.lines?.find(x=>x.id===l.provider_id);return answer({lease_id:id,provider_id:l.provider_id,encrypted:line?.encrypted,maxConnections:line?.maxConnections,reused:true,request_id:b.request_id})}}
+  if(b.request_id){const previous=[...sessionLeases].find(([,l])=>l.mediaKey===b.mediaKey&&!(b.exclude||[]).includes(l.provider_id));if(previous){const [id,l]=previous;l.until=Date.now()+90000;if(l.request_id!==b.request_id){delete l.quality;delete l.qualityReport;delete l.qualityUpdatedAt;}l.request_id=b.request_id;l.client=cleanConnectionClient(b.client);const activity=cleanPlaybackActivity(b.activity,String(b.mediaKey||'').split('|')[0]);if(activity)l.activity=activity;await local.put(id,l);await recordCustomerActivity(tx,u.id,Date.now(),b.client);const pool=await tx.get('pool'),line=pool?.lines?.find(x=>x.id===l.provider_id);return answer({lease_id:id,provider_id:l.provider_id,encrypted:line?.encrypted,maxConnections:line?.maxConnections,reused:true,request_id:b.request_id})}}
   await local.removeFor({sid:b.sid});
   if(b.xtream||u.resellerBridge){const used=await local.count({uid:b.uid});if(used>=3){await recordConnectionLimit(tx,u,b,used);return answer({error:'user_connection_limit'},409);}}
   const activity=cleanPlaybackActivity(b.activity,String(b.mediaKey||'').split('|')[0]);
@@ -179,11 +179,11 @@ export async function accountsFetch(state,env,req){
    const counts=await local.providerCounts();
    const candidates=pool.lines.filter(p=>(!b.server||(p.server||'ccf')===b.server)&&!(b.exclude||[]).includes(p.id)).map(p=>({...p,occupied:p.external+(counts.get(String(p.id))||0)})).filter(p=>p.occupied<p.maxConnections).sort((a,b)=>a.occupied/a.maxConnections-b.occupied/b.maxConnections);
    const selected=candidates[0];if(!selected)return answer({error:'ccf_capacity'},409);
-   const id=crypto.randomUUID();await local.put(id,{sid:b.sid,uid:b.uid,username:b.username,version:b.version,provider_id:selected.id,until:Date.now()+90000,...extra});await recordCustomerActivity(tx,u.id);return answer({lease_id:id,provider_id:selected.id,encrypted:selected.encrypted,maxConnections:selected.maxConnections});
+   const id=crypto.randomUUID();await local.put(id,{sid:b.sid,uid:b.uid,username:b.username,version:b.version,provider_id:selected.id,until:Date.now()+90000,...extra});await recordCustomerActivity(tx,u.id,Date.now(),b.client);return answer({lease_id:id,provider_id:selected.id,encrypted:selected.encrypted,maxConnections:selected.maxConnections});
   }
   const max=Math.min(provider.maxConnections,Math.max(1,Number(b.upstreamMax)||3));
   if(Math.max(await local.count(),Number(b.upstreamExternal)||0)>=max)return answer({error:'ccf_capacity',maxConnections:max},409);
-  const id=crypto.randomUUID();await local.put(id,{sid:b.sid,uid:b.uid,username:b.username,version:b.version,until:Date.now()+90000,...extra});await recordCustomerActivity(tx,u.id);return answer({lease_id:id});
+  const id=crypto.randomUUID();await local.put(id,{sid:b.sid,uid:b.uid,username:b.username,version:b.version,until:Date.now()+90000,...extra});await recordCustomerActivity(tx,u.id,Date.now(),b.client);return answer({lease_id:id});
  });
  if(p==='/lease-check'||p==='/heartbeat'||p==='/release')return store.transaction(async tx=>{
   const local=leases.in(tx),l=await local.get(b.lease_id);if(!l||l.sid!==b.sid)return answer({error:'playback_expired'},410);
