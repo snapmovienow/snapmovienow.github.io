@@ -1,3 +1,4 @@
+import {createAllOriginConnections,readOriginSnapshot,originSnapshotResponse} from './origin-connections.mjs';
 import {createOwnerPortal,matchesOwnerPortal} from './owner-portal.mjs';
 import {createCcfExporter} from './ccf-record.mjs';
 import {createOwnerAdminAccess,ownerAccessState} from './owner-admin-access.mjs';
@@ -49,6 +50,7 @@ async function unticket(env,t){try{if(!env.TICKET_SECRET)return null;const raw=u
 export class PlaybackSession {
  constructor(state,env){this.state=state;this.env=env}
  async fetch(req){const path=new URL(req.url).pathname;
+ if(path==='/ccf-origin-snapshot')return originSnapshotResponse(this,async()=>{const body=await req.json(),providers=await (await directory(this.env,'/providers')).json(),p=providers.find(p=>p.mode==='panel'&&p.source===body.source);if(!p)throw Error('panel_origin_source');const credential=await unticket(this.env,p.encrypted);if(credential?.kind!=='reseller')throw Error('panel_invalid');return readOriginSnapshot({username:credential.username,password:credential.password,base:p.url||'http://ccf.center:8444/NYzkggyG/'});});
  if(path==='/stream'&&['GET','HEAD'].includes(req.method))return serverStreamDirect(req,this.env,new URL(req.url),{waitUntil:promise=>this.state.waitUntil?.(promise)});
  if(path==='/refresh-pool'){const force=req.method==='POST'&&(await req.json()).force===true;if(!this.refreshing)this.refreshing=refreshProviderPool(this.env,force).finally(()=>{this.refreshing=null});try{const lines=await this.refreshing;return Response.json({ok:true,single:lines===null})}catch(e){return Response.json({error:e.message},{status:503})}}
  if(path==='/monitor-providers'){const providers=await (await directory(this.env,'/providers')).json();return Response.json(await probeProviders(providers,{decrypt:value=>unticket(this.env,value),readPanel,validateAccount,identifier:hashId}))}
@@ -208,7 +210,8 @@ async function openPortalConfig(env,value){try{const raw=unb64(value);return JSO
 async function portalRecipient(env){let stored=await (await directory(env,'/reseller-portal-recipient',{accountId:PORTAL_ACCOUNT})).json();if(!stored){const pair=await crypto.subtle.generateKey({name:'ECDH',namedCurve:'P-256'},true,['deriveBits']),jwk=await crypto.subtle.exportKey('jwk',pair.privateKey),encrypted=await sealPortalConfig(env,{recipientKey:jwk});stored=await (await directory(env,'/reseller-portal-recipient-ensure',{accountId:PORTAL_ACCOUNT,encrypted})).json();}const value=await openPortalConfig(env,stored.encrypted),jwk=value.recipientKey,privateKey=await crypto.subtle.importKey('jwk',jwk,{name:'ECDH',namedCurve:'P-256'},false,['deriveBits']);return {privateKey,publicKey:{kty:'EC',crv:'P-256',x:jwk.x,y:jwk.y,ext:true}}}
 const ownerAdminAccess=createOwnerAdminAccess({ticket,unticket,sessionCall});
 const ccfExporter=createCcfExporter({directory,unticket,readPanelRecord});
-const resellerBridgeRequest=createResellerBridge(directory,undefined,{ccfExport:(env,body)=>ccfExporter(env,body),ownerAccess:(env,action,body)=>ownerAdminAccess.bridge(env,action,body),sealConfig:(env,body)=>sealPortalConfig(env,body),portalRecipient});
+const allOriginConnections=createAllOriginConnections({sources:async env=>(await directory(env,'/providers')).json(),snapshot:async(env,source)=>env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_ccf_origin_all_v1:'+await hashId(source))).fetch('https://private/ccf-origin-snapshot',{method:'POST',body:JSON.stringify({source})})});
+const resellerBridgeRequest=createResellerBridge(directory,undefined,{allOriginConnections,ccfExport:(env,body)=>ccfExporter(env,body),ownerAccess:(env,action,body)=>ownerAdminAccess.bridge(env,action,body),sealConfig:(env,body)=>sealPortalConfig(env,body),portalRecipient});
 const portalConfig=async env=>{const stored=await (await directory(env,'/reseller-portal-config',{accountId:PORTAL_ACCOUNT})).json();return stored?.encrypted?openPortalConfig(env,stored.encrypted):null;};
 const resellerPortalRequest=createResellerPortal({getConfig:portalConfig});
 const ownerPortalRequest=createOwnerPortal({getConfig:portalConfig});

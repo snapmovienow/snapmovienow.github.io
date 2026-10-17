@@ -19,16 +19,16 @@ export function parseLines(data){
  if(!active||!username||!password||!Number.isFinite(used)||!Number.isInteger(max)||max<1||(date&&Date.parse(date+'T23:59:59Z')<Date.now()))return [];
  return [{id:plain(r[0]),username,password,maxConnections:max,external:used}];});
 }
-async function panelSession(username,password,base=BASE){
+export async function panelSession(username,password,base=BASE,options={}){
  base=validateServerUrl(base,true);
- const deadline=Date.now()+45000;
+ const deadline=Date.now()+(options.timeoutMs||45000),fetcher=options.fetcher||fetch;
  let cookie='';async function request(path,body){let url=new URL(path,base),method=body?'POST':'GET';for(let i=0;i<5;i++){
   if(url.origin!==new URL(base).origin||!url.pathname.startsWith(new URL(base).pathname))throw Error('panel_redirect_denied');
   const remaining=deadline-Date.now();if(remaining<=0)throw Error('panel_unavailable');
-  const r=await fetch(url,{method,redirect:'manual',headers:{'User-Agent':'SnapMovieNow/1.0',...(cookie?{Cookie:cookie}:{}),...(body?{'content-type':'application/x-www-form-urlencoded'}:{})},...(body?{body}:{}),signal:AbortSignal.timeout(Math.min(12000,remaining))});
+  const r=await fetcher(url,{method,redirect:'manual',headers:{'User-Agent':'SnapMovieNow/1.0',...(cookie?{Cookie:cookie}:{}),...(body?{'content-type':'application/x-www-form-urlencoded'}:{})},...(body?{body}:{}),signal:AbortSignal.timeout(Math.min(12000,remaining))});
   const sc=r.headers.get('set-cookie');if(sc){const m=sc.match(/(?:^|,\s*)PHPSESSID=([^;]+)/);if(m)cookie='PHPSESSID='+m[1]}
   if([301,302,303,307,308].includes(r.status)){url=new URL(r.headers.get('location'),url);if([301,302,303].includes(r.status)){method='GET';body=undefined}continue}
-  if(!r.ok)throw Error('panel_unavailable');return r.text();}throw Error('panel_redirect_failed');}
+  if(!r.ok)throw Error('panel_unavailable');if(options.maxBytes){const reader=r.body?.getReader();if(!reader)return '';const parts=[];let size=0;try{for(;;){const chunk=await reader.read();if(chunk.done)break;size+=chunk.value.byteLength;if(size>options.maxBytes){await reader.cancel();throw Error('panel_response_size');}parts.push(chunk.value);}}finally{reader.releaseLock();}const raw=new Uint8Array(size);let at=0;for(const part of parts){raw.set(part,at);at+=part.byteLength;}return new TextDecoder().decode(raw);}return r.text();}throw Error('panel_redirect_failed');}
  await request('login');const text=await request('login',new URLSearchParams({username,password,login:'',referrer:''}).toString());
  if(/name=["']password["']/.test(text)||!text.includes('dashboard'))throw Error('panel_invalid');
  return {request,base};
