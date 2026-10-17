@@ -30,6 +30,7 @@ export async function originSnapshotResponse(instance,load,now=Date.now()){
  }
  return saved?.checkedAt>now-45000&&saved.checkedAt<=now?answer({ok:true,...saved}):answer({error:instance.refreshingOrigin?'bridge_origin_loading':'bridge_origin_unavailable'},503);
 }
+export async function originProviderKey(p){const raw=JSON.stringify([p.source,p.origin||'',p.url||'',p.encrypted||'']);return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(raw))),n=>n.toString(16).padStart(2,'0')).join('');}
 export function createAllOriginConnections({sources,snapshot}){return async(env,body)=>{
  // The primary operator signer already has provider-export authority. A reseller
  // signer cannot enumerate any other panel, even by forging the request body.
@@ -38,7 +39,7 @@ export function createAllOriginConnections({sources,snapshot}){return async(env,
  const results=[];
  for(let at=0;at<providers.length;at+=4)results.push(...await Promise.all(providers.slice(at,at+4).map(async p=>{
   const label=safe(p.name||p.username,100)||'Panel CCF';
-  try{const origin=new URL(p.origin||p.url||'http://ccf.center:8444').origin,r=await snapshot(env,p.source);if(!r.ok)throw Error('loading');const data=await r.json();if(!Number.isSafeInteger(data.checkedAt)||Math.abs(Date.now()-data.checkedAt)>45000||!Array.isArray(data.users)||!Array.isArray(data.rows)||data.users.length>10000||data.rows.length>10000)throw Error('invalid');return {source:p.source,name:label,origin,state:'live',checkedAt:data.checkedAt,users:data.users,rows:data.rows,detailsAvailable:data.detailsAvailable===true};}
+  try{const origin=new URL(p.origin||p.url||'http://ccf.center:8444').origin,r=await snapshot(env,p.source,await originProviderKey(p));if(!r.ok)throw Error('loading');const data=await r.json();if(!Number.isSafeInteger(data.checkedAt)||Math.abs(Date.now()-data.checkedAt)>45000||!Array.isArray(data.users)||!Array.isArray(data.rows)||data.users.length>10000||data.rows.length>10000)throw Error('invalid');return {source:p.source,name:label,origin,state:'live',checkedAt:data.checkedAt,users:data.users,rows:data.rows,detailsAvailable:data.detailsAvailable===true};}
   catch{return {source:p.source,name:label,state:'unavailable'};}
  })));
  return answer({ok:true,source:'ccf',checkedAt:Date.now(),providers:results,deletionSafe:false});
