@@ -4,7 +4,7 @@ const identifier=value=>typeof value==='string'&&/^[A-Za-z0-9_.:-]{1,80}$/.test(
 const name=value=>/^[a-z0-9_.@-]{8,80}$/.test(value);
 async function digest(value){return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value))),v=>v.toString(16).padStart(2,'0')).join('');}
 export async function resellerAccounts(store,path,b,{passwordHash,leases,writeAudit}){
- const nativeMode=b.preserveCredentials===true||b.replaceNativeCredentials===true,accountId=b.accountId;if(!identifier(accountId)||!identifier(b.lineId)||!(name(normal(b.username))||(nativeMode||b.ccfCopy===true&&b.legacy===true)&&/^[a-z0-9_.@-]{3,80}$/.test(normal(b.username))))return answer({error:'bridge_input'},400);
+ const nativeMode=b.preserveCredentials===true||b.replaceNativeCredentials===true,accountId=b.accountId;if(!identifier(accountId)||!identifier(b.lineId)||!(name(normal(b.username))||(nativeMode||b.ccfCopy===true&&b.legacy===true)&&/^[a-z0-9_.@!-]{3,80}$/.test(normal(b.username))))return answer({error:'bridge_input'},400);
  const username=normal(b.username),lineKey='reseller-line:'+accountId+':'+b.lineId,operationKey='reseller-operation:'+accountId+':'+b.operationKey,reservationKey='reseller-reservation:'+username;
  if(path==='/reseller-release'){
   if(typeof b.operationKey!=='string'||!/^[A-Za-z0-9_-]{43}$/.test(b.operationKey)||typeof b.payloadHash!=='string'||!/^[a-f0-9]{64}$/.test(b.payloadHash))return answer({error:'bridge_input'},400);

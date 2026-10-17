@@ -1,3 +1,4 @@
+import {markServiceVerification} from './service-verification.mjs';
 import {createAllOriginConnections,readOriginSnapshot,originSnapshotResponse,originProviderKey,originMonitorProviders} from './origin-connections.mjs';
 import {createOwnerPortal,matchesOwnerPortal} from './owner-portal.mjs';
 import {createCcfExporter} from './ccf-record.mjs';
@@ -308,7 +309,7 @@ export default {scheduled(event,env,ctx){
  if(event.cron===MONITOR_CRON){ctx.waitUntil(monitorCall(env,'/tick').then(async response=>{if(!response.ok)console.error({event:'monitor_failed'});await response.body?.cancel()}).catch(()=>console.error({event:'monitor_failed'})));if(env.CATALOG_MAINTENANCE_ENABLED==='true')ctx.waitUntil(directory(env,'/catalog-maintenance-tick').then(async r=>{await r.body?.cancel()}).catch(()=>console.error({event:'catalog_maintenance_failed'})));return}
  if(event.cron&&event.cron!=='17 5 * * *')return;
  ctx.waitUntil(directory(env,'/backup-automatic').then(async response=>{const result=await response.json();if(result.error)console.error({event:'backup_failed',reason:result.error});if(result.recovery?.error)console.error({event:'backup_drill_failed',reason:result.recovery.error})}).catch(()=>console.error({event:'backup_failed',reason:'backup_service_unavailable'})).finally(async()=>{const response=await monitorCall(env,'/tick');await response.body?.cancel()}));
-},async fetch(req, env, ctx) {const response=await traceRequest(req, () => handleRequest(req, env, ctx), {allowedOrigin: SITE});return browserResponse(response,req,env);}};
+},async fetch(req, env, ctx) {await markServiceVerification(req);const response=await traceRequest(req, () => handleRequest(req, env, ctx), {allowedOrigin: SITE});return browserResponse(response,req,env);}};
 
 
 

@@ -1,7 +1,7 @@
 // Private signed inspection of known reseller lines. Never return credentials.
 export async function resellerIntegrity(store,b){
  const id=x=>typeof x==='string'&&/^[A-Za-z0-9_.:-]{1,80}$/.test(x);
- if(!id(b.accountId)||!Array.isArray(b.lines)||!b.lines.length||b.lines.length>100||b.lines.some(x=>!id(x.lineId)||!/^[a-z0-9_.@-]{3,80}$/.test(x.username||''))||new Set(b.lines.map(x=>x.lineId)).size!==b.lines.length)return Response.json({error:'bridge_input'},{status:400});
+ if(!id(b.accountId)||!Array.isArray(b.lines)||!b.lines.length||b.lines.length>100||b.lines.some(x=>!id(x.lineId)||!/^[a-z0-9_.@!-]{3,80}$/.test(x.username||''))||new Set(b.lines.map(x=>x.lineId)).size!==b.lines.length)return Response.json({error:'bridge_input'},{status:400});
  const lines=[];
  for(const x of b.lines){
   const u=await store.get('user:'+x.username),receipt=await store.get('reseller-line:'+b.accountId+':'+x.lineId),adoption=await store.get('native-adoption:'+b.accountId+':'+x.username);

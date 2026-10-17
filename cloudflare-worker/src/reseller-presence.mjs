@@ -3,12 +3,12 @@ import {connectionTimezone} from './connection-monitor.mjs';
 const answer=(body,status=200)=>Response.json(body,{status});
 const identifier=x=>typeof x==='string'&&/^[A-Za-z0-9_.:-]{1,80}$/.test(x);
 export async function recordCustomerActivity(store,uid,now=Date.now(),client){
- const key='customer-activity:'+uid,old=await store.get(key);
+ if(client?.serviceCheck===true)return;const key='customer-activity:'+uid,old=await store.get(key);
  const timeZone=connectionTimezone(client?.timeZone),changed=timeZone&&timeZone!==old?.timeZone;
  if(!old||old.lastConnectionAt<now-30000||changed)await store.put(key,{...old,lastConnectionAt:now,...(timeZone?{timeZone,timeZoneAt:now}:{})});
 }
 export async function resellerPresence(store,leases,b,now=Date.now()){
- if(!identifier(b.accountId)||!Array.isArray(b.lines)||b.lines.length>100||b.lines.some(x=>!identifier(x?.lineId)||typeof x.username!=='string'||!/^[a-z0-9_.@-]{3,80}$/.test(x.username))||new Set(b.lines.map(x=>x.lineId)).size!==b.lines.length)return answer({error:'bridge_input'},400);
+ if(!identifier(b.accountId)||!Array.isArray(b.lines)||b.lines.length>100||b.lines.some(x=>!identifier(x?.lineId)||typeof x.username!=='string'||!/^[a-z0-9_.@!-]{3,80}$/.test(x.username))||new Set(b.lines.map(x=>x.lineId)).size!==b.lines.length)return answer({error:'bridge_input'},400);
  const users=[];
  for(const x of b.lines){const u=await store.get('user:'+x.username);if(!u||u.resellerBridge?.accountId!==b.accountId||u.resellerBridge.lineId!==x.lineId)return answer({error:'bridge_presence_scope'},403);users.push(u);}
  const summaries=await leases.customerSummaries(users.map(u=>u.id),now),lines=[];

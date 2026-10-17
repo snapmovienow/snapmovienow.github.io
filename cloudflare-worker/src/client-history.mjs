@@ -10,7 +10,7 @@ export function clientHistorySchema(sql){if(sql)sql.exec(`CREATE TABLE IF NOT EX
  CREATE INDEX IF NOT EXISTS smn_client_history_account ON smn_client_history(account_id,started_at,id);
  CREATE INDEX IF NOT EXISTS smn_client_history_lease ON smn_client_history(lease_id,ended_at);`);}
 export async function safelyRecord(work){try{return await work();}catch{console.error('client_history_write_failed');}}
-function scope(user){return user&&id(user.resellerBridge?.accountId)&&id(user.resellerBridge?.lineId)&&/^[a-z0-9_.@-]{3,80}$/.test(user.username||'')?{accountId:user.resellerBridge.accountId,lineId:user.resellerBridge.lineId,username:user.username}:null;}
+function scope(user){return user&&id(user.resellerBridge?.accountId)&&id(user.resellerBridge?.lineId)&&/^[a-z0-9_.@!-]{3,80}$/.test(user.username||'')?{accountId:user.resellerBridge.accountId,lineId:user.resellerBridge.lineId,username:user.username}:null;}
 async function rowsFor(store,sql,where='',args=[]){return sql?sql.exec('SELECT * FROM smn_client_history'+where,...args).toArray():[...await store.list({prefix:PREFIX})].map(([,row])=>row);}
 async function save(store,sql,row){if(sql)sql.exec('INSERT INTO smn_client_history(id,account_id,line_id,username,kind,started_at,last_seen_at,ended_at,lease_id,data) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET last_seen_at=excluded.last_seen_at,ended_at=excluded.ended_at,data=excluded.data',row.id,row.account_id,row.line_id,row.username,row.kind,row.started_at,row.last_seen_at,row.ended_at,row.lease_id,row.data);else await store.put(PREFIX+row.id,row);}
 async function trim(store,sql,accountId,now){
@@ -18,13 +18,13 @@ async function trim(store,sql,accountId,now){
  const rows=(await rowsFor(store)).filter(r=>r.account_id===accountId).sort((a,b)=>b.started_at-a.started_at||b.id.localeCompare(a.id));for(let i=0;i<rows.length;i++)if(i>=MAX_ROWS||rows[i].started_at<now-RETENTION)await store.delete(PREFIX+rows[i].id);
 }
 export async function recordClientAccess(store,sql,user,kind,client,access='api',now=Date.now()){
- const owner=scope(user);if(!owner||!['login','login_failed','logout'].includes(kind))return;
+ const owner=scope(user);if(client?.serviceCheck===true||!owner||!['login','login_failed','logout'].includes(kind))return;
  const context=cleanConnectionClient(client),bucket=PREFIX+'rate:'+owner.accountId+':'+owner.lineId+':'+kind+':'+access;
  const previous=await store.get(bucket);if(previous>now-60000)return;await store.put(bucket,now);
  await save(store,sql,{id:crypto.randomUUID(),account_id:owner.accountId,line_id:owner.lineId,username:owner.username,kind,started_at:now,last_seen_at:now,ended_at:now,lease_id:null,data:JSON.stringify({client:context,access:access==='xtream'?'xtream':'api'})});await trim(store,sql,owner.accountId,now);
 }
 export async function recordPlayback(store,sql,leaseId,lease,now=Date.now()){
- const user=await store.get('user:'+String(lease.username||'').toLowerCase()),owner=scope(user);if(!owner||user.id!==lease.uid)return;
+ const user=await store.get('user:'+String(lease.username||'').toLowerCase()),owner=scope(user);if(lease.client?.serviceCheck===true||!owner||user.id!==lease.uid)return;
  const eventId=await digest(JSON.stringify(['playback',leaseId,lease.request_id||'']));
  const found=sql?(await rowsFor(store,sql,' WHERE id=?',[eventId]))[0]:await store.get(PREFIX+eventId);
  if(found){if(found.ended_at===null&&lease.until-90000>found.last_seen_at+15000){found.last_seen_at=Math.min(now,lease.until-90000);await save(store,sql,found);}return eventId;}
