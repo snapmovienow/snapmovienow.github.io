@@ -15,10 +15,12 @@ export function validatedMediaTarget(value,sourceOrigin){
 
 // Preserve the authorised source across redirects and Range retries. HLS
 // playlists use the same target check before issuing encrypted resource URLs.
-export async function fetchValidatedMedia(start,headers,type,sourceOrigin,{fetchIP=fetchApprovedMediaIP,fetchHost=fetchMedia}={}){
+export async function fetchValidatedMedia(start,headers,type,sourceOrigin,{fetchIP=fetchApprovedMediaIP,fetchHost=fetchMedia,onOrigin}={}){
  let next=start;
  for(let redirects=0;redirects<6;redirects++){
   const target=validatedMediaTarget(next,sourceOrigin);next=target.href;
+  // Private diagnostics may observe origins, never credential-bearing paths.
+  if(onOrigin)onOrigin(target.origin);
   const response=isApprovedMediaIP(target,sourceOrigin)?
    await fetchIP(next,headers,undefined,undefined,sourceOrigin):
    await fetchHost(next,{headers,redirect:'manual'},type==='live'?12000:25000);

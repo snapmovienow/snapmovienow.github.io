@@ -11,6 +11,7 @@ import {playbackQualityContext} from './native-playback-quality.mjs';
 import {requestConnectionClient} from './connection-monitor.mjs';
 import {createResellerPortal,matchesResellerPortal,PORTAL_ACCOUNT} from './reseller-portal.mjs';
 import {createResellerBridge} from './reseller-bridge.mjs';
+import {probeResellerMedia} from './reseller-media-probe.mjs';
 import {profileRoute} from './profiles.mjs';
 import {operationsRoute} from './operations.mjs';
 import {MONITOR_CRON,monitorCall} from './monitor.mjs';
@@ -211,7 +212,7 @@ async function portalRecipient(env){let stored=await (await directory(env,'/rese
 const ownerAdminAccess=createOwnerAdminAccess({ticket,unticket,sessionCall});
 const ccfExporter=createCcfExporter({directory,unticket,readPanelRecord});
 const allOriginConnections=createAllOriginConnections({sources:async env=>(await directory(env,'/providers')).json(),snapshot:async(env,source,key,monitor)=>env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_ccf_origin_all_v1:'+key)).fetch('https://private/ccf-origin-snapshot',{method:'POST',body:JSON.stringify({source,key,...(monitor?{monitor}:{})})})});
-const resellerBridgeRequest=createResellerBridge(directory,undefined,{allOriginConnections,ccfExport:(env,body)=>ccfExporter(env,body),ownerAccess:(env,action,body)=>ownerAdminAccess.bridge(env,action,body),sealConfig:(env,body)=>sealPortalConfig(env,body),portalRecipient});
+const resellerBridgeRequest=createResellerBridge(directory,undefined,{allOriginConnections,ccfExport:(env,body)=>ccfExporter(env,body),ownerAccess:(env,action,body)=>ownerAdminAccess.bridge(env,action,body),sealConfig:(env,body)=>sealPortalConfig(env,body),portalRecipient,mediaProbe:(env,body,ctx)=>probeResellerMedia(env,body,{unticket,sessionCall,directory,origin:ORIGIN,fetchMedia:fetchValidatedMedia,allocate:(env,session,server)=>managedPlayback(env,session,server,ctx),channel:async(env,session,id,server)=>{const permissions=contentPermissions(await (await directory(env,'/permissions',{username:session.username})).json());if(!permissions.tv)throw Error('content_disabled');const catalog=createProviderCatalog(catalogDeps,env,ctx),rows=await catalog('get_live_streams',server),allowed=permissions.adults?rows:await createAdultPolicy(catalog).filter('get_live_streams',rows);return allowed.find(row=>String(row.stream_id)===id&&String(row._server||'ccf')===server);}})});
 const portalConfig=async env=>{const stored=await (await directory(env,'/reseller-portal-config',{accountId:PORTAL_ACCOUNT})).json();return stored?.encrypted?openPortalConfig(env,stored.encrypted):null;};
 const resellerPortalRequest=createResellerPortal({getConfig:portalConfig});
 const ownerPortalRequest=createOwnerPortal({getConfig:portalConfig});
@@ -220,8 +221,8 @@ if(matchesOwnerPortal(req))return ownerPortalRequest(req,env);if(matchesReseller
 if(req.method==='POST'&&req.headers.get('Cookie')?.includes('__Host-smn_')&&!canUseCookie(req,env))return json({error:'origin_not_allowed'},403);
 if(req.headers.get('Origin')&&!allowedOrigins(env).has(req.headers.get('Origin'))&&req.method==='POST')return json({error:'origin_not_allowed'},403);
 if(req.method==="OPTIONS")return new Response(null,{status:204,headers:cors});
-if(u.pathname==="/health")return json({ok:true,service:"snapmovienow-edge",version:SERVICE_VERSION,catalog_maintenance:await catalogMaintenanceStatus(env,directory),capabilities:['xtream','admin-recovery-renewal','backup-integrity','native-profile','metric-retry','admin-credentials-rotation','isolated-backup-recovery','xtream-series-diagnostic','operational-alerts','rotating-media-origins','admin-user-activity','admin-user-comments','reseller-bridge-v1']});
-if(u.pathname==='/reseller-bridge')return resellerBridgeRequest(req,env);
+if(u.pathname==="/health")return json({ok:true,service:"snapmovienow-edge",version:SERVICE_VERSION,catalog_maintenance:await catalogMaintenanceStatus(env,directory),capabilities:['xtream','admin-recovery-renewal','backup-integrity','native-profile','metric-retry','admin-credentials-rotation','isolated-backup-recovery','xtream-series-diagnostic','operational-alerts','rotating-media-origins','admin-user-activity','admin-user-comments','reseller-bridge-v1','private-media-diagnostics-v1']});
+if(u.pathname==='/reseller-bridge')return resellerBridgeRequest(req,env,ctx);
 if(u.pathname==='/exclusive-media'&&['GET','HEAD'].includes(req.method)){try{return await exclusives.media(req,env,ctx)}catch(e){return json({error:e.message},e.status||502)}}
 if(/^\/exclusive-cover\/[a-f0-9]{64}$/.test(u.pathname)&&['GET','HEAD'].includes(req.method)){const image=await exclusives.cover(env,u.pathname.split('/').at(-1));return req.method==='HEAD'?new Response(null,{status:image.status,headers:image.headers}):image;}
 if(matchesXtream(u.pathname))return xtreamRequest(req,env,ctx);
