@@ -36,7 +36,7 @@ export function createResellerBridge(directory,trust=TRUSTED_RESELLERS,{sealConf
   if(signed.action==='presence.close'){const r=await directory(env,'/reseller-connection-close',body);return json({...await r.json(),accountId:signed.accountId},r.status);}
   if(signed.action==='presence.connections'){const r=await directory(env,'/reseller-live-connections',body);return json({...await r.json(),accountId:signed.accountId},r.status);}
   if(signed.action==='presence'){const r=await directory(env,'/reseller-presence',body);return json({...await r.json(),accountId:signed.accountId},r.status);}
-  if(signed.action==='probe')return json({ok:true,accountId:signed.accountId,protocol:2,capabilities:{clientPassword:true}});
+  if(signed.action==='probe')return json({ok:true,accountId:signed.accountId,protocol:2,capabilities:{clientPassword:true,clientUsername:true}});
   const r=await directory(env,signed.action==='reserve'?'/reseller-reserve':signed.action==='release'?'/reseller-release':'/reseller-apply',body);return json({...await r.json(),accountId:signed.accountId},r.status);
  }catch{return json({error:'bridge_denied'},403);}
 };}
