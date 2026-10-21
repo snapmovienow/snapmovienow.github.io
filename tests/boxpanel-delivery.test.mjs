@@ -26,12 +26,12 @@ try{
  const png='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aFeQAAAAASUVORK5CYII=';
  for(const [id,label,design] of [[a,'Marca A','classic'],[b,'Marca B','cinema']]){
   assert.equal((await request({action:'boxpanel-workspace-save',accountId:id,name:label,status:'active',revision:0})).status,200);
-  const actor={role:'reseller',accountId:id};
-  assert.equal((await request({action:'boxpanel-app-save',accountId:id,name:label,design,style:{wallpaper:id===a?'sunset':'ocean',density:'compact',welcome:label},logo:png,accent:'#16d4cd',background:'#07151f',revision:0},actor)).status,200);
+  const actor={role:'reseller',accountId:id};const ad=await request({action:'boxpanel-ads-save',title:label,data:png,duration:120,revision:0},actor);assert.equal(ad.status,200);const artwork={hero:{imageId:ad.data.id,revision:1,fit:id===a?'cover':'contain'},login:{imageId:ad.data.id,revision:1,fit:'contain'}};
+  assert.equal((await request({action:'boxpanel-app-save',accountId:id,name:label,design,artwork,style:{wallpaper:id===a?'sunset':'ocean',density:'compact',welcome:label},logo:png,accent:'#16d4cd',background:'#07151f',revision:0},actor)).status,200);
   assert.equal((await request({action:'boxpanel-app-submit',revision:1},actor)).status,200);
   assert.equal((await request({action:'boxpanel-app-review',accountId:id,decision:'approve',revision:2})).status,200);
   assert.equal((await request({action:'boxpanel-dns-save',title:'Own DNS',url:'https://'+id+'.example.com',revision:0},actor)).status,200);
-  assert.equal((await request({action:'boxpanel-ads-save',title:label,data:png,duration:120,revision:0},actor)).status,200);
+
  }
  const appA=(await opened(a)).data.app,appB=(await opened(b)).data.app;assert.notEqual(boxPackage(appA.id),boxPackage(appB.id));assert.equal(appA.apkReady,false);assert.equal(appA.build.status,'queued');
  let githubAsset=null,digestValid=true;
@@ -49,7 +49,7 @@ try{
  }
  for(let index=0;index<2;index++){
   const job=(await http('builds/claim',{body:{role:'owner',accountId:'forged'}})).data.job;jobs.push(job);
-  assert.equal(job.versionCode,1);assert.equal((await http('builds/claim',{body:{}})).data.job.id,job.id,'claim is idempotent within its active run');
+  assert.equal(job.versionCode,1);assert.equal(job.config.artwork.hero.data,png);assert.equal((await http('builds/claim',{body:{}})).data.job.id,job.id,'claim is idempotent within its active run');
   assert.ok(!JSON.stringify(job).includes('Own DNS'),'build assets contain no DNS or user credentials');
   assert.equal((await publish(job,{packageName:'com.foreign.app'})).status,400);
   assert.equal((await publish(job,{},await jwt({run_id:'101'}))).status,409);
@@ -58,19 +58,20 @@ try{
  }
  assert.deepEqual((await http('builds/pending')).data,{pending:false});
  const configA=(await http('client/'+appA.id+'/config')).data,configB=(await http('client/'+appB.id+'/config')).data;
- assert.equal(configA.app.name,'Marca A');assert.equal(configA.app.style.wallpaper,'sunset');assert.equal(configB.app.style.wallpaper,'ocean');assert.equal(configA.app.style.welcome,'Marca A');assert.equal(configB.app.name,'Marca B');assert.deepEqual(configA.servers,['https://'+a+'.example.com']);assert.deepEqual(configB.servers,['https://'+b+'.example.com']);assert.equal(configA.slides[0].seconds,120);
+ assert.equal(configA.app.name,'Marca A');assert.equal(configA.app.style.wallpaper,'sunset');assert.equal(configB.app.style.wallpaper,'ocean');assert.equal(configA.app.style.welcome,'Marca A');assert.equal(configB.app.name,'Marca B');assert.deepEqual(configA.servers,['https://'+a+'.example.com']);assert.deepEqual(configB.servers,['https://'+b+'.example.com']);assert.equal(configA.slides[0].seconds,120);assert.equal(configA.app.artwork.hero.fit,'cover');assert.equal(configB.app.artwork.hero.fit,'contain');assert.ok(!JSON.stringify(configA.app.artwork).includes('base64'));assert.ok((await http('client/'+appA.id+'/artwork/hero')).data.byteLength>0);assert.equal((await http('client/'+appB.id+'/artwork/background')).status,404);
+ const ownActor={role:'reseller',accountId:a};assert.equal((await request({action:'boxpanel-ads-delete',id:configA.slides[0].id,revision:1},ownActor)).status,200);assert.ok((await http('client/'+appA.id+'/artwork/hero')).data.byteLength>0,'approved pixels survive library deletion');
  for(const privateValue of [a,b,'account_id','approved_config','run_id'])assert.ok(!JSON.stringify(configA.app).includes(privateValue));
- assert.equal((await http('client/'+appA.id+'/ads/'+configB.slides[0].id)).status,404);assert.ok((await http('client/'+appA.id+'/ads/'+configA.slides[0].id)).data.byteLength>0);assert.ok((await http('client/'+appA.id+'/logo')).data.byteLength>0);
+ assert.equal((await http('client/'+appA.id+'/ads/'+configB.slides[0].id)).status,404);assert.equal((await http('client/'+appA.id+'/ads/'+configA.slides[0].id)).status,404);assert.ok((await http('client/'+appA.id+'/logo')).data.byteLength>0);
  let current=(await opened(a)).data.app;
- assert.equal(current.apkReady,true);assert.equal((await request({action:'boxpanel-app-save',accountId:a,name:'A nueva',design:'compact',style:{wallpaper:'midnight',density:'comfortable',welcome:'Sin publicar'},accent:'#e7a737',background:'#07151f',revision:current.revision})).status,200);
- assert.equal((await http('client/'+appA.id+'/config')).data.app.name,'Marca A','a draft cannot replace installed branding');
+ assert.equal(current.apkReady,true);assert.equal((await request({action:'boxpanel-app-save',accountId:a,name:'A nueva',design:'compact',style:{wallpaper:'midnight',density:'comfortable',welcome:'Sin publicar'},accent:'#e7a737',background:'#07151f',revision:current.revision,artwork:{hero:{imageId:configB.slides[0].id,revision:1,fit:'cover'}}})).status,400);assert.equal((await request({action:'boxpanel-app-save',accountId:a,name:'A nueva',design:'compact',accent:'#e7a737',background:'#07151f',revision:current.revision,artwork:{background:{imageId:configB.slides[0].id,revision:1,fit:'contain'}}})).status,400);assert.equal((await request({action:'boxpanel-app-save',accountId:a,name:'A nueva',design:'compact',accent:'#e7a737',background:'#07151f',revision:current.revision,artwork:{}})).status,200);
+ assert.ok((await http('client/'+appA.id+'/artwork/hero')).data.byteLength>0,'draft removal does not replace published art');assert.equal((await http('client/'+appA.id+'/config')).data.app.name,'Marca A','a draft cannot replace installed branding');
  current=(await opened(a)).data.app;await request({action:'boxpanel-app-submit',accountId:a,revision:current.revision});current=(await opened(a)).data.app;await request({action:'boxpanel-app-review',accountId:a,decision:'approve',revision:current.revision});
  assert.equal((await http('client/'+appA.id+'/config')).data.app.name,'Marca A','an unbuilt approval cannot replace the release');
  const next=(await http('builds/claim',{body:{}})).data.job;assert.equal(next.appId,appA.id);assert.equal(next.versionCode,2);
  assert.equal((await publish(next,{certificate:'d'.repeat(64)})).status,409);assert.equal((await publish(next)).status,200);
- assert.equal((await http('client/'+appA.id+'/config')).data.app.name,'A nueva');assert.equal((await http('client/'+appA.id+'/update')).data.update.versionCode,2);assert.equal((await http('client/'+appB.id+'/update')).data.update.versionCode,1);
+ assert.equal((await http('client/'+appA.id+'/artwork/hero')).status,404,'published removal restores the base artwork');assert.equal((await http('client/'+appA.id+'/config')).data.app.name,'A nueva');assert.equal((await http('client/'+appA.id+'/update')).data.update.versionCode,2);assert.equal((await http('client/'+appB.id+'/update')).data.update.versionCode,1);
  current=(await opened(a)).data.app;await request({action:'boxpanel-app-review',accountId:a,decision:'suspend',revision:current.revision});
- for(const path of ['config','update','logo','ads/'+configA.slides[0].id])assert.equal((await http('client/'+appA.id+'/'+path)).status,403);
+ for(const path of ['config','update','logo','artwork/login','ads/'+configA.slides[0].id])assert.equal((await http('client/'+appA.id+'/'+path)).status,403);
  assert.equal((await http('client/'+appB.id+'/config')).status,200);
  current=(await opened(a)).data.app;await request({action:'boxpanel-app-review',accountId:a,decision:'resume',revision:current.revision});
  assert.equal((await http('client/'+appA.id+'/config')).status,200);
