@@ -47,8 +47,17 @@ owner can approve, return with a reason, suspend or resume a profile. Each
 transition checks its revision in the same SQLite transaction.
 
 Approval stores an immutable snapshot separately from the editable proposal.
-Editing after approval creates a draft while retaining that snapshot. The
-owner can enable or disable each catalog design; disabled designs cannot be
+Approval also closes the reseller customization section and its private
+navigation link. Only the authenticated owner can reopen it with **Habilitar
+cambios al reseller**, or close it again. The server rejects reseller saves
+and submissions while closed, including forged visibility fields. Returning
+a pending proposal for changes reopens the editor; resuming a suspended app
+does not. DNS and advertisement management remain available independently.
+The visibility control persists in `bp_app_editors`; existing approved profiles
+default to closed. All changes share the app's optimistic revision check.
+
+Editing a reopened profile creates a draft while retaining the approved
+snapshot. The owner can enable or disable each catalog design; disabled designs cannot be
 selected for new proposals or approved. All profile and catalog writes remain
 server-authorized, independent of hidden controls in the browser.
 
