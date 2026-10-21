@@ -1,3 +1,4 @@
+import {recordProviderHealth,rankProviderCandidates} from './provider-health.mjs';
 import {exclusiveCatalogRoute,exclusiveSnapshot,selectExclusive,visibleExclusive} from './exclusive-catalog.mjs';
 import {cleanConnectionClient,recordConnectionLimit,updateConnectionQuality,closeResellerConnection} from './connection-monitor.mjs';
 import {resellerPresence,resellerPlaybackSummary,resellerLiveConnections,recordCustomerActivity} from './reseller-presence.mjs';
@@ -161,6 +162,12 @@ export async function accountsFetch(state,env,req){
   if(used>=3){await recordConnectionLimit(tx,user,{...b,mediaKey,activity:{title:found.media===found.row?found.row.name:found.row.name+' · '+found.media.title}},used);return answer({error:'user_connection_limit'},409);}
   const id=crypto.randomUUID();await local.put(id,{sid:b.sid,uid:b.uid,username:user.username,version:user.version,request_id:b.request_id,exclusiveId:b.exclusiveId,exclusiveParentId:found.row.id,playbackRevision:b.playbackRevision,mediaKey,activity:{title:found.media===found.row?found.row.name:found.row.name+' · '+found.media.title},client:cleanConnectionClient(b.client),startedAt:Date.now(),until:Date.now()+90000,...(b.xtream?{xtream:true}:{})});await recordCustomerActivity(tx,user.id,Date.now(),b.client);return answer({lease_id:id});
  });
+ if(p==='/provider-result')return store.transaction(async tx=>{
+  const lease=await leases.in(tx).get(b.lease_id);
+  if(!lease||lease.sid!==b.sid||lease.request_id!==b.request_id||lease.provider_id!==b.provider_id||!String(lease.mediaKey||'').startsWith('live|')||!['signal','validation'].includes(b.stage)||typeof b.ok!=='boolean')return answer({error:'health_scope'},403);
+  const health=recordProviderHealth(await tx.get('provider-health'),lease.provider_id,lease.mediaKey,b.ok,b.elapsedMs,b.stage);
+  await tx.put('provider-health',health);return answer({ok:true});
+ });
  if(p==='/acquire')return store.transaction(async tx=>{
   if(b.request_id&&(await tx.get('playback:'+b.sid))?.request_id!==b.request_id)return answer({error:'playback_superseded'},410);
   const provider=await tx.get('provider');if(!provider)return answer({error:'provider_not_configured'},503);
@@ -178,7 +185,8 @@ export async function accountsFetch(state,env,req){
    const pool=await tx.get('pool');if(!pool||pool.syncedAt<Date.now()-12*3600000)return answer({error:'panel_unavailable'},503);
    const counts=await local.providerCounts();
    const candidates=pool.lines.filter(p=>(!b.server||(p.server||'ccf')===b.server)&&!(b.exclude||[]).includes(p.id)).map(p=>({...p,occupied:p.external+(counts.get(String(p.id))||0)})).filter(p=>p.occupied<p.maxConnections).sort((a,b)=>a.occupied/a.maxConnections-b.occupied/b.maxConnections);
-   const selected=candidates[0];if(!selected)return answer({error:'ccf_capacity'},409);
+   const live=String(b.mediaKey||'').startsWith('live|'),ranked=live?rankProviderCandidates(candidates,await tx.get('provider-health'),b.mediaKey):candidates;
+   const selected=ranked[0];if(!selected)return answer({error:candidates.length?'provider_unavailable':'ccf_capacity'},candidates.length?503:409);
    const id=crypto.randomUUID();await local.put(id,{sid:b.sid,uid:b.uid,username:b.username,version:b.version,provider_id:selected.id,until:Date.now()+90000,...extra});await recordCustomerActivity(tx,u.id,Date.now(),b.client);return answer({lease_id:id,provider_id:selected.id,encrypted:selected.encrypted,maxConnections:selected.maxConnections});
   }
   const max=Math.min(provider.maxConnections,Math.max(1,Number(b.upstreamMax)||3));

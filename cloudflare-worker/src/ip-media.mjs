@@ -1,3 +1,4 @@
+import {startupTimeout} from './live-startup.mjs';
 export const CCF_MEDIA_ORIGIN='http://ccf.center:8444';
 
 // Only globally routable IPv4 destinations can be handed out by the configured
@@ -20,13 +21,13 @@ export function isApprovedMediaIP(u,sourceOrigin){
  if(['192.101.68.144','23.153.217.88','194.147.150.141'].includes(u.hostname)&&(!u.port||u.port==='80'))return true;
  return sourceOrigin===CCF_MEDIA_ORIGIN&&u.port!=='25'&&isPublicMediaIPv4(u.hostname);
 }
-export async function fetchApprovedMediaIP(value,headers,connectSocket,nativeStreamFactory,sourceOrigin){
+export async function fetchApprovedMediaIP(value,headers,connectSocket,nativeStreamFactory,sourceOrigin,deadline=null){
  const url=new URL(value);if(!isApprovedMediaIP(url,sourceOrigin))throw Error('invalid_media_origin');
  const connect=connectSocket||(await import('cloudflare:sockets')).connect;
  const socket=connect({hostname:url.hostname,port:Number(url.port||80)},{secureTransport:'off'});
  socket.closed.catch(()=>{});
- const timed=async promise=>{let timer;try{return await Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('media_timeout')),20000)})])}finally{clearTimeout(timer)}};
- let reader;
+ const timed=async promise=>{let timer;try{return await Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('media_timeout')),headersComplete?20000:startupTimeout(deadline,deadline===null?20000:4000))})])}finally{clearTimeout(timer)}};
+ let reader,headersComplete=false;
  try{
  await timed(socket.opened);
  const writer=socket.writable.getWriter();
@@ -40,6 +41,7 @@ export async function fetchApprovedMediaIP(value,headers,connectSocket,nativeStr
  const status=Number(match[1]);if(status<200||status>599)throw Error('invalid_http_response');
  const responseHeaders=new Headers();let headerBytes=0;
  for(;;){const text=await line();if(!text)break;headerBytes+=text.length;if(headerBytes>65536)throw Error('invalid_http_response');const colon=text.indexOf(':');if(colon<1)throw Error('invalid_http_response');responseHeaders.append(text.slice(0,colon),text.slice(colon+1).trim())}
+ headersComplete=true;
  const chunked=/\bchunked\b/i.test(responseHeaders.get('transfer-encoding')||'');let remaining=responseHeaders.has('content-length')?Number(responseHeaders.get('content-length')):null;
  if(remaining!==null&&(!Number.isSafeInteger(remaining)||remaining<0))throw Error('invalid_http_response');
  responseHeaders.delete('transfer-encoding');responseHeaders.delete('connection');

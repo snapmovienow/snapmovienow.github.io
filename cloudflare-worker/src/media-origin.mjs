@@ -1,3 +1,4 @@
+import {startupTimeout} from './live-startup.mjs';
 import {CCF_MEDIA_ORIGIN,isApprovedMediaIP,fetchApprovedMediaIP} from './ip-media.mjs';
 import {validateServerUrl} from './reseller.mjs';
 import {fetchMedia} from './media-fetch.mjs';
@@ -15,15 +16,15 @@ export function validatedMediaTarget(value,sourceOrigin){
 
 // Preserve the authorised source across redirects and Range retries. HLS
 // playlists use the same target check before issuing encrypted resource URLs.
-export async function fetchValidatedMedia(start,headers,type,sourceOrigin,{fetchIP=fetchApprovedMediaIP,fetchHost=fetchMedia,onOrigin}={}){
+export async function fetchValidatedMedia(start,headers,type,sourceOrigin,{fetchIP=fetchApprovedMediaIP,fetchHost=fetchMedia,onOrigin,deadline=null}={}){
  let next=start;
  for(let redirects=0;redirects<6;redirects++){
   const target=validatedMediaTarget(next,sourceOrigin);next=target.href;
   // Private diagnostics may observe origins, never credential-bearing paths.
   if(onOrigin)onOrigin(target.origin);
   const response=isApprovedMediaIP(target,sourceOrigin)?
-   await fetchIP(next,headers,undefined,undefined,sourceOrigin):
-   await fetchHost(next,{headers,redirect:'manual'},type==='live'?12000:25000);
+   await fetchIP(next,headers,undefined,undefined,sourceOrigin,deadline):
+   await fetchHost(next,{headers,redirect:'manual'},deadline===null?(type==='live'?12000:25000):startupTimeout(deadline,4000));
   if(![301,302,303,307,308].includes(response.status))return {response,url:next};
   const location=response.headers.get('location');await response.body?.cancel();
   if(!location||redirects===5)throw Error('invalid_redirect');
