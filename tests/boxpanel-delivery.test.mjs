@@ -27,7 +27,7 @@ try{
  for(const [id,label,design] of [[a,'Marca A','classic'],[b,'Marca B','cinema']]){
   assert.equal((await request({action:'boxpanel-workspace-save',accountId:id,name:label,status:'active',revision:0})).status,200);
   const actor={role:'reseller',accountId:id};
-  assert.equal((await request({action:'boxpanel-app-save',accountId:id,name:label,design,logo:png,accent:'#16d4cd',background:'#07151f',revision:0},actor)).status,200);
+  assert.equal((await request({action:'boxpanel-app-save',accountId:id,name:label,design,style:{wallpaper:id===a?'sunset':'ocean',density:'compact',welcome:label},logo:png,accent:'#16d4cd',background:'#07151f',revision:0},actor)).status,200);
   assert.equal((await request({action:'boxpanel-app-submit',revision:1},actor)).status,200);
   assert.equal((await request({action:'boxpanel-app-review',accountId:id,decision:'approve',revision:2})).status,200);
   assert.equal((await request({action:'boxpanel-dns-save',title:'Own DNS',url:'https://'+id+'.example.com',revision:0},actor)).status,200);
@@ -58,11 +58,11 @@ try{
  }
  assert.deepEqual((await http('builds/pending')).data,{pending:false});
  const configA=(await http('client/'+appA.id+'/config')).data,configB=(await http('client/'+appB.id+'/config')).data;
- assert.equal(configA.app.name,'Marca A');assert.equal(configB.app.name,'Marca B');assert.deepEqual(configA.servers,['https://'+a+'.example.com']);assert.deepEqual(configB.servers,['https://'+b+'.example.com']);assert.equal(configA.slides[0].seconds,120);
+ assert.equal(configA.app.name,'Marca A');assert.equal(configA.app.style.wallpaper,'sunset');assert.equal(configB.app.style.wallpaper,'ocean');assert.equal(configA.app.style.welcome,'Marca A');assert.equal(configB.app.name,'Marca B');assert.deepEqual(configA.servers,['https://'+a+'.example.com']);assert.deepEqual(configB.servers,['https://'+b+'.example.com']);assert.equal(configA.slides[0].seconds,120);
  for(const privateValue of [a,b,'account_id','approved_config','run_id'])assert.ok(!JSON.stringify(configA.app).includes(privateValue));
  assert.equal((await http('client/'+appA.id+'/ads/'+configB.slides[0].id)).status,404);assert.ok((await http('client/'+appA.id+'/ads/'+configA.slides[0].id)).data.byteLength>0);assert.ok((await http('client/'+appA.id+'/logo')).data.byteLength>0);
  let current=(await opened(a)).data.app;
- assert.equal(current.apkReady,true);assert.equal((await request({action:'boxpanel-app-save',accountId:a,name:'A nueva',design:'compact',accent:'#e7a737',background:'#07151f',revision:current.revision})).status,200);
+ assert.equal(current.apkReady,true);assert.equal((await request({action:'boxpanel-app-save',accountId:a,name:'A nueva',design:'compact',style:{wallpaper:'midnight',density:'comfortable',welcome:'Sin publicar'},accent:'#e7a737',background:'#07151f',revision:current.revision})).status,200);
  assert.equal((await http('client/'+appA.id+'/config')).data.app.name,'Marca A','a draft cannot replace installed branding');
  current=(await opened(a)).data.app;await request({action:'boxpanel-app-submit',accountId:a,revision:current.revision});current=(await opened(a)).data.app;await request({action:'boxpanel-app-review',accountId:a,decision:'approve',revision:current.revision});
  assert.equal((await http('client/'+appA.id+'/config')).data.app.name,'Marca A','an unbuilt approval cannot replace the release');
