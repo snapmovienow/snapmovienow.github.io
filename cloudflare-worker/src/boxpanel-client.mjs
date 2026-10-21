@@ -4,14 +4,14 @@ const headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'};
 export function createBoxClient({call,verify=createBoxBuildVerifier(),fetcher=fetch}){
  return async(req,env)=>{
   const u=new URL(req.url);if(u.hostname!=='api.snaptvnow.com'||!u.pathname.startsWith('/api/boxpanel/'))return null;
-  const client=u.pathname.match(/^\/api\/boxpanel\/client\/([a-f0-9-]{36})\/(config|logo|update|ads\/([a-f0-9-]{36}))$/),build=u.pathname.match(/^\/api\/boxpanel\/builds\/(pending|claim|complete|fail)$/);
+  const client=u.pathname.match(/^\/api\/boxpanel\/client\/([a-f0-9-]{36})\/(config|logo|update|ads\/([a-f0-9-]{36})|artwork\/([a-z0-9]{2,16}))$/),build=u.pathname.match(/^\/api\/boxpanel\/builds\/(pending|claim|complete|fail)$/);
   if(!client&&!build)return null;
   try{
    if(client){
     if(req.method!=='GET')return Response.json({error:'method_not_allowed'},{status:405,headers});
-    const result=await call(env,{action:'boxpanel-client',appId:client[1],resource:client[3]?'ad':client[2],imageId:client[3]},{role:'app-client'}),data=await result.json();
+    const result=await call(env,{action:'boxpanel-client',appId:client[1],resource:client[4]?'artwork':client[3]?'ad':client[2],imageId:client[3],slot:client[4]},{role:'app-client'}),data=await result.json();
     if(!result.ok)return Response.json(data,{status:result.status,headers});
-    if(client[2]==='logo'||client[3]){const match=data.data?.match(/^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)$/);if(!match)throw Error();return new Response(Uint8Array.from(atob(match[2]),x=>x.charCodeAt(0)),{headers:{...headers,'Content-Type':match[1]}});}
+    if(client[2]==='logo'||client[3]||client[4]){const match=data.data?.match(/^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)$/);if(!match)throw Error();return new Response(Uint8Array.from(atob(match[2]),x=>x.charCodeAt(0)),{headers:{...headers,'Content-Type':match[1]}});}
     return Response.json(data,{headers});
    }
    const action=build[1];

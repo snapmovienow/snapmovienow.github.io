@@ -153,3 +153,18 @@ storage accounting. It is copied into immutable approval/build/release snapshots
 An unpublished draft cannot change the installed app. Old proposals and builds
 without `style` retain safe defaults. Personalization still closes on approval;
 only the owner reopens it. Existing DNS/image quotas and tenant isolation apply.
+
+
+## Image placement in approved designs
+The reseller can assign saved workspace images to background, hero, login,
+TV/movie/series portals and up to five brand cards, according to the selected
+layout. Cover/contain and per-zone restoration are part of the app draft.
+Advertising upload remains independent; placement changes require app approval.
+
+`bp_app_artwork` stores validated workspace image snapshots. Assignments resolve
+only the authenticated workspace's image ID/revision; forged image bytes are
+ignored. All snapshot copies count toward the existing storage cap. Approval,
+build and release keep immutable copies, so library edits/deletions cannot
+change published artwork. Native config exposes only versioned app-scoped URLs;
+`/api/boxpanel/client/{appId}/artwork/{slot}` serves published pixels and honors
+suspension. No new storage service or public asset bucket is introduced.

@@ -1,3 +1,4 @@
+import {initBoxArtwork,boxArtwork,resolveBoxArtwork,saveBoxArtwork} from './boxpanel-artwork.mjs';
 import {BOXPANEL_DESIGNS} from '../../boxpanel-catalog.js';
 import {initBoxDelivery,boxDelivery,queueBoxBuild} from './boxpanel-delivery.mjs';
 const fail=(status,error)=>{throw Object.assign(Error(error),{status});};
@@ -9,7 +10,7 @@ export function initBoxApps(sql){
  sql.exec('CREATE TABLE IF NOT EXISTS bp_designs (id TEXT PRIMARY KEY, enabled INTEGER NOT NULL, revision INTEGER NOT NULL)');
  sql.exec('CREATE TABLE IF NOT EXISTS bp_app_styles (account_id TEXT PRIMARY KEY, config TEXT NOT NULL)');
  sql.exec('CREATE TABLE IF NOT EXISTS bp_app_editors (account_id TEXT PRIMARY KEY, opened INTEGER NOT NULL)');
- initBoxDelivery(sql);
+ initBoxArtwork(sql);initBoxDelivery(sql);
 }
 export function boxCatalog(sql){
  return BOXPANEL_DESIGNS.map(design=>{const setting=row(sql,'SELECT enabled,revision FROM bp_designs WHERE id=?',design.id);return {...design,enabled:setting?setting.enabled===1:true,revision:setting?.revision||0};});
@@ -25,10 +26,11 @@ export function boxApp(sql,accountId){
  const approved=app.approved_config?JSON.parse(app.approved_config):null;
  delete app.approved_config;delete app.account_id;
  const editor=row(sql,'SELECT opened FROM bp_app_editors WHERE account_id=?',accountId);
- return {...app,style:appStyle(sql,accountId,app.design),editorOpen:editor?editor.opened===1:app.approved_revision===0,suspended:app.suspended===1,approved:approved?{name:approved.name,design:approved.design,accent:approved.accent,background:approved.background,style:approved.style||defaultStyle(approved.design),revision:app.approved_revision}:null,...boxDelivery(sql,accountId)};
+ return {...app,artwork:boxArtwork(sql,accountId),style:appStyle(sql,accountId,app.design),editorOpen:editor?editor.opened===1:app.approved_revision===0,suspended:app.suspended===1,approved:approved?{name:approved.name,design:approved.design,accent:approved.accent,background:approved.background,style:approved.style||defaultStyle(approved.design),revision:app.approved_revision}:null,...boxDelivery(sql,accountId)};
 }
 export function boxImageUsage(sql){
- return row(sql,'SELECT COALESCE(SUM(LENGTH(config)),0) AS n FROM bp_app_styles').n+
+ return row(sql,'SELECT COALESCE(SUM(LENGTH(config)),0) AS n FROM bp_app_artwork').n+
+  row(sql,'SELECT COALESCE(SUM(LENGTH(config)),0) AS n FROM bp_app_styles').n+
   row(sql,'SELECT COALESCE(SUM(LENGTH(data)),0) AS n FROM bp_ads').n+
   row(sql,'SELECT COALESCE(SUM(LENGTH(logo)+LENGTH(approved_config)),0) AS n FROM bp_apps').n+
   row(sql,'SELECT COALESCE(SUM(LENGTH(config)),0) AS n FROM bp_builds').n+
@@ -69,9 +71,10 @@ export function boxAppOperation(sql,b,{owner,accountId,workspace,image,storageLi
   if(typeof b.name!=='string'||b.name.trim().length<2||b.name.trim().length>40||/[\x00-\x1f]/.test(b.name))fail(400,'box_app_name');
   const logo=b.logo===null?'':b.logo===undefined?old?.logo||'':image(b.logo),accent=color(b.accent),background=color(b.background);
   const style=JSON.stringify(b.style===undefined?appStyle(sql,accountId,b.design):validateBoxStyle(b.style)),previousStyle=row(sql,'SELECT config FROM bp_app_styles WHERE account_id=?',accountId)?.config||'';
-  if(boxImageUsage(sql)-(old?.logo.length||0)+logo.length-previousStyle.length+style.length>storageLimit)fail(409,'box_capacity');
+  const oldArt=JSON.stringify(boxArtwork(sql,accountId)),artwork=b.artwork===undefined?JSON.parse(oldArt):resolveBoxArtwork(sql,accountId,b.artwork),art=JSON.stringify(artwork),previousArt=row(sql,'SELECT config FROM bp_app_artwork WHERE account_id=?',accountId)?.config||'';
+  if(boxImageUsage(sql)-(old?.logo.length||0)+logo.length-previousStyle.length+style.length-previousArt.length+art.length>storageLimit)fail(409,'box_capacity');
   sql.exec("INSERT INTO bp_apps(account_id,id,name,design,accent,background,logo,state,suspended,revision,approved_revision,approved_config,note,updated_at) VALUES(?,?,?,?,?,?,?,'draft',?,?,?,?,?,?) ON CONFLICT(account_id) DO UPDATE SET name=excluded.name,design=excluded.design,accent=excluded.accent,background=excluded.background,logo=excluded.logo,state='draft',revision=excluded.revision,updated_at=excluded.updated_at",accountId,old?.id||crypto.randomUUID(),b.name.trim(),b.design,accent,background,logo,old?.suspended||0,revision,old?.approved_revision||0,old?.approved_config||'',old?.note||'',now);
-  sql.exec('INSERT INTO bp_app_styles(account_id,config) VALUES(?,?) ON CONFLICT(account_id) DO UPDATE SET config=excluded.config',accountId,style);
+  sql.exec('INSERT INTO bp_app_styles(account_id,config) VALUES(?,?) ON CONFLICT(account_id) DO UPDATE SET config=excluded.config',accountId,style);saveBoxArtwork(sql,accountId,artwork);
   return {ok:true,app:boxApp(sql,accountId)};
  }
  if(!old)fail(404,'box_app_missing');
@@ -84,7 +87,7 @@ export function boxAppOperation(sql,b,{owner,accountId,workspace,image,storageLi
  if(b.decision==='approve'){
   if(old.state!=='pending'||old.suspended||workspace.status!=='active')fail(409,'box_app_state');
   if(!boxCatalog(sql).find(d=>d.id===old.design)?.enabled)fail(400,'box_design');
-  const approved=JSON.stringify({id:old.id,name:old.name,design:old.design,designVersion:2,style:appStyle(sql,accountId,old.design),accent:old.accent,background:old.background,logo:old.logo});
+  const approved=JSON.stringify({id:old.id,name:old.name,design:old.design,designVersion:3,artwork:boxArtwork(sql,accountId),style:appStyle(sql,accountId,old.design),accent:old.accent,background:old.background,logo:old.logo});
   if(boxImageUsage(sql)-old.approved_config.length+approved.length>storageLimit)fail(409,'box_capacity');
   sql.exec("UPDATE bp_apps SET state='approved',approved_revision=?,approved_config=?,note='',revision=?,updated_at=? WHERE account_id=?",revision,approved,revision,now,accountId);setEditor(false);
   queueBoxBuild(sql,accountId,revision,approved,boxImageUsage(sql),storageLimit);

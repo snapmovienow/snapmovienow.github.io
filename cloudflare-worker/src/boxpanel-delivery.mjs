@@ -1,3 +1,4 @@
+import {BOX_ART_SLOTS} from './boxpanel-artwork.mjs';
 const row=(sql,q,...args)=>[...sql.exec(q,...args)][0];
 const fail=(status,error)=>{throw Object.assign(Error(error),{status});};
 const UUID=/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
@@ -45,13 +46,14 @@ export function boxDeliveryOperation(sql,b,scope){
   sql.exec("UPDATE bp_builds SET status='ready',config='',lease_until=0 WHERE id=?",job.id);return {ok:true};
  }
  if(scope.role!=='app-client')return null;
- if(!UUID.test(b.appId||'')||!['config','logo','ad','update'].includes(b.resource))fail(404,'box_client_missing');
+ if(!UUID.test(b.appId||'')||!['config','logo','ad','update','artwork'].includes(b.resource))fail(404,'box_client_missing');
  const app=row(sql,'SELECT a.*,w.status AS workspace_status FROM bp_apps a JOIN bp_workspaces w ON w.id=a.account_id WHERE a.id=?',b.appId),release=app&&row(sql,'SELECT * FROM bp_releases WHERE account_id=?',app.account_id);
  if(!app||!release||app.suspended||app.workspace_status!=='active')return {active:false,status:403};
  const brand=JSON.parse(release.config),base=`https://api.snaptvnow.com/api/boxpanel/client/${app.id}`;
  const update={versionCode:release.version_code,versionName:'1.0.'+release.version_code,url:release.url,sha256:release.sha256,size:release.size,notes:'Nueva versión aprobada por el administrador.'};
  if(b.resource==='update')return {update};
+ if(b.resource==='artwork'){const art=BOX_ART_SLOTS.includes(b.slot)&&brand.artwork?.[b.slot];if(!art?.data)fail(404,'box_image_missing');return {data:art.data};}
  if(b.resource==='logo'){if(!brand.logo)fail(404,'box_image_missing');return {data:brand.logo};}
  if(b.resource==='ad'){const ad=row(sql,'SELECT data FROM bp_ads WHERE account_id=? AND id=?',app.account_id,b.imageId);if(!ad)fail(404,'box_image_missing');return {data:ad.data};}
- return {active:true,packageName:boxPackage(app.id),app:{id:app.id,name:brand.name,design:brand.design,accent:brand.accent,background:brand.background,style:brand.style||{wallpaper:'aurora',density:'comfortable',welcome:''},logo:brand.logo?base+'/logo':''},servers:[...sql.exec('SELECT url FROM bp_dns WHERE account_id=? ORDER BY id',app.account_id)].map(x=>x.url.replace(/\/$/,'')),slides:[...sql.exec('SELECT id,duration,revision FROM bp_ads WHERE account_id=? ORDER BY id',app.account_id)].map(x=>({id:x.id,seconds:x.duration,revision:x.revision})),update};
+ return {active:true,packageName:boxPackage(app.id),app:{artwork:Object.fromEntries(Object.entries(brand.artwork||{}).filter(([slot])=>BOX_ART_SLOTS.includes(slot)).map(([slot,value])=>[slot,{url:base+'/artwork/'+slot+'?v='+release.version_code,fit:value.fit}])),id:app.id,name:brand.name,design:brand.design,accent:brand.accent,background:brand.background,style:brand.style||{wallpaper:'aurora',density:'comfortable',welcome:''},logo:brand.logo?base+'/logo':''},servers:[...sql.exec('SELECT url FROM bp_dns WHERE account_id=? ORDER BY id',app.account_id)].map(x=>x.url.replace(/\/$/,'')),slides:[...sql.exec('SELECT id,duration,revision FROM bp_ads WHERE account_id=? ORDER BY id',app.account_id)].map(x=>({id:x.id,seconds:x.duration,revision:x.revision})),update};
 }
