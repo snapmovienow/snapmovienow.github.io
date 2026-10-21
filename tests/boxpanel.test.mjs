@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
-import {build} from 'esbuild';
-import {Miniflare,convertV4MiniflareOptions} from 'miniflare';
+import {createRequire} from 'node:module';
+// Workers Builds installs dependencies in cloudflare-worker, not the repo root.
+const workerRequire=createRequire(new URL('../cloudflare-worker/package.json',import.meta.url));
+const {build}=workerRequire('esbuild');
+const {Miniflare,convertV4MiniflareOptions}=workerRequire('miniflare');
 import {createResellerPortal,PORTAL_ACCOUNT,PORTAL_SOURCE} from '../cloudflare-worker/src/reseller-portal.mjs';
 const bundled=await build({entryPoints:['cloudflare-worker/src/index.js'],bundle:true,format:'esm',platform:'browser',external:['cloudflare:sockets'],write:false});
 const config={modules:true,script:bundled.outputFiles[0].text,compatibilityDate:'2026-10-03',compatibilityFlags:['enable_request_signal'],outboundService:()=>{throw Error('Unexpected external service');},durableObjects:{PLAYBACK_SESSIONS:{className:'PlaybackSession',useSQLite:true},BACKUP_RECOVERY:{className:'BackupRecovery',useSQLite:true},OPERATION_ALERTS:{className:'OperationsMonitor',useSQLite:true}},bindings:{TICKET_SECRET:'local-boxpanel-test-secret-never-deployed',ADMIN_SETUP_SECRET:'local-boxpanel-setup-secret-never-deployed'}};
