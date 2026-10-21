@@ -61,12 +61,32 @@ snapshot. The owner can enable or disable each catalog design; disabled designs 
 selected for new proposals or approved. All profile and catalog writes remain
 server-authorized, independent of hidden controls in the browser.
 
-These are web previews and app-profile approvals, not native Android themes
-already implemented in APKs. There is no automatic compilation, signing,
-download or app-config delivery endpoint in this change. `apkReady` remains
-false and the UI explicitly reports APK generation as pending. Profile
-suspension is stored for the future delivery flow; it does not revoke an APK
-already installed. No current Android/TV client is changed here.
+The Android base in `juancanta89-tech/SnapTvNow` implements these three layouts
+and one stable package identity per app. Approval queues an immutable build;
+`apkReady` remains false until the protected signing workflow publishes and
+verifies its APK. The latest installed release stays available while another
+proposal is edited or built. The download section remains outside the hidden
+customization editor.
+
+The build queue uses one row per workspace and one published release, reusing
+the existing SQLite binding. The queue's public endpoint reveals only a boolean.
+Claims and publication require GitHub-signed OIDC, exact repository/owner IDs,
+main, the BoxPanel workflow, production environment, short expiry and audience.
+The existing production signing approval is preserved. APKs use versioned
+GitHub Releases; the Worker checks GitHub's asset digest/size and source SHA
+before activating a matching leased build. Published certificate continuity,
+package ID and increasing version checks prevent cross-app updates. Superseded,
+expired, failed, suspended and wrong-run callbacks cannot publish. Failed or
+expired work requires an owner retry, with no automatic build retry loop.
+
+The fixed native client routes expose only that app's published branding, DNS,
+image playlist and update metadata; no reseller actor IDs or credentials.
+An official branded app cannot use SNAP fallback DNS. It checks its enablement
+at launch and every five foreground minutes; a positive verification expires
+after ten minutes without renewal. App/workspace suspension blocks config,
+images and updates. Existing installed SNAP APKs are not modified by deploying
+the web panel. Physical Fire TV/Android playback/update checks still require
+connected devices; emulator and source checks do not replace them.
 
 Each workspace supports three DNS URLs and eight advertisement images, with
 editable titles and a display duration of 3–120 seconds. JPG/PNG/WebP files up
@@ -81,7 +101,8 @@ domain, D1 database, bucket, Access application or subscription is required.
 Images have a fixed global encoded storage ceiling of 16 MiB. The current four
 trusted reseller IDs also bound the number of workspaces. Production and
 staging use separate instances as configured by their existing bindings.
-The same storage ceiling includes current logos and approved app snapshots.
+The same storage ceiling includes current logos, approved snapshots, queued
+build snapshots and the published release configuration.
 
 This change adds management to the web panels. It does not change Android/TV
 clients or redirect their current provider connections. The existing SNAP
@@ -89,8 +110,7 @@ account backup/restore covers its original directory, not this separate
 BoxPanel instance; BoxPanel rows persist in SQLite and are not erased by a
 SNAP account restoration.
 
-This is prepared code, not a production activation. Keep the existing Quality
-and deployment guards. Deploy the Worker and Pages from the same reviewed
+Keep the existing Quality and deployment guards for activation. Deploy the Worker and Pages from the same reviewed
 commit through the existing release process. The current Workers Paid account
 can bill for additional usage under its existing terms; reusing infrastructure
 does not guarantee a zero-dollar incremental bill.
