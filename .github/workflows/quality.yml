@@ -31,7 +31,7 @@ jobs:
       - run: npm run test:platform
       - run: npm run test:staging
       - name: Build from Cloudflare deployment root
-        run: npx --no-install wrangler deploy --dry-run --env=""
+        run: npx --no-install wrangler deploy --dry-run --outdir .wrangler/quality-release --env=""
         working-directory: cloudflare-worker
       - run: npm run build:staging
       - name: Real SQLite invariants
