@@ -16,7 +16,7 @@ export function boxApp(sql,accountId){
  const approved=app.approved_config?JSON.parse(app.approved_config):null;
  delete app.approved_config;delete app.account_id;
  const editor=row(sql,'SELECT opened FROM bp_app_editors WHERE account_id=?',accountId);
- return {...app,editorOpen:editor?editor.opened===1:app.state!=='approved',suspended:app.suspended===1,approved:approved?{name:approved.name,design:approved.design,accent:approved.accent,background:approved.background,revision:app.approved_revision}:null,apkReady:false};
+ return {...app,editorOpen:editor?editor.opened===1:app.approved_revision===0,suspended:app.suspended===1,approved:approved?{name:approved.name,design:approved.design,accent:approved.accent,background:approved.background,revision:app.approved_revision}:null,apkReady:false};
 }
 export function boxImageUsage(sql){
  return row(sql,'SELECT COALESCE(SUM(LENGTH(data)),0) AS n FROM bp_ads').n+
