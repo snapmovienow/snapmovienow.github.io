@@ -1,6 +1,7 @@
 // Private BoxPanel state lives in a dedicated instance of the existing SQLite
 // Durable Object binding. It never uses customer, provider or playback keys.
 import {validateServerUrl} from './reseller.mjs';
+import {initBoxApps,boxCatalog,boxApp,boxAppOperation,boxImageUsage} from './boxpanel-apps.mjs';
 export const BOX_IMAGE_BYTES=262144;
 const STORAGE_LIMIT=16*1024*1024;
 const fail=(status,error)=>{throw Object.assign(Error(error),{status});};
@@ -21,13 +22,16 @@ function init(sql){
  sql.exec('CREATE TABLE IF NOT EXISTS bp_ads (id TEXT PRIMARY KEY, account_id TEXT NOT NULL, title TEXT NOT NULL, data TEXT NOT NULL, duration INTEGER NOT NULL, revision INTEGER NOT NULL)');
  sql.exec('CREATE INDEX IF NOT EXISTS bp_dns_account ON bp_dns(account_id)');
  sql.exec('CREATE INDEX IF NOT EXISTS bp_ads_account ON bp_ads(account_id)');
+ initBoxApps(sql);
 }
 // scope is constructed by the Worker after owner or reseller authentication.
 // Never pass a scope from a public JSON body.
 export function boxpanelOperation(state,b,scope){
  try{return state.storage.transactionSync(()=>{
   const sql=state.storage.sql;init(sql);const owner=scope.role==='owner',action=b.action;
-  if(owner&&action==='boxpanel-list')return {workspaces:[...sql.exec('SELECT * FROM bp_workspaces ORDER BY name,id')],candidates:scope.candidates||[],storageLimit:STORAGE_LIMIT};
+  if(action==='boxpanel-catalog')return {catalog:boxCatalog(sql).filter(d=>d.enabled).map(({revision,...design})=>design)};
+  if(owner&&action==='boxpanel-list')return {workspaces:[...sql.exec('SELECT w.*,a.state AS appState,a.suspended AS appSuspended FROM bp_workspaces w LEFT JOIN bp_apps a ON a.account_id=w.id ORDER BY w.name,w.id')],candidates:scope.candidates||[],catalog:boxCatalog(sql),storageLimit:STORAGE_LIMIT};
+  if(owner&&action==='boxpanel-design-save')return boxAppOperation(sql,b,{owner});
   if(owner&&action==='boxpanel-workspace-save'){
    if(typeof b.accountId!=='string'||!scope.candidates?.includes(b.accountId))fail(400,'box_account');
    const old=row(sql,'SELECT * FROM bp_workspaces WHERE id=?',b.accountId);
@@ -41,7 +45,8 @@ export function boxpanelOperation(state,b,scope){
   const workspace=row(sql,'SELECT * FROM bp_workspaces WHERE id=?',accountId);
   if(!workspace)fail(404,'box_not_enabled');if(!owner&&workspace.status!=='active')fail(403,'box_suspended');
   const kind=action?.startsWith('boxpanel-dns-')?'dns':action?.startsWith('boxpanel-ads-')?'ads':null;
-  if(action==='boxpanel-open')return {workspace,dns:[...sql.exec('SELECT * FROM bp_dns WHERE account_id=? ORDER BY id',accountId)],ads:[...sql.exec('SELECT id,title,duration,revision FROM bp_ads WHERE account_id=? ORDER BY id',accountId)],limits:{dns:3,ads:8,imageBytes:BOX_IMAGE_BYTES}};
+  if(action==='boxpanel-open')return {workspace,catalog:boxCatalog(sql),app:boxApp(sql,accountId),dns:[...sql.exec('SELECT * FROM bp_dns WHERE account_id=? ORDER BY id',accountId)],ads:[...sql.exec('SELECT id,title,duration,revision FROM bp_ads WHERE account_id=? ORDER BY id',accountId)],limits:{dns:3,ads:8,imageBytes:BOX_IMAGE_BYTES}};
+  const appResult=boxAppOperation(sql,b,{owner,accountId,workspace,image,storageLimit:STORAGE_LIMIT});if(appResult)return appResult;
   if(!kind)fail(403,'box_action');
   // Table names come only from the fixed two-value kind above.
   const table=kind==='dns'?'bp_dns':'bp_ads',id=b.id;
@@ -60,7 +65,7 @@ export function boxpanelOperation(state,b,scope){
   }else{
    const data=b.data===undefined&&old?old.data:image(b.data),duration=Number(b.duration);
    if(!Number.isInteger(duration)||duration<3||duration>120)fail(400,'box_duration');
-   const used=row(sql,'SELECT COALESCE(SUM(LENGTH(data)),0) AS n FROM bp_ads').n;
+   const used=boxImageUsage(sql);
    if(used-(old?.data.length||0)+data.length>STORAGE_LIMIT)fail(409,'box_capacity');
    sql.exec('INSERT INTO bp_ads(id,account_id,title,data,duration,revision) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title,data=excluded.data,duration=excluded.duration,revision=excluded.revision',next,accountId,title,data,duration,revision);
   }

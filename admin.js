@@ -1,4 +1,4 @@
-import {mountAdminBoxPanel} from './admin-boxpanel.js?v=1';
+import {mountAdminBoxPanel} from './admin-boxpanel.js?v=2';
 import {mountAdminExclusive} from './admin-exclusive.js?v=exclusive-1';
 import {mountAdminSeries} from './admin-series.js?v=43.10';
 import {mountAdminSecurity} from './admin-security.js?v=43.5';
