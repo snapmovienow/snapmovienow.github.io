@@ -1,4 +1,5 @@
 import {boxpanelFetch} from './boxpanel.mjs';
+import {createBoxClient} from './boxpanel-client.mjs';
 import {TRUSTED_RESELLERS} from './reseller-trust.mjs';
 import {createTelegramTick} from './telegram-tick.mjs';
 import {markServiceVerification} from './service-verification.mjs';
@@ -224,7 +225,9 @@ const portalConfig=async env=>{const stored=await (await directory(env,'/reselle
 const resellerPortalRequest=createResellerPortal({getConfig:portalConfig,catalog:env=>boxpanelCall(env,{action:'boxpanel-catalog'},{role:'public'}),boxpanel:(env,body,accountId)=>boxpanelCall(env,body,{role:'reseller',accountId})});
 const ownerPortalRequest=createOwnerPortal({getConfig:portalConfig});
 const telegramTick=createTelegramTick({getConfig:portalConfig});
+const boxClientRequest=createBoxClient({call:boxpanelCall});
 async function handleRequest(req,env,ctx){
+const boxClientResult=await boxClientRequest(req,env);if(boxClientResult)return boxClientResult;
 if(matchesOwnerPortal(req))return ownerPortalRequest(req,env);if(matchesResellerPortal(req))return resellerPortalRequest(req,env);const u=new URL(req.url);
 if(req.method==='POST'&&req.headers.get('Cookie')?.includes('__Host-smn_')&&!canUseCookie(req,env))return json({error:'origin_not_allowed'},403);
 if(req.headers.get('Origin')&&!allowedOrigins(env).has(req.headers.get('Origin'))&&req.method==='POST')return json({error:'origin_not_allowed'},403);

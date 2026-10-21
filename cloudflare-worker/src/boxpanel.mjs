@@ -2,6 +2,7 @@
 // Durable Object binding. It never uses customer, provider or playback keys.
 import {validateServerUrl} from './reseller.mjs';
 import {initBoxApps,boxCatalog,boxApp,boxAppOperation,boxImageUsage} from './boxpanel-apps.mjs';
+import {boxDeliveryOperation} from './boxpanel-delivery.mjs';
 export const BOX_IMAGE_BYTES=262144;
 const STORAGE_LIMIT=16*1024*1024;
 const fail=(status,error)=>{throw Object.assign(Error(error),{status});};
@@ -29,6 +30,7 @@ function init(sql){
 export function boxpanelOperation(state,b,scope){
  try{return state.storage.transactionSync(()=>{
   const sql=state.storage.sql;init(sql);const owner=scope.role==='owner',action=b.action;
+  const delivered=boxDeliveryOperation(sql,b,scope);if(delivered)return delivered;
   if(action==='boxpanel-catalog')return {catalog:boxCatalog(sql).filter(d=>d.enabled).map(({revision,...design})=>design)};
   if(owner&&action==='boxpanel-list')return {workspaces:[...sql.exec('SELECT w.*,a.state AS appState,a.suspended AS appSuspended FROM bp_workspaces w LEFT JOIN bp_apps a ON a.account_id=w.id ORDER BY w.name,w.id')],candidates:scope.candidates||[],catalog:boxCatalog(sql),storageLimit:STORAGE_LIMIT};
   if(owner&&action==='boxpanel-design-save')return boxAppOperation(sql,b,{owner});

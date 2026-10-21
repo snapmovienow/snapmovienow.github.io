@@ -1,4 +1,5 @@
 import {BOXPANEL_DESIGNS} from '../../boxpanel-catalog.js';
+import {initBoxDelivery,boxDelivery,queueBoxBuild} from './boxpanel-delivery.mjs';
 const fail=(status,error)=>{throw Object.assign(Error(error),{status});};
 const row=(sql,query,...args)=>[...sql.exec(query,...args)][0];
 const checkRevision=(value,old)=>{if(!Number.isInteger(value)||value!==(old?.revision||0))fail(409,'box_changed');};
@@ -7,6 +8,7 @@ export function initBoxApps(sql){
  sql.exec("CREATE TABLE IF NOT EXISTS bp_apps (account_id TEXT PRIMARY KEY, id TEXT UNIQUE NOT NULL, name TEXT NOT NULL, design TEXT NOT NULL, accent TEXT NOT NULL, background TEXT NOT NULL, logo TEXT NOT NULL, state TEXT NOT NULL, suspended INTEGER NOT NULL, revision INTEGER NOT NULL, approved_revision INTEGER NOT NULL, approved_config TEXT NOT NULL, note TEXT NOT NULL, updated_at INTEGER NOT NULL)");
  sql.exec('CREATE TABLE IF NOT EXISTS bp_designs (id TEXT PRIMARY KEY, enabled INTEGER NOT NULL, revision INTEGER NOT NULL)');
  sql.exec('CREATE TABLE IF NOT EXISTS bp_app_editors (account_id TEXT PRIMARY KEY, opened INTEGER NOT NULL)');
+ initBoxDelivery(sql);
 }
 export function boxCatalog(sql){
  return BOXPANEL_DESIGNS.map(design=>{const setting=row(sql,'SELECT enabled,revision FROM bp_designs WHERE id=?',design.id);return {...design,enabled:setting?setting.enabled===1:true,revision:setting?.revision||0};});
@@ -16,11 +18,13 @@ export function boxApp(sql,accountId){
  const approved=app.approved_config?JSON.parse(app.approved_config):null;
  delete app.approved_config;delete app.account_id;
  const editor=row(sql,'SELECT opened FROM bp_app_editors WHERE account_id=?',accountId);
- return {...app,editorOpen:editor?editor.opened===1:app.approved_revision===0,suspended:app.suspended===1,approved:approved?{name:approved.name,design:approved.design,accent:approved.accent,background:approved.background,revision:app.approved_revision}:null,apkReady:false};
+ return {...app,editorOpen:editor?editor.opened===1:app.approved_revision===0,suspended:app.suspended===1,approved:approved?{name:approved.name,design:approved.design,accent:approved.accent,background:approved.background,revision:app.approved_revision}:null,...boxDelivery(sql,accountId)};
 }
 export function boxImageUsage(sql){
  return row(sql,'SELECT COALESCE(SUM(LENGTH(data)),0) AS n FROM bp_ads').n+
-  row(sql,'SELECT COALESCE(SUM(LENGTH(logo)+LENGTH(approved_config)),0) AS n FROM bp_apps').n;
+  row(sql,'SELECT COALESCE(SUM(LENGTH(logo)+LENGTH(approved_config)),0) AS n FROM bp_apps').n+
+  row(sql,'SELECT COALESCE(SUM(LENGTH(config)),0) AS n FROM bp_builds').n+
+  row(sql,'SELECT COALESCE(SUM(LENGTH(config)),0) AS n FROM bp_releases').n;
 }
 // Called inside the parent SQLite transaction, after the workspace has been
 // selected from the verified owner/reseller scope.
@@ -32,11 +36,17 @@ export function boxAppOperation(sql,b,{owner,accountId,workspace,image,storageLi
   const old=row(sql,'SELECT * FROM bp_designs WHERE id=?',b.design);checkRevision(b.revision,old);
   sql.exec('INSERT INTO bp_designs(id,enabled,revision) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET enabled=excluded.enabled,revision=excluded.revision',b.design,b.enabled?1:0,(old?.revision||0)+1);return {ok:true};
  }
- if(!['boxpanel-app-save','boxpanel-app-submit','boxpanel-app-review','boxpanel-app-editor'].includes(action))return null;
- if(['boxpanel-app-review','boxpanel-app-editor'].includes(action)&&!owner)fail(403,'box_scope');
+ if(!['boxpanel-app-save','boxpanel-app-submit','boxpanel-app-review','boxpanel-app-editor','boxpanel-app-build'].includes(action))return null;
+ if(['boxpanel-app-review','boxpanel-app-editor','boxpanel-app-build'].includes(action)&&!owner)fail(403,'box_scope');
  const old=row(sql,'SELECT * FROM bp_apps WHERE account_id=?',accountId);checkRevision(b.revision,old);
  const revision=(old?.revision||0)+1,now=Date.now();
  const setEditor=opened=>sql.exec('INSERT INTO bp_app_editors(account_id,opened) VALUES(?,?) ON CONFLICT(account_id) DO UPDATE SET opened=excluded.opened',accountId,opened?1:0);
+ if(action==='boxpanel-app-build'){
+  if(!old?.approved_revision||old.suspended||workspace.status!=='active')fail(409,'box_app_state');
+  const delivery=boxDelivery(sql,accountId);if(delivery.build&&['queued','building'].includes(delivery.build.status))fail(409,'box_app_state');
+  queueBoxBuild(sql,accountId,old.approved_revision,old.approved_config,boxImageUsage(sql),storageLimit);
+  sql.exec('UPDATE bp_apps SET revision=?,updated_at=? WHERE account_id=?',revision,now,accountId);return {ok:true,app:boxApp(sql,accountId)};
+ }
  if(action==='boxpanel-app-editor'){
   if(!old)fail(404,'box_app_missing');
   if(typeof b.enabled!=='boolean')fail(400,'box_input');
@@ -67,6 +77,7 @@ export function boxAppOperation(sql,b,{owner,accountId,workspace,image,storageLi
   const approved=JSON.stringify({id:old.id,name:old.name,design:old.design,designVersion:1,accent:old.accent,background:old.background,logo:old.logo});
   if(boxImageUsage(sql)-old.approved_config.length+approved.length>storageLimit)fail(409,'box_capacity');
   sql.exec("UPDATE bp_apps SET state='approved',approved_revision=?,approved_config=?,note='',revision=?,updated_at=? WHERE account_id=?",revision,approved,revision,now,accountId);setEditor(false);
+  queueBoxBuild(sql,accountId,revision,approved,boxImageUsage(sql),storageLimit);
  }else if(b.decision==='return'){
   if(old.state!=='pending')fail(409,'box_app_state');
   if(typeof b.note!=='string'||!b.note.trim()||b.note.length>300||/[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(b.note))fail(400,'box_review_note');
