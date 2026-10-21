@@ -18,7 +18,7 @@ try{
  assert.equal((await call(worker,{action:'boxpanel-list'})).status,401);
  assert.equal((await call(worker,{action:'boxpanel-open',access_token:'forged',accountId:PORTAL_ACCOUNT})).status,401);
  const before=await admin('users');assert.deepEqual(before.data,[]);
- const initial=(await admin('boxpanel-list')).data;assert.equal(initial.workspaces.length,0);assert.equal(initial.candidates.length,4);assert.deepEqual(initial.catalog.map(d=>d.id),['classic','cinema','compact']);
+ const initial=(await admin('boxpanel-list')).data;assert.equal(initial.workspaces.length,0);assert.equal(initial.candidates.length,4);assert.deepEqual(initial.catalog.map(d=>d.id),['classic','cinema','compact','aura','panorama','stadium','noir','horizon']);
  const a=PORTAL_ACCOUNT,b=initial.candidates.find(id=>id!==a);
  for(const [accountId,name] of [[a,'Reseller A'],[b,'Reseller B']])assert.equal((await admin('boxpanel-workspace-save',{accountId,name,status:'active',revision:0})).status,200);
  assert.equal((await admin('boxpanel-workspace-save',{accountId:'invented',name:'Invalid',status:'active',revision:0})).status,400);
@@ -50,7 +50,7 @@ try{
  assert.equal((await reseller({action:'boxpanel-dns-save',id:dns.id,title:'Updated',url:'https://new.example.com',revision:dns.revision})).status,200);
  for(const url of ['http://127.0.0.1','https://localhost','https://a.example.com/?password=secret','https://user:pass@a.example.com','javascript:alert(1)','https://a.example.com/'+ 'a'.repeat(2050)])assert.equal((await reseller({action:'boxpanel-dns-save',id:dns.id,title:'Unsafe',url,revision:2})).status,400);
  const png='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aFeQAAAAASUVORK5CYII=';
- const branding={name:'Marca A',design:'classic',accent:'#16D4CD',background:'#07151f',logo:png};
+ const branding={name:'Marca A',design:'classic',accent:'#16D4CD',background:'#07151f',logo:png,style:{wallpaper:'sunset',density:'compact',welcome:'Tu marca, tu mundo'}};
  assert.equal((await reseller({action:'boxpanel-design-save',design:'classic',enabled:false,revision:0})).status,403);
  let brand=await reseller({action:'boxpanel-app-save',accountId:b,scope:{role:'owner'},...branding,revision:0,state:'approved',approved_revision:999,suspended:true,id:'forged'});
  assert.equal(brand.status,200);assert.equal(brand.data.app.state,'draft');assert.equal(brand.data.app.suspended,false);assert.equal(brand.data.app.approved_revision,0);assert.equal(brand.data.app.logo,png);assert.notEqual(brand.data.app.id,'forged');assert.equal(brand.data.app.accent,'#16d4cd');assert.equal(brand.data.app.apkReady,false);
@@ -89,7 +89,7 @@ try{
  assert.equal((await admin('boxpanel-app-review',{accountId:a,decision:'resume',revision:12})).data.app.suspended,false);
  assert.equal((await reseller({action:'boxpanel-open'})).data.app.editorOpen,false,'resuming an app does not reopen customization');
  assert.equal((await admin('boxpanel-app-editor',{accountId:a,enabled:true,revision:13})).data.app.editorOpen,true);
- for(const patch of [{accent:'url(https://foreign.example)'},{background:'#fff'},{name:'x'},{design:'copied-third-party-app'},{logo:'https://foreign.example/logo.svg'}])assert.equal((await reseller({action:'boxpanel-app-save',...branding,design:'compact',revision:14,...patch})).status,400);
+ for(const patch of [{accent:'url(https://foreign.example)'},{background:'#fff'},{name:'x'},{design:'copied-third-party-app'},{logo:'https://foreign.example/logo.svg'},{style:{wallpaper:'url(https://foreign.example)',density:'compact',welcome:''}},{style:{wallpaper:'aurora',density:'compact',welcome:'x'.repeat(81)}}])assert.equal((await reseller({action:'boxpanel-app-save',...branding,design:'compact',revision:14,...patch})).status,400);
  const competing=await Promise.all([reseller({action:'boxpanel-app-save',...branding,design:'compact',name:'Cambio 1',revision:14}),reseller({action:'boxpanel-app-save',...branding,design:'compact',name:'Cambio 2',revision:14})]);assert.deepEqual(competing.map(r=>r.status).sort(),[200,409]);
  const finalBrand=(await reseller({action:'boxpanel-open'})).data.app;assert.equal(finalBrand.revision,15);assert.equal(finalBrand.approved_revision,11);assert.equal(finalBrand.approved.name,'Marca A nueva');
  assert.equal((await admin('boxpanel-app-editor',{accountId:b,enabled:false,revision:1})).data.app.editorOpen,false);
@@ -99,7 +99,7 @@ try{
  assert.equal((await reseller({action:'boxpanel-ads-save',title:'B image while customization closed',data:png,duration:10,revision:0},cookieB)).status,200);
  assert.equal((await admin('boxpanel-design-save',{design:'classic',enabled:true,revision:0})).status,409,'catalog changes also use revisions');
  const publicCatalogResponse=await worker.fetch('https://resellers.snaptvnow.com/api/boxpanel/catalog');assert.equal(publicCatalogResponse.status,200);
- const publicCatalog=await publicCatalogResponse.json();assert.deepEqual(publicCatalog.catalog.map(d=>d.id),['cinema','compact']);
+ const publicCatalog=await publicCatalogResponse.json();assert.deepEqual(publicCatalog.catalog.map(d=>d.id),['cinema','compact','aura','panorama','stadium','noir','horizon']);
  for(const privateValue of ['Marca A','Marca B',a,b,'approved_revision','revision','base64','candidates','account_id'])assert.ok(!JSON.stringify(publicCatalog).includes(privateValue),'public catalog excludes '+privateValue);
  assert.equal((await worker.fetch('https://resellers.snaptvnow.com/api/boxpanel/catalog',{method:'POST',body:JSON.stringify({action:'boxpanel-app-review',accountId:a,decision:'approve'})})).status,405);
  const publicPage=await worker.fetch('https://resellers.snaptvnow.com/apps');assert.equal(publicPage.status,200);assert.ok((await publicPage.text()).includes('boxpanel-catalog.js'));

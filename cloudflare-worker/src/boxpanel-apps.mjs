@@ -7,21 +7,29 @@ const color=value=>{if(typeof value!=='string'||!/^#[a-f0-9]{6}$/i.test(value))f
 export function initBoxApps(sql){
  sql.exec("CREATE TABLE IF NOT EXISTS bp_apps (account_id TEXT PRIMARY KEY, id TEXT UNIQUE NOT NULL, name TEXT NOT NULL, design TEXT NOT NULL, accent TEXT NOT NULL, background TEXT NOT NULL, logo TEXT NOT NULL, state TEXT NOT NULL, suspended INTEGER NOT NULL, revision INTEGER NOT NULL, approved_revision INTEGER NOT NULL, approved_config TEXT NOT NULL, note TEXT NOT NULL, updated_at INTEGER NOT NULL)");
  sql.exec('CREATE TABLE IF NOT EXISTS bp_designs (id TEXT PRIMARY KEY, enabled INTEGER NOT NULL, revision INTEGER NOT NULL)');
+ sql.exec('CREATE TABLE IF NOT EXISTS bp_app_styles (account_id TEXT PRIMARY KEY, config TEXT NOT NULL)');
  sql.exec('CREATE TABLE IF NOT EXISTS bp_app_editors (account_id TEXT PRIMARY KEY, opened INTEGER NOT NULL)');
  initBoxDelivery(sql);
 }
 export function boxCatalog(sql){
  return BOXPANEL_DESIGNS.map(design=>{const setting=row(sql,'SELECT enabled,revision FROM bp_designs WHERE id=?',design.id);return {...design,enabled:setting?setting.enabled===1:true,revision:setting?.revision||0};});
 }
+const defaultStyle=design=>({wallpaper:BOXPANEL_DESIGNS.find(d=>d.id===design)?.wallpaper||'aurora',density:'comfortable',welcome:''});
+function appStyle(sql,accountId,design){const stored=row(sql,'SELECT config FROM bp_app_styles WHERE account_id=?',accountId);return stored?JSON.parse(stored.config):defaultStyle(design);}
+export function validateBoxStyle(value){
+ if(!value||typeof value!=='object'||Array.isArray(value)||Object.keys(value).some(k=>!['wallpaper','density','welcome'].includes(k))||!['aurora','midnight','sunset','ocean'].includes(value.wallpaper)||!['comfortable','compact'].includes(value.density)||typeof value.welcome!=='string'||value.welcome.trim().length>80||/[\x00-\x1f]/.test(value.welcome))fail(400,'box_app_style');
+ return {wallpaper:value.wallpaper,density:value.density,welcome:value.welcome.trim()};
+}
 export function boxApp(sql,accountId){
  const app=row(sql,'SELECT * FROM bp_apps WHERE account_id=?',accountId);if(!app)return null;
  const approved=app.approved_config?JSON.parse(app.approved_config):null;
  delete app.approved_config;delete app.account_id;
  const editor=row(sql,'SELECT opened FROM bp_app_editors WHERE account_id=?',accountId);
- return {...app,editorOpen:editor?editor.opened===1:app.approved_revision===0,suspended:app.suspended===1,approved:approved?{name:approved.name,design:approved.design,accent:approved.accent,background:approved.background,revision:app.approved_revision}:null,...boxDelivery(sql,accountId)};
+ return {...app,style:appStyle(sql,accountId,app.design),editorOpen:editor?editor.opened===1:app.approved_revision===0,suspended:app.suspended===1,approved:approved?{name:approved.name,design:approved.design,accent:approved.accent,background:approved.background,style:approved.style||defaultStyle(approved.design),revision:app.approved_revision}:null,...boxDelivery(sql,accountId)};
 }
 export function boxImageUsage(sql){
- return row(sql,'SELECT COALESCE(SUM(LENGTH(data)),0) AS n FROM bp_ads').n+
+ return row(sql,'SELECT COALESCE(SUM(LENGTH(config)),0) AS n FROM bp_app_styles').n+
+  row(sql,'SELECT COALESCE(SUM(LENGTH(data)),0) AS n FROM bp_ads').n+
   row(sql,'SELECT COALESCE(SUM(LENGTH(logo)+LENGTH(approved_config)),0) AS n FROM bp_apps').n+
   row(sql,'SELECT COALESCE(SUM(LENGTH(config)),0) AS n FROM bp_builds').n+
   row(sql,'SELECT COALESCE(SUM(LENGTH(config)),0) AS n FROM bp_releases').n;
@@ -60,8 +68,10 @@ export function boxAppOperation(sql,b,{owner,accountId,workspace,image,storageLi
   const design=boxCatalog(sql).find(d=>d.id===b.design);if(!design?.enabled)fail(400,'box_design');
   if(typeof b.name!=='string'||b.name.trim().length<2||b.name.trim().length>40||/[\x00-\x1f]/.test(b.name))fail(400,'box_app_name');
   const logo=b.logo===null?'':b.logo===undefined?old?.logo||'':image(b.logo),accent=color(b.accent),background=color(b.background);
-  if(boxImageUsage(sql)-(old?.logo.length||0)+logo.length>storageLimit)fail(409,'box_capacity');
+  const style=JSON.stringify(b.style===undefined?appStyle(sql,accountId,b.design):validateBoxStyle(b.style)),previousStyle=row(sql,'SELECT config FROM bp_app_styles WHERE account_id=?',accountId)?.config||'';
+  if(boxImageUsage(sql)-(old?.logo.length||0)+logo.length-previousStyle.length+style.length>storageLimit)fail(409,'box_capacity');
   sql.exec("INSERT INTO bp_apps(account_id,id,name,design,accent,background,logo,state,suspended,revision,approved_revision,approved_config,note,updated_at) VALUES(?,?,?,?,?,?,?,'draft',?,?,?,?,?,?) ON CONFLICT(account_id) DO UPDATE SET name=excluded.name,design=excluded.design,accent=excluded.accent,background=excluded.background,logo=excluded.logo,state='draft',revision=excluded.revision,updated_at=excluded.updated_at",accountId,old?.id||crypto.randomUUID(),b.name.trim(),b.design,accent,background,logo,old?.suspended||0,revision,old?.approved_revision||0,old?.approved_config||'',old?.note||'',now);
+  sql.exec('INSERT INTO bp_app_styles(account_id,config) VALUES(?,?) ON CONFLICT(account_id) DO UPDATE SET config=excluded.config',accountId,style);
   return {ok:true,app:boxApp(sql,accountId)};
  }
  if(!old)fail(404,'box_app_missing');
@@ -74,7 +84,7 @@ export function boxAppOperation(sql,b,{owner,accountId,workspace,image,storageLi
  if(b.decision==='approve'){
   if(old.state!=='pending'||old.suspended||workspace.status!=='active')fail(409,'box_app_state');
   if(!boxCatalog(sql).find(d=>d.id===old.design)?.enabled)fail(400,'box_design');
-  const approved=JSON.stringify({id:old.id,name:old.name,design:old.design,designVersion:1,accent:old.accent,background:old.background,logo:old.logo});
+  const approved=JSON.stringify({id:old.id,name:old.name,design:old.design,designVersion:2,style:appStyle(sql,accountId,old.design),accent:old.accent,background:old.background,logo:old.logo});
   if(boxImageUsage(sql)-old.approved_config.length+approved.length>storageLimit)fail(409,'box_capacity');
   sql.exec("UPDATE bp_apps SET state='approved',approved_revision=?,approved_config=?,note='',revision=?,updated_at=? WHERE account_id=?",revision,approved,revision,now,accountId);setEditor(false);
   queueBoxBuild(sql,accountId,revision,approved,boxImageUsage(sql),storageLimit);

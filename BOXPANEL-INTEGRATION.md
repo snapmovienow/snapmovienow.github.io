@@ -135,3 +135,21 @@ unresolved browser dependency. Browser coverage serves HTML/JS/CSS from the
 actual production Wrangler artifact at `.wrangler/quality-release`, while
 authentication and writes use isolated fixtures. This checks the same packaging
 used for release, including public catalog, login and private workspace scripts.
+
+
+## Eight original layouts (catalog v2)
+Stable IDs `classic`, `cinema`, `compact` now present Órbita TV, Prisma Cine,
+Mosaico TV. New IDs: `aura`, `panorama`, `stadium`, `noir`, `horizon`. Existing
+proposals, owner availability switches, and package identities remain valid.
+All previews use original inline vector art and explicitly illustrative titles;
+no third-party player code or media assets are copied. Each has home, access,
+and player previews; native Android/Fire TV renders its corresponding layout
+with artwork from the reseller's actual content source.
+
+The new optional `style` contains validated `wallpaper` (aurora/midnight/sunset/ocean),
+`density` (comfortable/compact), and `welcome` (up to 80 characters). It is stored
+in `bp_app_styles` inside the existing SQLite transaction and participates in
+storage accounting. It is copied into immutable approval/build/release snapshots.
+An unpublished draft cannot change the installed app. Old proposals and builds
+without `style` retain safe defaults. Personalization still closes on approval;
+only the owner reopens it. Existing DNS/image quotas and tenant isolation apply.
