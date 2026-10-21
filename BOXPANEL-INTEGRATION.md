@@ -99,3 +99,10 @@ only. The BoxPanel regression therefore resolves esbuild and Miniflare from
 `cloudflare-worker/package.json`, so the deployment verification does not rely
 on an additional repository-root installation. Verify releases with that same
 installation layout as well as the full GitHub Quality workflow.
+
+The Worker sets `keep_names: false`: its browser scripts serialize self-contained
+UI functions, and Wrangler's name-preservation helper would otherwise become an
+unresolved browser dependency. Browser coverage serves HTML/JS/CSS from the
+actual production Wrangler artifact at `.wrangler/quality-release`, while
+authentication and writes use isolated fixtures. This checks the same packaging
+used for release, including public catalog, login and private workspace scripts.
