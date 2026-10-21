@@ -93,3 +93,9 @@ sizes and saves UI screenshots in its `quality-evidence` artifact.
 This includes public selection before login, all three conceptual designs,
 live branding under the real reseller CSP, transparent logo optimization,
 draft/cancel/review controls, catalog visibility and logout cleanup.
+
+Workers Builds installs dependencies from `cloudflare-worker/package-lock.json`
+only. The BoxPanel regression therefore resolves esbuild and Miniflare from
+`cloudflare-worker/package.json`, so the deployment verification does not rely
+on an additional repository-root installation. Verify releases with that same
+installation layout as well as the full GitHub Quality workflow.
