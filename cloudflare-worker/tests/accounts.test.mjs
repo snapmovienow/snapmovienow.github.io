@@ -25,7 +25,15 @@ assert.equal((await act('save',{...noteSaved.data,create:false,comments:'x'.repe
 assert.equal((await act('save',{...noteSaved.data,create:false,comments:{unsafe:true}})).status,400);
 const sessions=[];for(let i=0;i<4;i++){const a=await req({op:'auth',username:'customer'+i,password:'customer-password-test'});assert.equal(a.status,200);assert.equal(a.data.user_info.auth,1);assert.ok(!JSON.stringify(a.data).includes('service-password'));sessions.push(a.data.access_token)}
 assert.equal((await req({op:'vod',access_token:sessions[0]})).data[0].name,'Test movie');assert.equal((await req({op:'series',access_token:sessions[0]})).data[0].name,'Test series');assert.equal((await admin('users',{access_token:sessions[0]})).status,401);
-const plays=await Promise.all(sessions.map(access_token=>req({op:'stream_token',access_token,type:'movie',id:123})));assert.equal(plays.filter(x=>x.status===200).length,3);assert.equal(plays.filter(x=>x.status===409).length,1);assert.equal(plays.find(x=>x.status===409).data.error,'ccf_capacity');
+// Race all four customers for three slots; arrival order may differ across hosts.
+const raced=await Promise.all(sessions.map(access_token=>req({op:'stream_token',access_token,type:'movie',id:123})));
+assert.equal(raced.filter(x=>x.status===200).length,3);assert.equal(raced.filter(x=>x.status===409).length,1);assert.equal(raced.find(x=>x.status===409).data.error,'ccf_capacity');
+// The remaining lifecycle assertions name customer0/1/2 explicitly. Release
+// whichever customers won the race, then establish those fixtures in order.
+for(const [index,play] of raced.entries())if(play.status===200)assert.equal((await req({op:'playback_release',access_token:sessions[index],lease_id:play.data.lease_id})).status,200);
+const plays=[];
+for(const access_token of sessions)plays.push(await req({op:'stream_token',access_token,type:'movie',id:123}));
+assert.deepEqual(plays.map(play=>play.status),[200,200,200,409]);
 assert.ok(!JSON.stringify((await req({op:'session_info',access_token:sessions[0]})).data).includes(note),'administrator notes never reach a customer session');
 const customer0=(await act('users')).data.find(u=>u.username==='customer0');
 const notesWhilePlaying=await act('save',{...customer0,create:false,comments:'Private test notes during playback'});assert.equal(notesWhilePlaying.data.sessionsRevoked,false);
