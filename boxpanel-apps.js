@@ -139,8 +139,9 @@ export function mountBoxPanelApps({api,section,owner,run,reload,prepareLogo,init
   if(!target.children.length)target.textContent='El administrador todavía no habilitó diseños.';
  }
  function reset(){
+  const selectedSlot=fields.imageSlot.value;
   dirty=logoDirty=false;pendingImage='';artwork=JSON.parse(JSON.stringify(app?.artwork||{}));logo=app?.logo||'';form.reset();fields.design.replaceChildren();for(const design of catalog.filter(d=>d.enabled||d.id===app?.design)){const option=document.createElement('option');option.value=design.id;option.textContent=design.name+(design.enabled?'':' · No disponible');option.disabled=!design.enabled;fields.design.append(option);}
-  fields.design.value=app?.design||(catalog.some(d=>d.id===initialDesign&&d.enabled)?initialDesign:catalog.find(d=>d.enabled)?.id)||'';fields.appName.value=app?.name||'';fields.accent.value=validColor(app?.accent,'#16d4cd');fields.background.value=validColor(app?.background,'#07151f');fields.wallpaper.value=app?.style?.wallpaper||catalog.find(d=>d.id===fields.design.value)?.wallpaper||'aurora';fields.density.value=app?.style?.density||'comfortable';fields.welcome.value=app?.style?.welcome||'';$('[data-review-note]').value='';screen='home';for(const tab of root.querySelectorAll('[data-screen]'))tab.setAttribute('aria-pressed',String(tab.dataset.screen===screen));paint();
+  fields.design.value=app?.design||(catalog.some(d=>d.id===initialDesign&&d.enabled)?initialDesign:catalog.find(d=>d.enabled)?.id)||'';fields.appName.value=app?.name||'';fields.accent.value=validColor(app?.accent,'#16d4cd');fields.background.value=validColor(app?.background,'#07151f');fields.wallpaper.value=app?.style?.wallpaper||catalog.find(d=>d.id===fields.design.value)?.wallpaper||'aurora';fields.density.value=app?.style?.density||'comfortable';fields.welcome.value=app?.style?.welcome||'';$('[data-review-note]').value='';screen='home';for(const tab of root.querySelectorAll('[data-screen]'))tab.setAttribute('aria-pressed',String(tab.dataset.screen===screen));fields.imageSlot.value=selectedSlot;paint();
  }
  function controls(value){
   busy=value;const suspended=!owner&&app?.suspended;
