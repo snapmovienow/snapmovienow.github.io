@@ -55,6 +55,8 @@ jobs:
         run: node tests/admin-users-runtime.mjs
       - name: Exclusive catalog administrator on mobile and desktop
         run: node tests/admin-exclusive-runtime.mjs
+      - name: BoxPanel owner and reseller integration on mobile and desktop
+        run: node tests/admin-boxpanel-runtime.mjs
       - name: Real video concurrency smoke
         run: node tests/video-capacity-runtime.mjs
         env:
