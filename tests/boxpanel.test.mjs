@@ -87,6 +87,10 @@ try{
  assert.equal((await worker.fetch('https://resellers.snaptvnow.com/api/boxpanel/catalog',{method:'POST',body:JSON.stringify({action:'boxpanel-app-review',accountId:a,decision:'approve'})})).status,405);
  const publicPage=await worker.fetch('https://resellers.snaptvnow.com/apps');assert.equal(publicPage.status,200);assert.ok((await publicPage.text()).includes('boxpanel-catalog.js'));
  const publicScript=await (await worker.fetch('https://resellers.snaptvnow.com/assets/boxpanel-catalog.js')).text();new Function(publicScript);assert.ok(!publicScript.includes(token));
+ assert.ok(publicScript.includes("base+'/boxpanel'"),'public selection opens the dedicated private panel');
+ const loginPage=await worker.fetch('https://resellers.snaptvnow.com/boxpanel/login?next=https://foreign.example');assert.equal(loginPage.status,200);const loginHTML=await loginPage.text();assert.ok(loginHTML.includes('data-web-login'));assert.ok(loginHTML.includes('data-portal-mode="unified"'));assert.ok(!loginHTML.includes('foreign.example'));assert.ok(!loginHTML.includes(token));
+ const fixedLogin=await worker.fetch('https://api.snaptvnow.com/panel/juanito/boxpanel/login');assert.equal(fixedLogin.status,200);assert.ok((await fixedLogin.text()).includes('data-portal-mode="fixed"'));
+ for(const asset of ['boxpanel-login.js','boxpanel-web.js']){const response=await worker.fetch('https://resellers.snaptvnow.com/assets/'+asset);assert.equal(response.status,200);const code=await response.text();new Function(code);for(const secret of [token,'local-boxpanel-setup-secret-never-deployed','synthetic-test-token'])assert.ok(!code.includes(secret));}
  assert.equal((await reseller({action:'boxpanel-ads-save',title:'SVG',data:'data:image/svg+xml;base64,PHN2Zy8+',duration:10,revision:0})).status,400);
  assert.equal((await reseller({action:'boxpanel-ads-save',title:'Fake',data:'data:image/png;base64,AAAA',duration:10,revision:0})).status,400);
  assert.equal((await reseller({action:'boxpanel-ads-save',title:'Big',data:'data:image/png;base64,'+'A'.repeat(350000),duration:10,revision:0})).status,413);

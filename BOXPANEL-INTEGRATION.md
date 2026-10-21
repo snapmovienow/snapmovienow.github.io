@@ -8,12 +8,32 @@ the existing HttpOnly reseller cookie with the configured portal gateway.
 The server selects the workspace from the verified actor; a browser-supplied
 account ID or role cannot grant access to another reseller or to the owner UI.
 
+## Reseller web and access
+
+The existing reseller host serves a complete public `/apps` landing page with
+navigation, features, onboarding steps and interactive design previews.
+Choosing a design opens `/boxpanel`. An expired or missing session redirects
+to `/boxpanel/login`; that dedicated form reuses `/api/portal/login` and the
+existing reseller account, gateway and HttpOnly cookie. No second credential
+store or account provisioning service is introduced. The fixed Juanito realm
+continues to use only a password; the unified realm uses username/password.
+
+The login form never writes credentials or tokens to browser storage or URLs,
+preserves leading zeros in passwords, clears passwords after failed attempts
+and on navigation, and redirects only to a fixed same-origin BoxPanel path.
+Private web navigation links directly to the app, DNS and images sections.
+Logout clears the rendered profile immediately, calls the existing session
+revocation route and checks success before navigating back to login. A failed
+logout shows a retry message instead of claiming the session ended. Page-hide
+cleanup and fresh checks after browser back/forward prevent stale private UI.
+The existing reseller account-management portal remains available separately.
+
 ## Design catalog and app profile
 
 `/apps` on the existing reseller portal is a public catalog of three original
 BoxPanel design concepts: Classic, Cinema and Compact TV. Visitors can preview
 home, login and player layouts. Choosing a design stores only its allowlisted
-identifier in that browser tab, then opens the existing panel login. A new app
+identifier in that browser tab, then opens the private BoxPanel web page. A new app
 profile prefills that choice if the owner still enables it. Existing profiles
 keep their saved design. `/api/boxpanel/catalog` is GET-only and returns only
 enabled template metadata, with no reseller IDs, revisions, logos or profiles.
