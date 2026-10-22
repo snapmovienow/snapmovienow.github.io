@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {createResellerPortal,matchesResellerPortal,UNIFIED_PORTAL_HOST,UNIFIED_PORTAL_PREFIX,PORTAL_ACCOUNT,PORTAL_SOURCE} from '../src/reseller-portal.mjs';
+import {createResellerPortal,matchesResellerPortal,UNIFIED_PORTAL_HOST,UNIFIED_PORTAL_PREFIX,PORTAL_HOST,PORTAL_ACCOUNT,PORTAL_SOURCE} from '../src/reseller-portal.mjs';
 import {PORTAL_SCRIPT} from '../src/reseller-panel-assets.mjs';
 const origin='https://'+UNIFIED_PORTAL_HOST,secret='f'.repeat(64),sessions=new Map([['a'.repeat(64),'juanito-fixture'],['b'.repeat(64),'martin-fixture']]),calls=[];let owner=false,foreign=false;
 const portal=createResellerPortal({getConfig:async()=>({accountId:PORTAL_ACCOUNT,sourceOrigin:PORTAL_SOURCE,gatewaySecret:secret,siteToken:'fictional-site-token'}),fetcher:async(url,options)=>{
@@ -10,6 +10,16 @@ const portal=createResellerPortal({getConfig:async()=>({accountId:PORTAL_ACCOUNT
 }});
 const request=(path='/',method='GET',body,headers={},base=origin)=>portal(new Request(base+path,{method,headers:{...(method==='POST'?{'Content-Type':'application/json',Origin:new URL(base).origin}:{}),...headers},body:body?JSON.stringify(body):undefined}),{});
 const html=await request();assert.equal(html.status,200);assert.ok((await html.text()).includes('data-portal-mode="unified"'));assert.ok(html.headers.get('Strict-Transport-Security'));
+// Enabling the app service must not add app navigation to an IPTV panel.
+const withApps=createResellerPortal({getConfig:async()=>{throw Error('unused');},boxpanel:async()=>Response.json({ok:true})});
+for(const url of [origin+'/', 'https://'+PORTAL_HOST+'/', 'https://api.snaptvnow.com'+UNIFIED_PORTAL_PREFIX, 'https://api.snaptvnow.com/panel/juanito']){
+ const response=await withApps(new Request(url),{}),page=await response.text();
+ assert.equal(response.status,200);assert.ok(page.includes('id="portal-root"'));
+ for(const value of ['bp-portal-links','Catálogo de apps','Admin. BoxPanel','/assets/boxpanel.css'])assert.ok(!page.includes(value),value);
+}
+for(const path of ['/apps','/boxpanel','/boxpanel/login']){
+ const response=await withApps(new Request(origin+path),{});assert.equal(response.status,200);assert.ok(response.headers.get('Content-Type').includes('text/html'));
+}
 assert.equal((await request('/api/panel')).status,401);assert.equal(calls.length,0);
 const cookies=[];
 for(const [username,id] of [['juanito','juanito-fixture'],['martinvela2326','martin-fixture']]){
