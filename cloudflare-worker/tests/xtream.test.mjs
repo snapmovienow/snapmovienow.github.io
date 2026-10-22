@@ -238,6 +238,15 @@ failMediaStatus=404;
 const missingOnFirstAccount=await media('movie',movies[0].stream_id,'mp4');
 assert.equal(missingOnFirstAccount.status,200);assert.equal(await missingOnFirstAccount.text(),'data');
 assert.equal((await leases()).length,0,'a provider 404 retries another authorised account and releases failed reservations');
+for(const [i,status]of [500,520,522,524,525,526].entries()){
+ failMediaStatus=status;const before=providerCalls.length;
+ const resumed=await media('series',episodes[0].id,'mkv',30+i,{headers:{range:'bytes=0-3'}});
+ assert.equal(resumed.status,206,'a gateway '+status+' can recover an episode seek on another authorised source');
+ assert.equal(resumed.headers.get('content-range'),'bytes 0-3/1000');assert.equal(await resumed.text(),'data');
+ const calls=providerCalls.slice(before).filter(c=>c.path.startsWith('/series/'));
+ assert.equal(calls.length,2);assert.ok(calls[0].path.includes('/upstream-0/'));assert.ok(calls[1].path.includes('/upstream-backup/'));
+ assert.equal(await (await openLeaseStore(objects.get('__smn_accounts_v1').state.storage)).count(),0,'failed and completed seek attempts release their own reservations');
+}
 failMedia = false;failMediaStatus=503;
 
 // A slow reseller refresh must not block a new native playback with a recent

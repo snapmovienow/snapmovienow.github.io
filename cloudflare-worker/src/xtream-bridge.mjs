@@ -7,6 +7,9 @@ import {createProviderCatalog,fingerprint} from './provider-catalog.mjs';
 import {createAdultPolicy} from './content-permissions.mjs';
 import {cleanPlaybackActivity,cachedPlaybackActivity} from './playback-activity.mjs';
 export {publicMetadata} from './provider-catalog.mjs';
+// CCF can return gateway-specific 52x errors as well as ordinary 5xx. They
+// belong to the selected source, not to the subscriber or their bookmark.
+const retryableSourceStatus=status=>[401,403,404,408,429].includes(status)||status>=500&&status<=599;
 
 export function createXtreamBridge(deps) {
   return async function xtreamRequest(req, env, ctx) {
@@ -57,7 +60,7 @@ export function createXtreamBridge(deps) {
       try{
         const prepared=startup?startup.prepare(request):new Request(request);
         const response=await deps.serverStream(prepared,env,target,ctx);
-        if(!response.ok){lastFailure=response.status;if(startup&&response.status!==410)await reportLiveResult(deps.directory,env,mediaSession,allocation,false,Date.now()-signalAt);await privateCall('/release',{sid:session.sid,lease_id,request_id,reason:'upstream_failed'});await response.body?.cancel();if([401,403,404,408,429,502,503,504].includes(response.status)&&allocation.provider_id&&attempt<2){excluded.push(allocation.provider_id);continue}return deps.json({error:'upstream_unavailable'},response.status)}
+        if(!response.ok){lastFailure=response.status;if(startup&&response.status!==410)await reportLiveResult(deps.directory,env,mediaSession,allocation,false,Date.now()-signalAt);await privateCall('/release',{sid:session.sid,lease_id,request_id,reason:'upstream_failed'});await response.body?.cancel();if(retryableSourceStatus(response.status)&&allocation.provider_id&&attempt<2){excluded.push(allocation.provider_id);continue}return deps.json({error:'upstream_unavailable'},response.status)}
         if(startup)await reportLiveResult(deps.directory,env,mediaSession,allocation,true,Date.now()-signalAt);
         // Native clients load this master once, then refresh the signed media
         // playlist directly. Refreshing /live on every segment used to repeat
