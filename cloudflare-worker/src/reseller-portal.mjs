@@ -16,6 +16,17 @@ export async function readPortalInput(req,max=24000){const length=Number(req.hea
 export function createResellerPortal({getConfig,fetcher=fetch,boxpanel,catalog}){const handle=async(req,env)=>{
  const u=new URL(req.url),unified=u.hostname===UNIFIED_PORTAL_HOST||u.pathname===UNIFIED_PORTAL_PREFIX||u.pathname.startsWith(UNIFIED_PORTAL_PREFIX+'/'),host=unified?UNIFIED_PORTAL_HOST:PORTAL_HOST,prefix=unified?UNIFIED_PORTAL_PREFIX:PREFIX,base=u.hostname===host?'':prefix,path=u.pathname.slice(base.length)||'/',cookieName=unified?UNIFIED_COOKIE:COOKIE;
  if(u.protocol!=='https:')return new Response(null,{status:301,headers:{Location:'https://'+u.host+u.pathname+u.search}});
+ // Native phone delivery uses a revocable device credential, never a portal cookie.
+ if(path==='/api/sms-device'){
+  if(req.method!=='POST')return json({error:'portal_method'},405);
+  if(req.headers.get('content-type')?.split(';')[0].trim().toLowerCase()!=='application/json')return json({error:'portal_format'},415);
+  if(req.headers.has('Origin')&&req.headers.get('Origin')!==u.origin)return json({error:'portal_origin'},403);
+  try{const cfg=await getConfig(env);if(cfg?.accountId!==PORTAL_ACCOUNT||cfg.sourceOrigin!==PORTAL_SOURCE||!/^\w{64}$/.test(cfg.gatewaySecret)||typeof cfg.siteToken!=='string')throw Error('config_unavailable');
+   const input=await readPortalInput(req,8000),authorization=req.headers.get('Authorization');if(authorization&&authorization.length>80)return json({error:'sms_device_auth'},401);
+   const reply=await fetcher(PORTAL_SOURCE+'/api/portal',{method:'POST',redirect:'manual',headers:{'Content-Type':'application/json','OAI-Sites-Authorization':'Bearer '+cfg.siteToken,'X-SNAP-Portal-Gateway':cfg.gatewaySecret},body:JSON.stringify({accountId:PORTAL_ACCOUNT,action:'sms-device',input,authorization,client:req.headers.get('CF-Connecting-IP')||'unknown'}),signal:AbortSignal.timeout(16000)});
+   const raw=await reply.text();if(raw.length>12000||reply.status>=300&&reply.status<400)throw Error('sms_reply');return json(JSON.parse(raw),reply.status);
+  }catch{return json({error:'sms_device_unavailable',message:'No se pudo confirmar la entrega. El teléfono conservará el mensaje para reintentar.'},503);}
+ }
  if(catalog&&path==='/api/boxpanel/catalog'){if(req.method!=='GET')return json({error:'portal_method'},405);return catalog(env);}
  if(boxpanel&&req.method==='GET'){const asset=boxpanelAsset(path,base,{unified});if(asset)return asset;}
  if(req.method==='GET'&&(path==='/assets/favicon.svg'||path==='/favicon.svg'))return new Response(PORTAL_ICON,{headers:{...headers,'Cache-Control':'public, max-age=300','Content-Type':'image/svg+xml; charset=utf-8'}});

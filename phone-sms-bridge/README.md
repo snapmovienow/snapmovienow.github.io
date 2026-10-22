@@ -1,0 +1,8 @@
+# SNAP SMS Puente · prueba 0.1.0
+
+
+La nueva app independiente está en `phone-sms-bridge/` y usa el identificador `com.snaptvnow.smspuente`. No reemplaza la app antigua ni contiene credenciales de producción. Compilar con `SNAP_SMS_SDK` apuntando al SDK y ejecutar `bash phone-phone-sms-bridge/build.sh`; también se pueden definir `SNAP_SMS_BUILD_TOOLS` y `SNAP_SMS_ANDROID_JAR`. La clave local de pruebas queda en `phone-sms-bridge/.signing/`, excluida de Git; conservarla para firmar futuras actualizaciones.
+
+En el panel de Juanito, abrir «SMS del celular», generar código de un uso (10 min), escribirlo en la app y conceder READ_SMS/RECEIVE_SMS al activar. Se consultan exclusivamente filas entrantes con dirección 520 y fecha posterior a la activación. La identidad usa el `_id` del proveedor SMS, no el contenido: dos envíos iguales son eventos separados. La cola SQLite conserva entregas sin confirmar; JobScheduler reintenta con red y después de reiniciar. Android puede demorar el trabajo; abrir la app permite reintentarlo. No lee contactos ni tiene permiso para enviar SMS. La clave de entrega se guarda cifrada con AndroidKeyStore y puede revocarse desde el panel.
+
+La API fija HTTPS solo puede emparejar un dispositivo, comprobar conexión y entregar mensajes pendientes; no puede renovar, aprobar ni rechazar. El teléfono no tiene contraseña del panel. El operador revisa y reparte cada ingreso. La prueba simulada se etiqueta como tal, solo admite la cuenta de prueba autorizada en el servidor y no agrega ingresos bancarios al reporte. Un código nuevo permite reconectar la misma clave de un teléfono revocado. No se ha probado en el teléfono físico hasta que el usuario instale y empareje esta APK.

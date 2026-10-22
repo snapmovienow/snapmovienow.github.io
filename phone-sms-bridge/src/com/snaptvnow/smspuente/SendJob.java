@@ -1,0 +1,9 @@
+package com.snaptvnow.smspuente;
+import android.app.job.*;import android.content.*;import java.util.concurrent.atomic.AtomicBoolean;import org.json.*;
+public class SendJob extends JobService {
+ private final AtomicBoolean stopped=new AtomicBoolean(false);
+ static void schedule(Context c,boolean periodic){Vault v=new Vault(c);if(!v.enabled())return;JobScheduler scheduler=(JobScheduler)c.getSystemService(JOB_SCHEDULER_SERVICE);JobInfo.Builder b=new JobInfo.Builder(periodic?52002:52001,new ComponentName(c,SendJob.class)).setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY).setPersisted(true).setBackoffCriteria(30000,JobInfo.BACKOFF_POLICY_EXPONENTIAL);if(periodic)b.setPeriodic(15*60*1000);else b.setMinimumLatency(2000);scheduler.schedule(b.build());}
+ static void pause(Context c){JobScheduler s=(JobScheduler)c.getSystemService(JOB_SCHEDULER_SERVICE);s.cancel(52001);s.cancel(52002);}
+ public boolean onStartJob(JobParameters params){stopped.set(false);new Thread(()->{boolean retry=false;Vault v=new Vault(this);try(MessageStore store=new MessageStore(this)){if(v.enabled()){store.scan(this,v);JSONObject message;int n=0;while(!stopped.get()&&v.enabled()&&n++<100&&(message=store.first())!=null){try{Transport.send(v,message,false);store.sent(message.getString("messageId"));}catch(Transport.Failure e){if(e.status==400||e.status==409||e.status==413||e.status==415){store.failed(message.getString("messageId"));v.status("Un SMS requiere revisión: "+e.getMessage());continue;}throw e;}v.status("Último SMS entregado al panel: "+new java.util.Date()+". Pendiente de tu aprobación.");}retry=store.first()!=null;}}catch(Exception e){v.status("Pendiente de reintentar: "+e.getMessage());retry=v.enabled();}if(!stopped.get())jobFinished(params,retry);},"sms-delivery").start();return true;}
+ public boolean onStopJob(JobParameters params){stopped.set(true);return new Vault(this).enabled();}
+}
