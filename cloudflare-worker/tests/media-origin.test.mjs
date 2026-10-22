@@ -63,4 +63,15 @@ await assert.rejects(fetchValidatedMedia(start,new Headers(),'live',CCF_MEDIA_OR
 assert.equal(loops,6);
 assert.equal(validatedMediaTarget('http://194.76.0.119:8080/stream',CCF_MEDIA_ORIGIN).hostname,'media.snaptvnow.com');
 assert.throws(()=>validatedMediaTarget('http://194.76.0.119:8080/stream','https://other.example'),/media_origin_unapproved/);
+// A responding source may need more than four seconds while still fitting in
+// the one eight-second startup budget. Redirects spend the same remaining time.
+const realNow=Date.now;let startupNow=1000,deadlineSeen;Date.now=()=>startupNow;
+try{
+ const slow=await fetchValidatedMedia(start,new Headers(),'live',CCF_MEDIA_ORIGIN,{deadline:9000,
+  async fetchHost(url,options,timeout){assert.equal(timeout,8000);if(timeout<5000)throw Error('premature_timeout');startupNow+=5000;return redirect('http://89.44.33.22/segment.ts');},
+  async fetchIP(url,h,c,s,origin,deadline){deadlineSeen=deadline;assert.equal(deadline-startupNow,3000);return new Response('healthy media');}
+ });
+ assert.equal(await slow.response.text(),'healthy media');assert.equal(deadlineSeen,9000);
+ startupNow=9001;await assert.rejects(fetchValidatedMedia(start,new Headers(),'live',CCF_MEDIA_ORIGIN,{deadline:9000,fetchHost:async()=>{throw Error('expired_budget_was_ignored')}}),/live_startup_timeout/);
+}finally{Date.now=realNow;}
 console.log('PASS: trusted provider rotation at 0/12/24 hours, HLS segments/keys, Range provenance, all-hop private IP rejection, forged provenance rejection and redirect cleanup.');
