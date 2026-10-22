@@ -30,7 +30,7 @@ export async function prepareWebPlayback(body,session,requestUrl,env,ctx,deps){
     if(startup)await reportLiveResult(deps.directory,env,mediaSession,allocation,true,Date.now()-signalAt);
    }catch(error){
     if(startup&&!['media_origin_unapproved','playback_superseded','live_startup_timeout'].includes(error.message))await reportLiveResult(deps.directory,env,mediaSession,allocation,false,Date.now()-signalAt);
-    if(lease_id)await deps.directory(env,'/release',{sid:session.sid,lease_id,request_id});
+    if(lease_id)await deps.directory(env,'/release',{sid:session.sid,lease_id,request_id,reason:'upstream_failed'});
     if(error.message==='playback_superseded')return deps.json({error:'playback_superseded'},410);
     if(error.message==='media_origin_unapproved')return deps.json({error:error.message},502);
     if(provider_id&&attempt+1<attempts){excluded.push(provider_id);continue}

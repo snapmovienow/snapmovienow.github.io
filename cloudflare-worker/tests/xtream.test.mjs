@@ -249,7 +249,9 @@ let unblockRefresh; const refreshGate = new Promise(resolve => {unblockRefresh=r
 let checkingRefresh = true;
 globalThis.fetch = async (url, opts) => {if(checkingRefresh && new URL(url).pathname==='/player_api.php' && new URL(url).searchParams.get('username')==='upstream-backup' && !new URL(url).searchParams.has('action')) {checkingRefresh=false; await refreshGate} return savedFetch(url, opts)};
 const background = [], context = {waitUntil:task => background.push(task)};
-const nativeRequest = new Request(`${origin}/movie/${customer.username}/${customer.password}/${movies[0].stream_id}.mp4`, {headers:headers(1)});
+// A fresh viewer isolates refresh latency from the previous viewer's valid
+// backup-account affinity established by the failover checks above.
+const nativeRequest = new Request(`${origin}/movie/${customer.username}/${customer.password}/${movies[0].stream_id}.mp4`, {headers:headers(9)});
 let deadline;
 try {
   const quick = await Promise.race([worker.fetch(nativeRequest, env, context), new Promise((_,reject) => {deadline=setTimeout(()=>reject(Error('playback_waited_for_pool_refresh')),2000)})]);

@@ -49,6 +49,18 @@ try{
   assert.equal((await call(race,'/accounts/heartbeat',{...customer(1),lease_id:repeated[0].data.lease_id})).status,410);
   assert.equal((await call(race,'/inspect')).data.count,3);await call(race,'/accounts/release-session',{sid:'s0'});assert.equal((await call(race,'/inspect')).data.count,2);
   report.checks.push('30 duplicate concurrent starts allocate one lease','three-slot provider capacity enforced under simultaneous starts','foreign ownership denied','session close frees exactly its own slot');
+  const affinityObject='affinity';await call(affinityObject,'/seed',{count:4,accounts:2});
+  const a=customer(0);await call(affinityObject,'/accounts/playback-begin',a);const pinned=await call(affinityObject,'/accounts/acquire',a);
+  assert.equal(pinned.status,200);const originalProvider=pinned.data.provider_id;
+  for(let revision=2;revision<10;revision++){
+   const body={...customer(0,revision),mediaKey:'live|ccf|'+revision+'|'+(revision%2?'ts':'m3u8')};
+   await call(affinityObject,'/accounts/playback-begin',body);const replacement=await call(affinityObject,'/accounts/acquire',body);
+   assert.equal(replacement.data.provider_id,originalProvider);assert.equal((await call(affinityObject,'/inspect')).data.count,1);
+   if(revision===2){await call(affinityObject,'/accounts/release',{...a,lease_id:pinned.data.lease_id});assert.equal((await call(affinityObject,'/inspect')).data.count,1);}
+   await call(affinityObject,'/accounts/release',{...body,lease_id:replacement.data.lease_id});assert.equal((await call(affinityObject,'/inspect')).data.count,0);
+   await mf.unsafeEvictDurableObject('lease-runtime','LeaseTestDirectory',{name:affinityObject});
+  }
+  report.checks.push('sticky CCF assignment across channels/formats and TS close gaps survives DO eviction without reserving idle capacity or accepting delayed old cleanup');
   const totalsObject='summary-pages',totalsAccount='summary-fixture';
   await call(totalsObject,'/seed',{count:201,accounts:70,resellerAccountId:totalsAccount});
   const summaryStarts=[customer(0),{...customer(0),sid:'second-device-0',request_id:'second-request-0'},customer(100),customer(200)];

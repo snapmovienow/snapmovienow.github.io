@@ -1,4 +1,5 @@
 import {recordProviderHealth,rankProviderCandidates} from './provider-health.mjs';
+import {affinityGroup,providerAffinity,rememberProvider,forgetProvider,recentlyValidated,pruneAffinities} from './provider-affinity.mjs';
 import {exclusiveCatalogRoute,exclusiveSnapshot,selectExclusive,visibleExclusive} from './exclusive-catalog.mjs';
 import {cleanConnectionClient,recordConnectionLimit,updateConnectionQuality,closeResellerConnection} from './connection-monitor.mjs';
 import {resellerPresence,resellerPlaybackSummary,resellerLiveConnections,recordCustomerActivity} from './reseller-presence.mjs';
@@ -147,11 +148,11 @@ export async function accountsFetch(state,env,req){
    old.cancelled[b.request_id]=Date.now()+120000;
    if(old.request_id===b.request_id)old.request_id=null;
    if(supersedes){old.revision=b.revision;old.request_id=null}
-   await tx.put(key,old);const local=leases.in(tx);for(const [id,l]of await local.active({sid:b.sid}))if(l.request_id===b.request_id||(supersedes&&l.request_id===previous))await local.remove(id);return answer({ok:true});
+   const local=leases.in(tx);for(const [id,l]of await local.active({sid:b.sid}))if(l.request_id===b.request_id||(supersedes&&l.request_id===previous)){if(l.request_id===previous)rememberProvider(old,l);await local.remove(id);}await tx.put(key,pruneAffinities(old));return answer({ok:true});
   }
   if(old.cancelled[b.request_id]||(Number.isSafeInteger(b.revision)&&b.revision<=old.revision&&old.request_id!==b.request_id))return answer({error:'playback_superseded'},410);
   old.request_id=b.request_id;old.revision=Number.isSafeInteger(b.revision)?b.revision:old.revision+1;
-  await tx.put(key,old);return answer({ok:true});
+  await tx.put(key,pruneAffinities(old));return answer({ok:true});
  });
  if(p==='/exclusive-acquire')return store.transaction(async tx=>{
   if(!b.request_id||(await tx.get('playback:'+b.sid))?.request_id!==b.request_id)return answer({error:'playback_superseded'},410);
@@ -163,20 +164,29 @@ export async function accountsFetch(state,env,req){
   const id=crypto.randomUUID();await local.put(id,{sid:b.sid,uid:b.uid,username:user.username,version:user.version,request_id:b.request_id,exclusiveId:b.exclusiveId,exclusiveParentId:found.row.id,playbackRevision:b.playbackRevision,mediaKey,activity:{title:found.media===found.row?found.row.name:found.row.name+' · '+found.media.title},client:cleanConnectionClient(b.client),startedAt:Date.now(),until:Date.now()+90000,...(b.xtream?{xtream:true}:{})});await recordCustomerActivity(tx,user.id,Date.now(),b.client);return answer({lease_id:id});
  });
  if(p==='/provider-result')return store.transaction(async tx=>{
-  const lease=await leases.in(tx).get(b.lease_id);
+  const local=leases.in(tx),lease=await local.get(b.lease_id);
   if(!lease||lease.sid!==b.sid||lease.request_id!==b.request_id||lease.provider_id!==b.provider_id||!String(lease.mediaKey||'').startsWith('live|')||!['signal','validation'].includes(b.stage)||typeof b.ok!=='boolean')return answer({error:'health_scope'},403);
+  const key='playback:'+b.sid,state=await tx.get(key);
+  if(lease.until<=Date.now()||state?.request_id!==b.request_id)return answer({error:'playback_superseded'},410);
+  if(!b.ok){lease.providerFailed=true;forgetProvider(state,lease);}
+  else if(b.stage==='validation'){lease.validatedAt=Date.now();rememberProvider(state,lease);}
+  await local.put(b.lease_id,lease);await tx.put(key,pruneAffinities(state));
   const health=recordProviderHealth(await tx.get('provider-health'),lease.provider_id,lease.mediaKey,b.ok,b.elapsedMs,b.stage);
   await tx.put('provider-health',health);return answer({ok:true});
  });
  if(p==='/acquire')return store.transaction(async tx=>{
-  if(b.request_id&&(await tx.get('playback:'+b.sid))?.request_id!==b.request_id)return answer({error:'playback_superseded'},410);
+  const playbackKey='playback:'+b.sid,playback=await tx.get(playbackKey)||{revision:0,cancelled:{}};
+  if(b.request_id&&playback.request_id!==b.request_id)return answer({error:'playback_superseded'},410);
   const provider=await tx.get('provider');if(!provider)return answer({error:'provider_not_configured'},503);
   const u=await tx.get('user:'+normal(b.username));if(!alive(u)||u.id!==b.uid||u.version!==b.version)return answer({error:'account_inactive'},401);
   const local=leases.in(tx);await local.prune();
   const sessionLeases=await local.active({sid:b.sid});
-  if(b.request_id){const previous=[...sessionLeases].find(([,l])=>l.mediaKey===b.mediaKey&&!(b.exclude||[]).includes(l.provider_id));if(previous){const [id,l]=previous;l.until=Date.now()+90000;if(l.request_id!==b.request_id){delete l.quality;delete l.qualityReport;delete l.qualityUpdatedAt;}l.request_id=b.request_id;l.client=cleanConnectionClient(b.client);const activity=cleanPlaybackActivity(b.activity,String(b.mediaKey||'').split('|')[0]);if(activity)l.activity=activity;await local.put(id,l);await recordCustomerActivity(tx,u.id,Date.now(),b.client);const pool=await tx.get('pool'),line=pool?.lines?.find(x=>x.id===l.provider_id);return answer({lease_id:id,provider_id:l.provider_id,encrypted:line?.encrypted,maxConnections:line?.maxConnections,reused:true,request_id:b.request_id})}}
-  await local.removeFor({sid:b.sid});
-  if(b.xtream||u.resellerBridge){const used=await local.count({uid:b.uid});if(used>=3){await recordConnectionLimit(tx,u,b,used);return answer({error:'user_connection_limit'},409);}}
+  const owned=[...sessionLeases].filter(([,l])=>l.uid===b.uid&&l.version===b.version&&!l.providerFailed);
+  // Preserve the active assignment even when it predates this deployment. A
+  // different channel/format is a new lease, not a new CCF account or slot.
+  for(const [,l]of owned)rememberProvider(playback,l);
+  const group=String(b.server||String(b.mediaKey||'').split('|')[1]||'ccf'),hint=providerAffinity(playback,group,b);
+  if(b.xtream||u.resellerBridge){const used=await local.count({uid:b.uid})-[...sessionLeases.values()].filter(l=>l.uid===b.uid).length;if(used>=3){await local.removeFor({sid:b.sid});await recordConnectionLimit(tx,u,b,used);return answer({error:'user_connection_limit'},409);}}
   const activity=cleanPlaybackActivity(b.activity,String(b.mediaKey||'').split('|')[0]);
   const extra={startedAt:Date.now(),client:cleanConnectionClient(b.client),...(b.xtream?{xtream:true}:{}),...(b.request_id?{mediaKey:b.mediaKey,request_id:b.request_id}:{}),...(activity?{activity}:{})};
   if(provider.mode==='panel'){
@@ -184,18 +194,37 @@ export async function accountsFetch(state,env,req){
    // rather than deserializing all leases once for every provider candidate.
    const pool=await tx.get('pool');if(!pool||pool.syncedAt<Date.now()-12*3600000)return answer({error:'panel_unavailable'},503);
    const counts=await local.providerCounts();
-   const candidates=pool.lines.filter(p=>(!b.server||(p.server||'ccf')===b.server)&&!(b.exclude||[]).includes(p.id)).map(p=>({...p,occupied:p.external+(counts.get(String(p.id))||0)})).filter(p=>p.occupied<p.maxConnections).sort((a,b)=>a.occupied/a.maxConnections-b.occupied/b.maxConnections);
+   // Project replacement of this viewer only. Keep a same-media lease ID and
+   // its history intact; all other viewers still count towards capacity.
+   for(const l of sessionLeases.values()){const key=String(l.provider_id||'');counts.set(key,Math.max(0,(counts.get(key)||0)-1));}
+   const candidates=pool.lines.filter(p=>(p.server||'ccf')===group&&!(b.exclude||[]).includes(p.id)).map(p=>({...p,occupied:p.external+(counts.get(String(p.id))||0)})).filter(p=>p.occupied<p.maxConnections).sort((a,b)=>a.occupied/a.maxConnections-b.occupied/b.maxConnections);
    const live=String(b.mediaKey||'').startsWith('live|'),ranked=live?rankProviderCandidates(candidates,await tx.get('provider-health'),b.mediaKey):candidates;
-   const selected=ranked[0];if(!selected)return answer({error:candidates.length?'provider_unavailable':'ccf_capacity'},candidates.length?503:409);
-   const id=crypto.randomUUID();await local.put(id,{sid:b.sid,uid:b.uid,username:b.username,version:b.version,provider_id:selected.id,until:Date.now()+90000,...extra});await recordCustomerActivity(tx,u.id,Date.now(),b.client);return answer({lease_id:id,provider_id:selected.id,encrypted:selected.encrypted,maxConnections:selected.maxConnections});
+   const preferred=hint&&candidates.find(p=>p.id===hint.provider_id),selected=preferred||ranked[0];if(!selected)return answer({error:candidates.length?'provider_unavailable':'ccf_capacity'},candidates.length?503:409);
+   const previous=b.request_id&&owned.find(([,l])=>l.provider_id===selected.id&&affinityGroup(l)===group&&l.mediaKey===b.mediaKey),sameRequest=previous&&previous[1].request_id===b.request_id;
+   const id=previous?previous[0]:crypto.randomUUID(),validatedAt=preferred?hint.validatedAt:0;
+   for(const [oldId]of sessionLeases)if(oldId!==id)await local.remove(oldId,'channel_changed');
+   const lease={...(sameRequest?previous[1]:{}),sid:b.sid,uid:b.uid,username:b.username,version:b.version,provider_id:selected.id,providerServer:group,validatedAt,until:Date.now()+90000,...extra,startedAt:previous?previous[1].startedAt||extra.startedAt:extra.startedAt};
+   await local.put(id,lease);rememberProvider(playback,lease);await tx.put(playbackKey,playback);await recordCustomerActivity(tx,u.id,Date.now(),b.client);
+   return answer({lease_id:id,provider_id:selected.id,encrypted:selected.encrypted,maxConnections:selected.maxConnections,...(previous?{reused:true,request_id:b.request_id}:{}),...(preferred?{affinity:true,validatedRecently:recentlyValidated(hint)}:{})});
   }
+  await local.removeFor({sid:b.sid});
   const max=Math.min(provider.maxConnections,Math.max(1,Number(b.upstreamMax)||3));
   if(Math.max(await local.count(),Number(b.upstreamExternal)||0)>=max)return answer({error:'ccf_capacity',maxConnections:max},409);
   const id=crypto.randomUUID();await local.put(id,{sid:b.sid,uid:b.uid,username:b.username,version:b.version,until:Date.now()+90000,...extra});await recordCustomerActivity(tx,u.id,Date.now(),b.client);return answer({lease_id:id});
  });
  if(p==='/lease-check'||p==='/heartbeat'||p==='/release')return store.transaction(async tx=>{
   const local=leases.in(tx),l=await local.get(b.lease_id);if(!l||l.sid!==b.sid)return answer({error:'playback_expired'},410);
-  if(p==='/release'){if(b.request_id&&l.request_id!==b.request_id)return answer({ok:true,reused:true});await local.remove(b.lease_id,'player_closed');return answer({ok:true})}
+  if(p==='/release'){
+   if(b.request_id&&l.request_id!==b.request_id)return answer({ok:true,reused:true});
+   const key='playback:'+b.sid,state=await tx.get(key);
+   // A delayed close/failure from the previous channel cannot replace the
+   // newer binding. A failed source must never be restored by body cleanup.
+   if(state&&(!state.request_id||state.request_id===l.request_id)){
+    if(b.reason==='upstream_failed'||l.providerFailed)forgetProvider(state,l);else rememberProvider(state,l);
+    await tx.put(key,pruneAffinities(state));
+   }
+   await local.remove(b.lease_id,'player_closed');return answer({ok:true});
+  }
   if(b.request_id&&l.request_id!==b.request_id)return answer({error:'playback_superseded'},410);
   if(b.request_id&&(await tx.get('playback:'+b.sid))?.request_id!==b.request_id)return answer({error:'playback_superseded'},410);
   const u=await tx.get('user:'+normal(l.username));if(l.until<=Date.now()||!alive(u)||u.id!==l.uid||u.version!==l.version){await local.remove(b.lease_id);return answer({error:'playback_expired'},410)}
