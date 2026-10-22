@@ -43,6 +43,12 @@ let test = fixture([response([]), response([{...approved, status: 'in_progress',
 assert.equal((await waitForQuality(test.options)).id, approved.id);
 assert.equal(test.calls(), 3);
 
+// A valid Quality run may complete after the old 12-minute cutoff.
+test = fixture([...Array.from({length:13},()=>response([{...approved,status:'in_progress',conclusion:null}])),response([approved])]);
+delete test.options.deadlineMs;
+assert.equal((await waitForQuality(test.options)).id,approved.id);
+assert.equal(test.requests.at(-1).at,13*60_000);
+
 // Stale success must not hide a failed rerun or a newer failed run.
 for (const failed of [{...approved, id: 21, conclusion: 'failure'}, {...approved, run_attempt: 2, conclusion: 'failure'}]) {
   test = fixture([response([approved, failed])]);

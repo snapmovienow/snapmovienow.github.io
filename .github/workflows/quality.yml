@@ -22,9 +22,9 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             cloudflare-worker/package-lock.json
-      - run: npm ci
+      - run: npm ci --fetch-timeout=30000
       - name: Install from Cloudflare deployment root
-        run: npm ci
+        run: npm ci --fetch-timeout=30000
         working-directory: cloudflare-worker
       - run: node scripts/build-pages.mjs
       - run: npm test

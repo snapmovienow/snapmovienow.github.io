@@ -6,7 +6,8 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const repository = 'snapmovienow/snapmovienow.github.io';
 const workflow = '.github/workflows/quality.yml';
 const pollMs = 60_000;
-const timeoutMs = 12 * 60_000;
+// Quality may use its full 15-minute budget, plus runner startup time.
+const timeoutMs = 17 * 60_000;
 
 function seconds(value) {
   if (typeof value !== 'string' || !/^\d+(?:\.\d+)?$/.test(value)) return 0;
@@ -125,7 +126,7 @@ export async function waitForQuality({sha, branch, fetchImpl = fetch,
     if (delay >= deadline - now()) break;
     await wait(delay);
   }
-  throw new Error('Quality did not approve this commit within 12 minutes; deployment blocked.');
+  throw new Error(`Quality did not approve this commit within ${Math.ceil(deadlineMs/60_000)} minutes; deployment blocked.`);
 }
 
 function git(...args) {
