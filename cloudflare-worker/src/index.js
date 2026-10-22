@@ -234,7 +234,7 @@ if(matchesOwnerPortal(req))return ownerPortalRequest(req,env);if(matchesReseller
 if(req.method==='POST'&&req.headers.get('Cookie')?.includes('__Host-smn_')&&!canUseCookie(req,env))return json({error:'origin_not_allowed'},403);
 if(req.headers.get('Origin')&&!allowedOrigins(env).has(req.headers.get('Origin'))&&req.method==='POST')return json({error:'origin_not_allowed'},403);
 if(req.method==="OPTIONS")return new Response(null,{status:204,headers:cors});
-if(u.pathname==="/health")return json({ok:true,service:"snapmovienow-edge",version:SERVICE_VERSION,catalog_maintenance:await catalogMaintenanceStatus(env,directory),capabilities:['xtream','admin-recovery-renewal','backup-integrity','native-profile','metric-retry','admin-credentials-rotation','isolated-backup-recovery','xtream-series-diagnostic','operational-alerts','rotating-media-origins','admin-user-activity','admin-user-comments','reseller-bridge-v1','private-media-diagnostics-v1','live-startup-budget-v1']});
+if(u.pathname==="/health")return json({ok:true,service:"snapmovienow-edge",version:SERVICE_VERSION,catalog_maintenance:await catalogMaintenanceStatus(env,directory),capabilities:['xtream','admin-recovery-renewal','backup-integrity','native-profile','metric-retry','admin-credentials-rotation','isolated-backup-recovery','xtream-series-diagnostic','operational-alerts','rotating-media-origins','admin-user-activity','admin-user-comments','reseller-bridge-v1','private-media-diagnostics-v1','live-startup-budget-v1','native-playback-release-v1']});
 if(u.pathname==='/reseller-bridge')return resellerBridgeRequest(req,env,ctx);
 if(u.pathname==='/exclusive-media'&&['GET','HEAD'].includes(req.method)){try{return await exclusives.media(req,env,ctx)}catch(e){return json({error:e.message},e.status||502)}}
 if(/^\/exclusive-cover\/[a-f0-9]{64}$/.test(u.pathname)&&['GET','HEAD'].includes(req.method)){const image=await exclusives.cover(env,u.pathname.split('/').at(-1));return req.method==='HEAD'?new Response(null,{status:image.status,headers:image.headers}):image;}
@@ -274,7 +274,17 @@ if(required&&!permissions[required])return json({error:'content_disabled'},403);
 
 if(op==="playback_cancel"){if(!session.managed)return json({ok:true});const r=await directory(env,"/playback-cancel",{sid:session.sid,request_id:b.request_id,revision:b.revision});return json(await r.json(),r.status)}
 if(op==="playback_heartbeat"){if(!session.managed||!b.lease_id)return json({ok:true});const r=await directory(env,"/heartbeat",{sid:session.sid,lease_id:b.lease_id,request_id:b.request_id});return json(await r.json(),r.status)}
-if(op==="playback_release"){if(!session.managed||!b.lease_id)return json({ok:true});const r=await directory(env,"/release",{sid:session.sid,lease_id:b.lease_id,request_id:b.request_id});return json(await r.json(),r.status)}
+if(op==="playback_release"){
+ if(!session.managed)return json({ok:true});
+ // A native receipt releases only its exact account/version/request. Never
+ // accept a caller-supplied Xtream sid, including from a different account.
+ if(b.quality_ticket!==undefined){
+  const owned=await playbackQualityContext(session,{quality_ticket:b.quality_ticket,observation:{ageMs:0}},value=>unticket(env,value));
+  if(!owned)return json({error:'invalid_playback_receipt'},403);
+  const r=await directory(env,'/release',owned);return r.status===410?json({ok:true,expired:true}):json(await r.json(),r.status);
+ }
+ if(!b.lease_id)return json({ok:true});const r=await directory(env,"/release",{sid:session.sid,lease_id:b.lease_id,request_id:b.request_id});return json(await r.json(),r.status);
+}
 if(op==="logout"){if(session.managed)await directory(env,"/customer-logout",{uid:session.uid,username:session.username,connection:requestConnectionClient(req)}).catch(()=>{});await directory(env,"/release-session",{sid:session.sid});await sessionCall(env,session.sid,"/logout");return withSessionCookie(json({ok:true}),req,env,"session","",0)}
 b.username=session.username;b.password=session.password;
 if(op==='gnula_catalog')return json((await exclusives.catalog(env,permissions,u.origin,{legacy:!session.managed})).items);

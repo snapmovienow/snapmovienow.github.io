@@ -1,8 +1,8 @@
 export const MONITOR_REQUEST_HEADER='X-SNAP-Playback-Monitor';
 export const MONITOR_RESPONSE_HEADER='X-SNAP-Playback-Quality';
 const uuid=/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
-// A new, random value per player prevents identical devices behind one router
-// from sharing an Xtream playback session. It is not a device identifier.
+// A random value per foreground viewer separates identical devices behind one
+// router. Keep it stable across channel/decoder changes within that viewer.
 export function playbackMonitorClient(request){const value=request.headers.get(MONITOR_REQUEST_HEADER);return uuid.test(value||'')?value.toLowerCase():null;}
 export async function attachPlaybackQuality(response,request,session,lease,encode){
  if(!response.ok||!playbackMonitorClient(request))return response;

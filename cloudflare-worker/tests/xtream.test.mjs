@@ -157,6 +157,12 @@ for(const nonce of monitorNonces){
  assert.equal(response.status,200);monitorTickets.push(response.headers.get(monitorResponse));assert.match(monitorTickets.at(-1),/^[A-Za-z0-9_-]{40,4096}$/);await response.text();
 }
 let monitoredLeases=await leases();assert.equal(monitoredLeases.length,3);assert.equal(new Set(monitoredLeases.map(l=>l.sid)).size,3,'same IP and user agent must not merge independent native players');
+assert.equal((await media('live',channels[0].stream_id,'m3u8',90,{headers:{[monitorHeader]:crypto.randomUUID()}})).status,409,'a new viewer at the three-device limit is rejected');
+const originalViewer=monitoredLeases.find(l=>l.sid===monitoredLeases[0].sid);
+for(let i=0;i<8;i++){
+ const switched=await media('live',channels[i%2].stream_id,'m3u8',90,{headers:{[monitorHeader]:monitorNonces[0]}});
+ assert.equal(switched.status,200,'one stable viewer can change channels without needing a fourth slot');monitorTickets[0]=switched.headers.get(monitorResponse);await switched.text();assert.equal((await leases()).length,3);
+}
 const monitorAuth=await post({op:'auth',...customer});assert.equal(monitorAuth.status,200);
 const monitorMetric=(stallMs=0)=>({report_id:crypto.randomUUID(),platform:'android',type:'live',server:channels[0].smn_profile.server,quality:'1080',watchMs:10000,stallMs,stalls:stallMs?1:0,errors:0,decoded:300,dropped:0,bytes:300000,started:true,startupMs:500,attempted:true,failedStart:false});
 const reportQuality=(receipt,metric=monitorMetric(),access=monitorAuth.data.access_token,ageMs=0)=>post({op:'playback_metric',access_token:access,quality_ticket:receipt,metric,observation:{width:1920,height:1080,ageMs}});
@@ -176,6 +182,13 @@ const replacementMonitor=await media('live',channels[0].stream_id,'m3u8',90,{hea
 assert.notEqual(replacementTicket,monitorTickets[0]);assert.equal((await leases()).find(l=>l.sid===firstMonitored.sid).quality,undefined,'a replacement reservation clears the old quality');
 await reportQuality(monitorTickets[0],monitorMetric(9000));assert.equal((await leases()).find(l=>l.sid===firstMonitored.sid).quality,undefined,'delayed old receipt cannot mark its replacement as poor');
 assert.equal((await reportQuality(replacementTicket)).data.qualityHandled,true);assert.equal((await leases()).find(l=>l.sid===firstMonitored.sid).quality.level,'good');
+const releaseNative=(receipt,access=monitorAuth.data.access_token)=>post({op:'playback_release',access_token:access,quality_ticket:receipt,sid:'caller-controlled-ignored'});
+assert.equal((await releaseNative('A'.repeat(80))).status,403);
+assert.equal((await releaseNative(replacementTicket,foreignAuth.data.access_token)).status,403,'foreign accounts cannot release another viewer');
+assert.equal((await leases()).length,3);
+assert.equal((await releaseNative(monitorTickets[0])).status,200);assert.equal((await leases()).length,3,'a delayed close cannot remove a newer request that reused its lease');
+assert.equal((await releaseNative(replacementTicket)).status,200);assert.equal((await leases()).length,2,'only the exact closed viewer is released');
+assert.equal((await releaseNative(replacementTicket)).status,200);assert.equal((await leases()).length,2,'repeated close is idempotent');
 for(const lease of await leases())await objects.get('__smn_accounts_v1').fetch(new Request('https://private/accounts/release-session',{method:'POST',body:JSON.stringify({sid:lease.sid})}));
 assert.equal((await leases()).length,0);
 
