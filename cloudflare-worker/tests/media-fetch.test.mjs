@@ -4,22 +4,26 @@ import {fetchMedia, recoverMedia} from '../src/media-fetch.mjs';
 
 // A real local HTTP stream catches a total fetch deadline that a Response mock
 // would miss. No provider accounts or external requests are used.
+// CI may need more than 150 ms for Node's first local HTTP connection.
+// Keep the healthy body slower than the header budget, so a total-fetch
+// deadline still fails this regression without depending on a cold-start race.
+const headerBudget = 1500, healthyBodyDelay = headerBudget + 250;
 const server = createServer((req, res) => {
   if (req.url === '/headers-stall') return;
   res.writeHead(206, {'Content-Type':'video/mp2t','Content-Length':'6','Content-Range':'bytes 10-15/100','ETag':'"segment-v1"'});
   res.flushHeaders(); res.write('abc');
-  if (req.url === '/healthy') setTimeout(() => res.end('def'), 350);
+  if (req.url === '/healthy') setTimeout(() => res.end('def'), healthyBodyDelay);
 });
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const origin = 'http://127.0.0.1:'+server.address().port;
 try {
-  const healthy = await fetchMedia(origin+'/healthy', {}, 150, 1000);
+  const healthy = await fetchMedia(origin+'/healthy', {}, headerBudget, 5000);
   assert.equal(healthy.status, 206); assert.equal(healthy.headers.get('content-range'), 'bytes 10-15/100');
   assert.equal(await healthy.text(), 'abcdef', 'a healthy response survives beyond the header deadline');
   await assert.rejects(fetchMedia(origin+'/headers-stall', {}, 150, 1000), /media_timeout/);
-  const idle = await fetchMedia(origin+'/idle', {}, 150, 150);
+  const idle = await fetchMedia(origin+'/idle', {}, headerBudget, 150);
   await assert.rejects(idle.text(), /media_idle_timeout|aborted/i);
-  const canceled = await fetchMedia(origin+'/cancel', {}, 150, 1000);
+  const canceled = await fetchMedia(origin+'/cancel', {}, headerBudget, 1000);
   await canceled.body.cancel();
 } finally {server.closeAllConnections(); await new Promise(resolve => server.close(resolve))}
 
