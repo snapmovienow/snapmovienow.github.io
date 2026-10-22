@@ -7,7 +7,7 @@ final class Transport {
   try{byte[] bytes=body.toString().getBytes("UTF-8");c.setFixedLengthStreamingMode(bytes.length);try(OutputStream out=c.getOutputStream()){out.write(bytes);}int status=c.getResponseCode();InputStream stream=status>=200&&status<300?c.getInputStream():c.getErrorStream();ByteArrayOutputStream buffer=new ByteArrayOutputStream();if(stream!=null)try(InputStream in=stream){byte[] chunk=new byte[1024];int n;while((n=in.read(chunk))!=-1){buffer.write(chunk,0,n);if(buffer.size()>12000)throw new IOException("Respuesta demasiado grande");}}
    JSONObject result;try{result=new JSONObject(new String(buffer.toByteArray(),"UTF-8"));}catch(Exception e){throw new IOException("Servidor sin respuesta válida ("+status+")");}
    if(status==401){v.p.edit().putBoolean("paired",false).putBoolean("enabled",false).apply();throw new IOException("Teléfono desconectado: genera un nuevo código en el panel.");}
-   if(status<200||status>=300||!result.optBoolean("ok"))throw new Failure(status,result.optString("message","Entrega no confirmada ("+status+")"));return result;
+   if(status<200||status>=300||!result.optBoolean("ok"))throw new Failure(status,result.optString("message","Entrega no confirmada ("+status+")"));v.p.edit().putLong("last_contact",System.currentTimeMillis()).commit();return result;
   }finally{c.disconnect();}
  }
 }

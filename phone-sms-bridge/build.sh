@@ -23,6 +23,6 @@ PY
 if [ ! -f .signing/snap-sms-test.jks ]; then
  keytool -genkeypair -keystore .signing/snap-sms-test.jks -storepass android -keypass android -alias snap-sms-test -dname 'CN=SNAP SMS Puente Test, O=SNAPTVNOW' -keyalg RSA -keysize 2048 -validity 10000 -noprompt
 fi
-java -jar "$snap_sms_bt/lib/apksigner.jar" sign --ks .signing/snap-sms-test.jks --ks-pass pass:android --ks-key-alias snap-sms-test --out build/SNAP-SMS-Puente-0.1.0.apk build/aligned.apk
-java -jar "$snap_sms_bt/lib/apksigner.jar" verify --verbose build/SNAP-SMS-Puente-0.1.0.apk
-"$snap_sms_bt/aapt2" dump badging build/SNAP-SMS-Puente-0.1.0.apk | head -12
+java -jar "$snap_sms_bt/lib/apksigner.jar" sign --ks .signing/snap-sms-test.jks --ks-pass pass:android --ks-key-alias snap-sms-test --out build/SNAP-SMS-Puente-0.2.0.apk build/aligned.apk
+java -jar "$snap_sms_bt/lib/apksigner.jar" verify --verbose build/SNAP-SMS-Puente-0.2.0.apk
+"$snap_sms_bt/aapt2" dump badging build/SNAP-SMS-Puente-0.2.0.apk | head -12

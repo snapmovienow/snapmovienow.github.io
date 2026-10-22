@@ -1,0 +1,12 @@
+package com.snaptvnow.smspuente;
+import android.Manifest;import android.app.*;import android.content.*;import android.content.pm.PackageManager;import android.os.*;import org.json.*;
+final class Health {
+ static final String VERSION="0.2.0";
+ static boolean has(Context c,String p){return c.checkSelfPermission(p)==PackageManager.PERMISSION_GRANTED;}
+ static boolean restricted(Context c){return Build.VERSION.SDK_INT>=28&&((ActivityManager)c.getSystemService(Context.ACTIVITY_SERVICE)).isBackgroundRestricted();}
+ static boolean exempt(Context c){return ((PowerManager)c.getSystemService(Context.POWER_SERVICE)).isIgnoringBatteryOptimizations(c.getPackageName());}
+ static JSONObject report(Context c,Vault v)throws Exception{try(MessageStore s=new MessageStore(c)){return s.stats().put("enabled",v.enabled()).put("readSms",has(c,Manifest.permission.READ_SMS)).put("receiveSms",has(c,Manifest.permission.RECEIVE_SMS)).put("batteryRestricted",restricted(c)).put("batteryExempt",exempt(c)).put("notifications",((NotificationManager)c.getSystemService(Context.NOTIFICATION_SERVICE)).areNotificationsEnabled()).put("version",VERSION);}}
+ static void ping(Context c,Vault v)throws Exception{Transport.send(v,new JSONObject().put("action","ping").put("health",report(c,v)),false);}
+ static void alert(Context c,String message){NotificationManager manager=(NotificationManager)c.getSystemService(Context.NOTIFICATION_SERVICE);manager.createNotificationChannel(new NotificationChannel("sms_errors","Entregas de SMS pendientes",NotificationManager.IMPORTANCE_DEFAULT));if(Build.VERSION.SDK_INT>=33&&!has(c,Manifest.permission.POST_NOTIFICATIONS))return;Intent open=new Intent(c,MainActivity.class);PendingIntent pending=PendingIntent.getActivity(c,0,open,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);manager.notify(520,new Notification.Builder(c,"sms_errors").setSmallIcon(android.R.drawable.ic_dialog_email).setContentTitle("SNAP SMS Puente requiere atención").setContentText(message).setStyle(new Notification.BigTextStyle().bigText(message)).setContentIntent(pending).setAutoCancel(true).setVisibility(Notification.VISIBILITY_PRIVATE).build());}
+ static void updateAlert(Context c)throws Exception{try(MessageStore store=new MessageStore(c)){JSONObject s=store.stats();if(s.getInt("review")>0||s.getInt("pending")>0)alert(c,s.getInt("review")+" SMS requieren revisión y "+s.getInt("pending")+" están pendientes. Abre Mensajes y errores.");else ((NotificationManager)c.getSystemService(Context.NOTIFICATION_SERVICE)).cancel(520);}}
+}
