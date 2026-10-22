@@ -40,9 +40,13 @@ jobs:
           SMN_SAFETY_ONLY: '1'
       - name: Install browser and media tools
         run: |
+          # Use Ubuntu's official archive instead of the slow Azure package mirror.
+          if [ -f /etc/apt/apt-mirrors.txt ]; then
+            printf '%s\n' 'https://archive.ubuntu.com/ubuntu/' | sudo tee /etc/apt/apt-mirrors.txt >/dev/null
+          fi
           npx playwright install --with-deps chromium
           sudo apt-get update
-          sudo apt-get install -y ffmpeg
+          sudo apt-get install --no-install-recommends -y ffmpeg
       - name: Chromium audio regression
         run: npm run test:browser
         env:
