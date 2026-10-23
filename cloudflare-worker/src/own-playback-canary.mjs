@@ -9,7 +9,7 @@ function cleanSample(value,type){
 }
 // The configured account is an explicitly authorised owner test account. Every
 // run receives a new short-lived signed session; no customer session is reused.
-export function ownPlaybackCanaryAdapter({env,storage,directory,ownSession,ticket,sessionCall,request}){
+export function ownPlaybackCanaryAdapter({env,storage,directory,ownSession,ticket,sessionCall,request,diagnosticExclude=[],onDiagnosticTarget}){
  const allowed=String(env.PLAYBACK_CANARY_USERNAME||'').toLowerCase();
  const send=async(session,op,body,signal)=>{
   const r=await request(new Request(ORIGIN+'/',{method:'POST',headers:{'Content-Type':'application/json','User-Agent':'SNAPTVNOW-Own-Canary/1'},body:JSON.stringify({op,access_token:session.token,...body}),signal}));
@@ -22,18 +22,19 @@ export function ownPlaybackCanaryAdapter({env,storage,directory,ownSession,ticke
    if(signal.aborted)throw Error('canary_timeout');
    const session=await ownSession(env,{...user,expiresAt:Math.min(user.expiresAt||Infinity,Date.now()+60000)});
    session.canary=true; // Only this private adapter can mint this signed claim.
+   if(config.diagnostic===true)session.comparison=true;
    // Set the owned object before any additional await so late aborts can clean
    // it even when a session-info request stalls.
    try{session.token=await ticket(env,session);await send(session,'session_info',{},signal);return session}
    catch(error){await Promise.allSettled([directory(env,'/release-session',{sid:session.sid}),sessionCall(env,session.sid,'/logout')]);throw error}
   },
   async select(session,config,{signal}){
-   const key='canary-sample:'+config.type,cursorKey='canary-sample-cursor:'+config.type,queue=[],seen=new Set();
+   const prefix=config.transport==='ts'?'comparison':'canary',key=prefix+'-sample:'+config.type,cursorKey=prefix+'-sample-cursor:'+config.type,queue=[],seen=new Set();
    // A recently successful real playback is a better sample than the first
    // catalog row. This is an advisory target only: normal stream_token still
    // enforces this test account's permissions, capacity and media checks.
    try{const response=await directory(env,'/canary-sample',{username:allowed,type:config.type});if(response.ok){const data=await response.json(),sample=cleanSample(data.sample,config.type);if(sample)queue.push(sample)}else void response.body?.cancel().catch(()=>{})}catch{}
-   const cached=await storage.get(key);if(cached?.until>Date.now()){const sample=cleanSample(cached,config.type);if(sample)queue.push(sample)}
+   const cached=await storage.get(key);if(cached?.until>Date.now()){const sample=cleanSample(cached,config.type);if(sample){if(session.comparison)queue.unshift(sample);else queue.push(sample)}}
    let rows,cursor=await storage.get(cursorKey),lastError=failure(404);cursor=Number.isSafeInteger(cursor)&&cursor>=0?cursor:0;
    const nextCatalogSample=async()=>{
     if(rows===undefined){const data=await send(session,config.type==='series'?'series':config.type==='movie'?'vod':'live',{},signal);rows=Array.isArray(data)?data.filter(row=>numeric(config.type==='series'?row.series_id:row.stream_id)&&!isAdult(row)):[]}
@@ -51,8 +52,10 @@ export function ownPlaybackCanaryAdapter({env,storage,directory,ownSession,ticke
    for(let scanned=0,attempts=0;scanned<6&&attempts<3;scanned++){
     if(signal.aborted)throw Error('canary_timeout');let sample;
     try{sample=queue.length?queue.shift():await nextCatalogSample()}catch(error){lastError=error;if(![400,403,404].includes(error.status))throw error;continue}
-    if(!sample)continue;const identity=sample.type+'|'+sample.server+'|'+sample.id+'|'+sample.ext;if(seen.has(identity))continue;seen.add(identity);attempts++;
-    try{const prepared=await send(session,'stream_token',{...sample,request_id:crypto.randomUUID(),revision:attempts},signal);await storage.put(key,{...sample,until:Date.now()+3600000});return {...prepared,type:sample.type}}
+    if(!sample)continue;if(config.transport==='ts'&&sample.type==='live')sample={...sample,ext:'ts'};const identity=sample.type+'|'+sample.server+'|'+sample.id+'|'+sample.ext;if(seen.has(identity))continue;seen.add(identity);attempts++;
+    try{const comparison=session.comparison===true&&config.transport==='ts',body={...sample,request_id:crypto.randomUUID(),revision:comparison?100+attempts*2:attempts,...(comparison&&diagnosticExclude.length?{diagnosticExclude}:{})};let prepared;
+     try{prepared=await send(session,'stream_token',body,signal)}catch(error){if(!comparison||!diagnosticExclude.length||error.status!==409)throw error;prepared=await send(session,'stream_token',{...body,request_id:crypto.randomUUID(),revision:body.revision+1,diagnosticExclude:[]},signal)}
+     if(comparison&&onDiagnosticTarget)await onDiagnosticTarget(session,prepared);await storage.put(key,{...sample,until:Date.now()+3600000});return {...prepared,type:sample.type}}
     catch(error){lastError=error;await storage.delete(key);if(![400,403,404].includes(error.status))throw error}
    }
    throw lastError;

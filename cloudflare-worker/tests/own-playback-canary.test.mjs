@@ -21,8 +21,8 @@ class Store{constructor(){this.data=new Map();this.queue=Promise.resolve()}async
  assert.ok(prepared.every(b=>b.request_id&&Number.isInteger(b.revision)));assert.equal(session.sid,'dedicated-canary-session');
  assert.ok(!JSON.stringify(selected).includes(session.token),'target does not expose the normal account token');
 }
-const objects=new Map(),env={ENVIRONMENT:'production',PLAYBACK_CANARY_USERNAME:'testowner',TICKET_SECRET:'test-canary-secret-only',ADMIN_SETUP_SECRET:'test-setup-secret-long-enough-1234567890'};
-env.PLAYBACK_SESSIONS={idFromName:x=>x,get(id){if(!objects.has(id))objects.set(id,new PlaybackSession({storage:new Store(),waitUntil:p=>void p.catch(()=>{})},env));return {fetch:(url,opts)=>objects.get(id).fetch(new Request(url,opts))}}};
+const objects=new Map(),env={ENVIRONMENT:'production',PLAYBACK_CANARY_USERNAME:'testowner',TICKET_SECRET:'test-canary-secret-only',ADMIN_SETUP_SECRET:'test-setup-secret-long-enough-1234567890'};let relayFault=false;
+env.PLAYBACK_SESSIONS={idFromName:x=>x,get(id){if(!objects.has(id))objects.set(id,new PlaybackSession({storage:new Store(),waitUntil:p=>void p.catch(()=>{})},env));return {fetch:(url,opts)=>relayFault&&id.startsWith('__smn_media_v1:')?Response.json({error:'stream_unavailable'},{status:502,headers:{'x-smn-canary-failure':'invocation_context'}}):objects.get(id).fetch(new Request(url,opts))}}};
 const originalFetch=globalThis.fetch;let blocked=false;
 const video=new Uint8Array(188);video.set([0x47,0x40,0,0x10]);
 globalThis.fetch=async(url,opts={})=>{const u=new URL(url),action=u.searchParams.get('action');
@@ -52,7 +52,11 @@ try{
  let result=await probe('testowner');assert.equal(result.status,200);assert.equal(result.data.ok,true,JSON.stringify(result.data));assert.equal(result.data.status,'healthy');assert.ok(result.data.bytes>0);assert.ok(!JSON.stringify(result.data).includes('testowner'));assert.ok(!JSON.stringify(result.data).includes('source-password'));
  assert.deepEqual([...(await leases.active()).values()].map(v=>v.sid),before.map(v=>v.sid),'only the dedicated canary session is released');
  for(const object of objects.values())if((await object.state.storage.get('identity'))?.username==='testowner')assert.fail('canary session must be deleted after completion');
+ let comparison=await objects.get('__smn_canary_v1').state.storage.get('owner-comparison-20261023-v1');assert.equal(comparison.results[0].verdict,'not_reproduced');
+ relayFault=true;await probe('testowner');relayFault=false;comparison=await objects.get('__smn_canary_v1').state.storage.get('owner-comparison-20261023-v1');assert.equal(comparison.results[0].verdict,'gateway_path');assert.equal(comparison.results[0].origin.ok,true);assert.equal(comparison.results[0].relay.reason,'invocation_context');assert.equal(await leases.count(),1);
  blocked=true;result=await probe('testowner');assert.equal(result.data.ok,false);assert.equal(await leases.count(),1,'source failure cannot leak probe reservations or remove the customer');
+ assert.equal((await objects.get('__smn_canary_v1').state.storage.get('owner-comparison-20261023-v1')).attempts,2,'matched comparisons stop after two completed pairs');
+ const publicHealth=await(await worker.fetch(new Request(origin+'/health'),env,ctx)).json();assert.equal(publicHealth.playback_comparison.attempts,2);assert.ok(!/source-password|testowner|provider_id|https/.test(JSON.stringify(publicHealth.playback_comparison)),'only redacted comparison outcomes are public');
  assert.equal((await call({username:'testowner',type:'live'},'/canary-run')).status,403,'private adapter is not a public route');
  await Promise.all(pending);console.log('PASS: recent successful sample selection, bounded durable rotation, signed TS playback and permission/capacity checks; own-session cleanup and customer isolation on success and failure.');
 }finally{globalThis.fetch=originalFetch}

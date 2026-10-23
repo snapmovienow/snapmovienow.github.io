@@ -11,7 +11,7 @@ export async function prepareWebPlayback(body,session,requestUrl,env,ctx,deps){
   if(!begun.ok)return deps.json(await begun.json(),begun.status);
  }
  const startup=session.managed?playbackStartup(type):null;if(startup)startup.trace=deps.trace;
- const excluded=[],attempts=type==='live'&&session.managed?3:1;
+ const excluded=session.canary&&session.comparison&&Array.isArray(body.diagnosticExclude)?[...new Set(body.diagnosticExclude.filter(x=>typeof x==='string'&&x.length<=160))].slice(0,4):[],attempts=type==='live'&&session.managed?3:1;
  for(let attempt=0;attempt<attempts&&(attempt===0||!startup||startup.available);attempt++){
   let credentials=session,lease_id,provider_id,allocation;
   if(session.managed){
@@ -20,7 +20,7 @@ export async function prepareWebPlayback(body,session,requestUrl,env,ctx,deps){
    if(!allocation.r.ok)return deps.json(await allocation.r.json(),allocation.r.status);
    credentials=allocation.credentials;provider_id=allocation.provider_id;lease_id=(await allocation.r.json()).lease_id;allocation.lease_id=lease_id;
   }
-  const data={sid:session.sid,username:credentials.username,password:credentials.password,origin:credentials.origin||deps.origin,lease_id,provider_id,request_id,type,id:String(body.id),ext,exp:session.exp};
+  const data={sid:session.sid,username:credentials.username,password:credentials.password,origin:credentials.origin||deps.origin,lease_id,provider_id,request_id,type,id:String(body.id),ext,exp:session.exp,...(session.canary?{canary:true,...(session.comparison?{comparison:true}:{})}:{})};
   const url=new URL(requestUrl).origin+'/stream?t='+await deps.ticket(env,data);
   if(type==='live'&&ext==='m3u8'){
    const signalAt=Date.now(),mediaSession={...session,request_id};

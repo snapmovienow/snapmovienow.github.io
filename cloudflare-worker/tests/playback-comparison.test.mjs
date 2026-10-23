@@ -1,0 +1,25 @@
+import assert from 'node:assert/strict';
+import {measureComparison,comparisonVerdict,comparisonError,compareOwnPlayback} from '../src/playback-comparison.mjs';
+import {fetchControlMediaIP} from '../src/playback-control-ip.mjs';
+import {CCF_MEDIA_ORIGIN} from '../src/ip-media.mjs';
+const packet=new Uint8Array(188);packet.set([0x47,0x40,0,0x10]);
+const good=()=>new Response(packet,{headers:{'content-type':'video/mp2t'}});
+let cancelled=false;const origin=await measureComparison(async()=>new Response(new ReadableStream({start(c){c.enqueue(packet)},cancel(){cancelled=true}})));assert.equal(origin.ok,true);assert.equal(cancelled,true);
+const ours=await measureComparison(async()=>new Response(null,{status:502,headers:{'x-smn-canary-failure':'invocation_context'}}),{trustedRelay:true});assert.equal(comparisonVerdict(origin,ours),'gateway_path');assert.equal(ours.reason,'invocation_context');
+const unavailable=await measureComparison(async()=>new Response('upstream unavailable',{status:503}));assert.equal(comparisonVerdict(unavailable,ours),'origin_http_error');
+const timeout=await measureComparison(()=>new Promise(()=>{}),{timeoutMs:10});assert.equal(timeout.reason,'timeout');assert.equal(comparisonVerdict(timeout,timeout),'inconclusive','two timeouts cannot prove which network endpoint is responsible');
+assert.equal((await measureComparison(async()=>new Response('<html>not a video</html>'))).reason,'invalid_media');
+assert.equal((await measureComparison(async()=>new Response(null,{status:410}))).reason,'preempted');assert.equal(comparisonError(Error('Cannot perform I/O on behalf of a different request')),'invocation_context');
+assert.equal(comparisonError(Error('https://private.example/secret PASSWORD')),'internal_error');
+const session={sid:'private-session'},target={url:'https://private.example/secret'},events=[];
+const adapter={authenticate:async()=>session,select:async s=>{assert.equal(s,session);return target},open:async(s,t)=>{assert.equal(s,session);assert.equal(t,target);events.push('relay');return new Response(null,{status:502})},release:async s=>{assert.equal(s,session);events.push('released')}};
+const compared=await compareOwnPlayback(adapter,async(s,t)=>{assert.equal(s,session);assert.equal(t,target);events.push('origin');return good()},{username:'configured-owner'});
+assert.equal(compared.verdict,'gateway_path');assert.deepEqual(events,['origin','relay','released']);assert.ok(!/private-session|secret|configured-owner|https/.test(JSON.stringify(compared)));
+function socket(raw,split=1,holdOpen=false){const bytes=typeof raw==='string'?new TextEncoder().encode(raw):raw;let at=0,closed=false;return {connect:()=>({opened:Promise.resolve(),closed:Promise.resolve(),readable:new ReadableStream({pull(c){if(at>=bytes.length){if(holdOpen)return new Promise(()=>{});c.close()}else{c.enqueue(bytes.slice(at,at+split));at+=split}}}),writable:new WritableStream(),close:async()=>{closed=true}}),closed:()=>closed}}
+const url='http://192.101.68.144/live/fixture/fixture/1.ts',h=new Headers();
+let transport=socket('HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello',1,true);
+let response=await fetchControlMediaIP(url,h,transport.connect,undefined,CCF_MEDIA_ORIGIN,Date.now()+100);assert.equal(await response.text(),'hello');assert.equal(transport.closed(),true);
+transport=socket('HTTP/1.0 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n');response=await fetchControlMediaIP(url,h,transport.connect,undefined,CCF_MEDIA_ORIGIN,Date.now()+100);assert.equal(await response.text(),'hello world');
+transport=socket('HTTP/1.0 503 Unavailable\r\nContent-Length: 0\r\n\r\n');assert.equal((await fetchControlMediaIP(url,h,transport.connect,undefined,CCF_MEDIA_ORIGIN,Date.now()+100)).status,503);assert.equal(transport.closed(),true);
+await assert.rejects(fetchControlMediaIP('http://127.0.0.1/',h,()=>{throw Error('must not connect')},undefined,CCF_MEDIA_ORIGIN),/invalid_media_origin/);
+console.log('PASS: matched sequential origin/relay controls, bounded reads and cleanup, no secret output, explicit inconclusive timeouts, independent fragmented/chunked/interim HTTP control and reserved-address rejection.');
