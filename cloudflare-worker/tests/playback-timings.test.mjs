@@ -20,4 +20,9 @@ assert.equal(startupTimingObservations([{...report.groups[0],stages:{total:{p95U
 assert.match(startupTimingObservations([{...report.groups[0],stages:{total:{p95UpperMs:20000},origin:{p95UpperMs:15000}}}])[0].detail,/respuesta del origen/);
 assert.equal(startupTimingObservations([{...report.groups[0],requests:1}]).length,0,'one sparse sample cannot declare an outage or recovery');
 assert.equal(startupTimingObservations([{...report.groups[0],failures:0}])[0].bad,false);
+let clock=0,resolveA,resolveB;const parallel=new PlaybackTimings(()=>clock).identify('movie','web');
+const one=parallel.run('catalog',()=>new Promise(r=>{resolveA=r}));clock=10;
+const two=parallel.run('catalog',()=>new Promise(r=>{resolveB=r}));clock=30;resolveA();await one;
+assert.equal(parallel.snapshot().stages.catalog.ms,30,'a pending parallel catalog is measured through the response time');
+clock=40;resolveB();await two;assert.deepEqual(parallel.snapshot().stages.catalog,{ms:40,count:2},'overlapping catalog calls count wall time once, not the sum of both durations');
 console.log('PASS: bounded per-stage startup timing, failure attribution, DO merge without duplication, redacted aggregate p95 and invalid metric rejection.');

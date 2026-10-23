@@ -16,7 +16,7 @@ globalThis.fetch=async target=>{
   if(first)return Response.json(mode==='empty'?{info:{name:'Test series'},episodes:{}}:mode==='malformed'?{error:'not_found'}:{user_info:{auth:0}});
   return Response.json(series);
 };
-const make=ctx=>createProviderCatalog(deps,{TICKET_SECRET:'test-secret',PLAYBACK_SESSIONS:{}},ctx);
+const make=(ctx,env={TICKET_SECRET:'test-secret',PLAYBACK_SESSIONS:{}})=>createProviderCatalog(deps,env,ctx);
 try{
   let catalog=make();
   assert.deepEqual(await catalog('get_series_info','test',{series_id:'220'}),series,'HTTP 200 authentication errors must fall back to another authorised account');
@@ -26,9 +26,9 @@ try{
     assert.deepEqual(await catalog('get_series_info','test',{series_id:'220'}),series,'a blank or malformed response must not hide episodes available on another account');
     assert.equal(calls,2);
   }
-  mode='authentication-error';const background=[];catalog=make({waitUntil:p=>background.push(p)});
+  mode='authentication-error';const background=[],ctx={waitUntil:p=>background.push(p)},detailEnv={TICKET_SECRET:'test-secret',PLAYBACK_SESSIONS:{}};catalog=make(ctx,detailEnv);
   await catalog('get_series_info','test',{series_id:'220'});
-  elapsed=31000;mode='outage';
+  elapsed=31000;mode='outage';catalog=make(ctx,detailEnv); // A new request shares the same scoped cache.
   await assert.rejects(()=>catalog('get_series_info','test',{series_id:'220'}),/upstream_unavailable/,'expired detail responses must not be served as a twelve-hour background snapshot');
   assert.equal(background.length,0);
   mode='empty';globalThis.fetch=async()=>Response.json({info:{name:'Actually empty'},episodes:{}});

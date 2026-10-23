@@ -17,7 +17,7 @@ class Store {
   transaction(fn) { const result = this.queue.then(() => fn(this)); this.queue = result.catch(() => {}); return result; }
 }
 
-const realNow = Date.now, realFetch = globalThis.fetch, realTimeout = AbortSignal.timeout;
+const realNow = Date.now, realFetch = globalThis.fetch, realTimeout = AbortSignal.timeout, realAny=AbortSignal.any;
 let now = realNow(), mode = 'healthy', charge = false;
 const signalBudgets = new WeakMap(), calls = {validations: [], signals: [], ranges: []};
 const objects = new Map(), pending = new Set();
@@ -41,7 +41,7 @@ const advance = (milliseconds, signal) => {
 const fixtureRow = id => ['<a>' + id + '</a>', '<a>fixture-source-' + id + '</a>', '<span class="table-trunc-copy-cell__text tooltip" title="fixture-password">hidden</span>', 'owner', '<i title="Active"></i>', '', '', '0', '3', '', '', '2099-01-01'];
 const report = {
   scope: 'Real worker HTTP routing with mock upstreams, virtual source time and in-memory serialized storage; excludes production provider, network, device decoding and Cloudflare CPU.',
-  policy: {liveDeadlineMs: 8000, vodDeadlineMs: 12000, maxSourceAttempts: 3, warmValidationRequests: 0, warmStarts: 12, concurrentViewers: 5},
+  policy: {liveDeadlineMs: 8000, vodDeadlineMs: 12000, maxSourceAttempts: 3, validationDeadlineMs:5000, warmValidationRequests: 0, warmStarts: 12, concurrentViewers: 5},
   scenarios: []
 };
 const clearCalls = () => { calls.validations.length = 0; calls.signals.length = 0; calls.ranges.length = 0; };
@@ -65,6 +65,7 @@ try {
     signalBudgets.set(signal, milliseconds);
     return signal;
   };
+  AbortSignal.any=signals=>{const signal=realAny.call(AbortSignal,signals),values=signals.map(s=>signalBudgets.get(s)).filter(Number.isFinite);if(values.length)signalBudgets.set(signal,Math.min(...values));return signal};
   globalThis.fetch = async (input, options = {}) => {
     const url = new URL(typeof input === 'string' || input instanceof URL ? input : input.url);
     if (url.pathname.endsWith('/login')) return new Response(options.method === 'POST' ? '<a href="dashboard">Welcome</a>' : '<input name="password">', {headers: {'set-cookie': 'PHPSESSID=local; path=/'}});
@@ -79,7 +80,7 @@ try {
       const source = url.searchParams.get('username');
       calls.validations.push(source);
       const unavailable = mode === 'unavailable' || mode === 'cold-failover' && source === 'fixture-source-1';
-      advance(unavailable ? 6000 : 200, options.signal);
+      advance(unavailable ? 6000 : 200, options.signal);if(mode==='coalesced')await new Promise(resolve=>setTimeout(resolve,20));
       return Response.json({user_info: {auth: 1, status: 'Active', max_connections: '3', active_cons: '0'}});
     }
     if (url.pathname.startsWith('/live/')) {
@@ -101,7 +102,7 @@ try {
   assert.equal((await post({action: 'setup', setupSecret: env.ADMIN_SETUP_SECRET, username: 'owner', password: 'local-owner-password'}, '/admin')).status, 200);
   owner = (await post({action: 'login', username: 'owner', password: 'local-owner-password'}, '/admin')).data.access_token;
   assert.equal((await admin('provider-save', {mode: 'panel', username: 'owner', password: 'local-panel-password'})).status, 200);
-  for (let index = 0; index < 8; index++) assert.equal((await admin('save', {create: true, username: 'local-viewer-' + index, password: 'local-viewer-password', status: 'active'})).status, 200);
+  for (let index = 0; index < 11; index++) assert.equal((await admin('save', {create: true, username: 'local-viewer-' + index, password: 'local-viewer-password', status: 'active'})).status, 200);
   const channels = await (await request('local-viewer-0', '/player_api.php?username={user}&password={password}&action=get_live_streams')).json();
   const movies = await (await request('local-viewer-0', '/player_api.php?username={user}&password={password}&action=get_vod_streams')).json();
   const series = await (await request('local-viewer-0', '/player_api.php?username={user}&password={password}&action=get_series')).json();
@@ -161,6 +162,15 @@ try {
   assert.equal(await leases.count(), 0, 'concurrent disconnects release every playback reservation');
   mark('concurrent-independent-viewers', started, {viewers: viewers.length, peakProviderOccupancy: Math.max(...countByProvider.values())});
 
+  // Three independent viewers compete for the same account's three local
+  // slots while its one status response is deliberately still in flight.
+  const inventory=await accounts.get('pool');await accounts.put('pool',{...inventory,lines:inventory.lines.slice(0,1)});await accounts.delete('provider-health');
+  mode='coalesced';clearCalls();started=now;
+  const joined=await Promise.all([8,9,10].map(index=>live('local-viewer-'+index,0)));
+  assert.ok(joined.every(value=>value.status===200));assert.equal(calls.validations.length,1,'concurrent viewers share an in-flight validation, never a playback reservation');
+  const joinedLeases=await active();assert.equal(new Set(joinedLeases.map(lease=>lease.uid)).size,3);assert.equal(joinedLeases.length,3);
+  mark('concurrent-validation-coalescing',started,{viewers:3});await Promise.all(joined.map(cancel));assert.equal(await leases.count(),0);await accounts.put('pool',inventory);
+
   mode = 'unavailable';
   for (const [type, deadline, id] of [['live', 8000, 0], ['movie', 12000, movies[0].stream_id], ['series', 12000, episodeId]]) {
     await accounts.delete('provider-health');
@@ -168,7 +178,7 @@ try {
     const result = type === 'live' ? await live('local-viewer-7', 0) : await request('local-viewer-7', '/' + type + '/{user}/{password}/' + id + '.mp4');
     assert.ok(result.status >= 500, 'unavailable sources must fail without claiming successful playback');
     assert.ok(calls.validations.length <= 3, 'nested allocation and playback retries cannot multiply source attempts');
-    assert.ok(now - started <= deadline, 'source validation stays inside one total startup deadline');
+    assert.ok(now - started <= Math.min(deadline,report.policy.validationDeadlineMs), 'source validation stays inside its five-second sub-budget and overall startup deadline');
     await cancel(result);
     assert.equal(await leases.count(), 0, 'unavailable source attempts cannot leak reservations');
     mark(type + '-all-sources-timeout', started, {deadlineMs: deadline, status: result.status});
@@ -182,5 +192,5 @@ try {
   console.log(JSON.stringify(report));
 } finally {
   await drain();
-  Date.now = realNow; globalThis.fetch = realFetch; AbortSignal.timeout = realTimeout;
+  Date.now = realNow; globalThis.fetch = realFetch; AbortSignal.timeout = realTimeout;AbortSignal.any=realAny;
 }

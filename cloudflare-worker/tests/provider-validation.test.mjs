@@ -1,0 +1,16 @@
+import assert from 'node:assert/strict';
+import {sharedProviderValidation,PROVIDER_VALIDATION_MS,VALIDATION_TOTAL_MS} from '../src/provider-validation.mjs';
+import {LiveStartup} from '../src/live-startup.mjs';
+const scope={};let reads=0,release,upstreamAborted=false;
+const read=signal=>{reads++;signal.addEventListener('abort',()=>{upstreamAborted=true});return new Promise(r=>{release=r})};
+const a=new AbortController(),b=new AbortController();
+const first=sharedProviderValidation(scope,'provider|credential-v1',read,{signal:a.signal,timeoutMs:100});
+const second=sharedProviderValidation(scope,'provider|credential-v1',read,{signal:b.signal,timeoutMs:100});
+await Promise.resolve();assert.equal(reads,1);a.abort();await assert.rejects(first,/playback_superseded/);assert.equal(upstreamAborted,false,'one viewer cannot cancel the other viewer status check');release({auth:1});assert.deepEqual(await second,{auth:1});
+await sharedProviderValidation(scope,'provider|credential-v1',async()=>{reads++;return {auth:0}},{timeoutMs:100});assert.equal(reads,2,'a completed result is never cached across later attempts');
+const separate=[];await Promise.all(['credential-v1','credential-v2'].map(key=>sharedProviderValidation(scope,key,async()=>{separate.push(key);return 1},{timeoutMs:100})));assert.equal(separate.length,2,'credential rotation never joins a previous credential check');
+let stopped=false;const cancel=new AbortController();const pending=sharedProviderValidation(scope,'cancel',signal=>new Promise((_,reject)=>signal.addEventListener('abort',()=>{stopped=true;reject(Error('aborted'))})),{signal:cancel.signal,timeoutMs:100});await Promise.resolve();cancel.abort();await assert.rejects(pending,/playback_superseded/);assert.equal(stopped,true);
+await assert.rejects(sharedProviderValidation(scope,'silent',()=>new Promise(()=>{}),{timeoutMs:15}),/provider_validation_timeout/);
+let now=0;const budget=new LiveStartup(null,()=>now,12000);assert.equal(budget.validationTimeout(),2500);budget.recordValidation(2500);now+=2500;assert.equal(budget.validationTimeout(),2500);budget.recordValidation(2500);now+=2500;assert.equal(budget.remaining(),7000);assert.equal(budget.validationRemaining(),0);assert.throws(()=>budget.validationTimeout(),/provider_validation_timeout/);
+assert.equal(PROVIDER_VALIDATION_MS,2500);assert.equal(VALIDATION_TOTAL_MS,5000);
+console.log('PASS: concurrent status checks coalesce without sharing reservations, cancellation isolation, credential rotation, no completed-result cache and a separate five-second validation budget.');

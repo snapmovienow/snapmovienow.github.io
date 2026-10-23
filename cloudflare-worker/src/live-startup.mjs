@@ -1,12 +1,16 @@
+import {PROVIDER_VALIDATION_MS,VALIDATION_TOTAL_MS} from './provider-validation.mjs';
 // One budget is shared by account validation and signal retries for one channel.
 export const LIVE_STARTUP_MS=8000;
 export const VOD_STARTUP_MS=12000;
 export class LiveStartup {
- constructor(signal,now=Date.now,budget=LIVE_STARTUP_MS){this.signal=signal;this.now=now;this.deadline=now()+budget;this.attempts=0;}
+ constructor(signal,now=Date.now,budget=LIVE_STARTUP_MS){this.signal=signal;this.now=now;this.deadline=now()+budget;this.attempts=0;this.validationMs=0;}
  remaining(){if(this.signal?.aborted)throw Error('playback_superseded');return Math.max(0,this.deadline-this.now());}
  timeout(cap){const left=this.remaining();if(!left)throw Error('live_startup_timeout');return Math.min(cap,left);}
  claim(){if(this.attempts>=3||!this.remaining())return false;this.attempts++;return true;}
  get available(){return this.attempts<3&&this.remaining()>0;}
+ validationRemaining(){return Math.max(0,Math.min(VALIDATION_TOTAL_MS-this.validationMs,this.remaining()));}
+ validationTimeout(){const left=this.validationRemaining();if(!left)throw Error('provider_validation_timeout');return Math.min(PROVIDER_VALIDATION_MS,left);}
+ recordValidation(ms){this.validationMs+=Math.max(0,ms);}
  prepare(request){const headers=new Headers(request.headers);headers.set('X-SMN-Prepare','1');headers.set('X-SMN-Startup-Deadline',String(this.deadline));return new Request(request,{headers});}
 }
 export function startupDeadline(request,now=Date.now(),maximum=LIVE_STARTUP_MS){

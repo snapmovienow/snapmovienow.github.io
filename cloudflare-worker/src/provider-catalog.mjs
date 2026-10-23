@@ -3,6 +3,7 @@ import {countSeriesEpisodes} from './xtream-series.mjs';
 import {selectCatalogDetail} from './catalog-detail-race.mjs';
 const catalogs = new WeakMap();
 const MAX_CACHE_BYTES = 16 * 1024 * 1024;
+export const CATALOG_FETCH_MS=8000;
 const encoder = new TextEncoder();
 export async function fingerprint(secret, value) {
   const key = await crypto.subtle.importKey('raw', encoder.encode(secret), {name:'HMAC',hash:'SHA-256'}, false, ['sign']);
@@ -36,8 +37,12 @@ export function validProviderReply(action,raw){
   return true;
 }
 
-export function createProviderCatalog(deps, env, ctx) {
+export function createProviderCatalog(deps, env, ctx,{timeoutMs=CATALOG_FETCH_MS,hedgeMs=750}={}) {
+  // One factory belongs to one incoming request. Sequential policy/detail
+  // lookups share a budget; cache hits do not start or consume that budget.
+  let deadline;
   return async (action, server, params={}, options={}) => {
+      const within=async promise=>{let timer;try{return await Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('catalog_timeout')),Math.max(1,deadline-Date.now()))})])}finally{clearTimeout(timer)}};
       const providers = await (await deps.directory(env,'/providers')).json();
       if (!providers.length) throw Error('provider_not_configured');
       // Changing or removing a connection changes this scope. A cached catalog
@@ -63,50 +68,33 @@ export function createProviderCatalog(deps, env, ctx) {
       if(options.cachedOnly)return saved?.data||null;
       if(!options.fresh&&saved&&saved.savedAt>Date.now()-freshFor)return saved.data;
       const refresh=async()=>{
-        const credentials=await deps.catalogCredentials(env,server,ctx);
+        const credentials=await within(deps.catalogCredentials(env,server,ctx));
         if(!credentials.length)throw Error('server_unavailable');
         const groups=new Map();for(const account of credentials){if(!groups.has(account.server))groups.set(account.server,[]);groups.get(account.server).push(account)}
         let fresh=0;const replies=await Promise.all([...groups].map(async([id,accounts])=>{
-          if(action==='get_series_info'||action==='get_vod_info'){
-            const safe=await selectCatalogDetail(accounts,async(account,signal)=>{
+          const safe=await selectCatalogDetail(accounts,async(account,signal)=>{
               const url=new URL(account.origin+'/player_api.php');
               url.searchParams.set('username',account.username);url.searchParams.set('password',account.password);url.searchParams.set('action',action);
               for(const [name,value]of Object.entries(params))url.searchParams.set(name,String(value));
-              const response=await fetch(url,{headers:{'User-Agent':'SnapMovieNow/1.0'},signal});
+              const requestSignal=AbortSignal.any([signal,AbortSignal.timeout(Math.max(1,Math.min(6000,timeoutMs*.75,deadline-Date.now())))]);
+              const response=await fetch(url,{headers:{'User-Agent':'SnapMovieNow/1.0'},signal:requestSignal});
               if(!response.ok){void response.body?.cancel();return null}
-              const raw=await response.json();if(!validProviderReply(action,raw))return null;
-              const data=publicMetadata(raw,account);return {data,empty:action==='get_series_info'&&!countSeriesEpisodes(data)};
-            });
-            if(safe!==null){fresh++;return safe}return null;
-          }
-          let emptySeries=null;
-          for(const account of accounts){
-            const url=new URL(account.origin+'/player_api.php');
-            url.searchParams.set('username',account.username);url.searchParams.set('password',account.password);url.searchParams.set('action',action);
-            for(const [name,value]of Object.entries(params))url.searchParams.set(name,String(value));
-            try{
-              const response=await fetch(url,{headers:{'User-Agent':'SnapMovieNow/1.0'},signal:AbortSignal.timeout(12000)});
-              if(!response.ok){await response.body?.cancel();continue}
               const raw=await response.json();
-              // Authentication/error objects are never mistaken for lists.
-              if(persist&&!Array.isArray(raw)||!validProviderReply(action,raw))continue;
-              const safe=publicMetadata(raw,account);
-              if(action==='get_series_info'&&!countSeriesEpisodes(safe)){emptySeries??=safe;continue}
-              fresh++;
-              return Array.isArray(safe)?safe.map(item=>({...item,_server:id})):safe;
-            }catch{}
-          }
-          if(emptySeries){fresh++;return emptySeries}
+              if(persist&&!Array.isArray(raw)||!validProviderReply(action,raw))return null;
+              const data=publicMetadata(raw,account),scoped=Array.isArray(data)?data.map(item=>({...item,_server:id})):data;
+              return {data:scoped,empty:Array.isArray(scoped)?!scoped.length:action==='get_series_info'&&!countSeriesEpisodes(scoped)};
+            },{hedgeMs,timeoutMs:Math.max(0,deadline-Date.now()),maxConcurrent:2});
+          if(safe!==null){fresh++;return safe}
           const retained=Array.isArray(saved?.data)?saved.data.filter(row=>row._server===id):null;
           return retained?.length?retained:null;
         }));
         const good=replies.filter(x=>x!==null);if(!good.length||!fresh)throw Error('upstream_unavailable');
         const data=good.every(Array.isArray)?good.flat():good[0];
         remember(data,fresh===groups.size?Date.now():saved?.savedAt||Date.now());
-        if(persist&&fresh===groups.size){try{const bytes=await encodeCatalog(data);let content='';for(let i=0;i<bytes.length;i+=24000)content+=String.fromCharCode(...bytes.slice(i,i+24000));await deps.registry(env,'/xtream-cache-put',{key,content:btoa(content)})}catch{}}
+        if(persist&&fresh===groups.size){const save=async()=>{try{const bytes=await encodeCatalog(data);let content='';for(let i=0;i<bytes.length;i+=24000)content+=String.fromCharCode(...bytes.slice(i,i+24000));await deps.registry(env,'/xtream-cache-put',{key,content:btoa(content)})}catch{}};if(ctx?.waitUntil)ctx.waitUntil(save());else await save()}
         return data;
       };
-      const run=()=>{if(!cache.pending.has(key)){const work=refresh().finally(()=>cache.pending.delete(key));cache.pending.set(key,work)}return cache.pending.get(key)};
+      const run=()=>{deadline??=Date.now()+Math.min(CATALOG_FETCH_MS,Math.max(1,timeoutMs));if(deadline<=Date.now())return Promise.reject(Error('catalog_timeout'));if(!cache.pending.has(key)){const work=refresh().finally(()=>cache.pending.delete(key));cache.pending.set(key,work);return work}return within(cache.pending.get(key))};
       // Old-but-valid snapshots are immediate while refresh runs in the
       // background. Local user permissions were already checked by handleXtream.
       if(!options.fresh&&saved&&persist&&ctx?.waitUntil){ctx.waitUntil(run().catch(()=>{}));return saved.data}

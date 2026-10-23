@@ -4,13 +4,18 @@ const stages=new Set(PLAYBACK_STAGES),types=new Set(['live','movie','series']);
 const limits=[100,250,500,1000,2000,4000,8000,12000,20000,60000,300000];
 const clock=()=>performance.now();
 export class PlaybackTimings {
- constructor(now=clock){this.now=now;this.started=now();this.values={};this.type=null;this.platform='other';}
+ constructor(now=clock){this.now=now;this.started=now();this.values={};this.active={};this.type=null;this.platform='other';}
  identify(type,platform){if(types.has(type))this.type=type;if(['android','web','other','canary'].includes(platform))this.platform=platform;return this;}
- add(stage,ms){if(!stages.has(stage)||!Number.isFinite(ms)||ms<0)return;const value=this.values[stage]||{ms:0,count:0};value.ms=Math.min(300000,value.ms+ms);value.count=Math.min(100,value.count+1);this.values[stage]=value;}
- async run(stage,operation){const start=this.now();try{return await operation()}finally{this.add(stage,Math.max(0,this.now()-start))}}
+ add(stage,ms,count=1){if(!stages.has(stage)||!Number.isFinite(ms)||ms<0)return;const value=this.values[stage]||{ms:0,count:0};value.ms=Math.min(300000,value.ms+ms);value.count=Math.min(100,value.count+count);this.values[stage]=value;}
+ async run(stage,operation){
+  if(!stages.has(stage))return operation();
+  const span=this.active[stage]||{started:this.now(),depth:0,count:0};this.active[stage]=span;span.depth++;span.count++;
+  try{return await operation()}finally{if(!--span.depth){this.add(stage,Math.max(0,this.now()-span.started),span.count);delete this.active[stage]}}
+ }
+ measured(){const values=structuredClone(this.values);for(const [stage,span]of Object.entries(this.active)){const old=values[stage]||{ms:0,count:0};values[stage]={ms:Math.min(300000,old.ms+Math.max(0,this.now()-span.started)),count:Math.min(100,old.count+span.count)}}return values;}
  merge(response){for(const part of (response.headers.get('Server-Timing')||'').split(',')){const m=part.trim().match(/^smn_(auth|catalog|allocation|validation|origin|first_byte);dur=(\d+(?:\.\d+)?)$/);if(m)this.add(m[1],Number(m[2]));}return response;}
- header(){return Object.entries(this.values).map(([stage,v])=>'smn_'+stage+';dur='+Math.round(v.ms)).join(',');}
- snapshot(status=200){return {type:this.type,platform:this.platform,status,totalMs:Math.min(300000,Math.max(0,Math.round(this.now()-this.started))),stages:Object.fromEntries(Object.entries(this.values).map(([stage,v])=>[stage,{ms:Math.round(v.ms),count:v.count}]))};}
+ header(){return Object.entries(this.measured()).map(([stage,v])=>'smn_'+stage+';dur='+Math.round(v.ms)).join(',');}
+ snapshot(status=200){return {type:this.type,platform:this.platform,status,totalMs:Math.min(300000,Math.max(0,Math.round(this.now()-this.started))),stages:Object.fromEntries(Object.entries(this.measured()).map(([stage,v])=>[stage,{ms:Math.round(v.ms),count:v.count}]))};}
  response(response){const h=new Headers(response.headers),value=this.header();if(value)h.append('Server-Timing',value);return new Response(response.body,{status:response.status,statusText:response.statusText,headers:h});}
 }
 export const timed=(trace,stage,operation)=>trace?trace.run(stage,operation):operation();
