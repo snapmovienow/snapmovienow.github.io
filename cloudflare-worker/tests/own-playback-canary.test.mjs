@@ -1,7 +1,26 @@
 import assert from 'node:assert/strict';
 import worker,{PlaybackSession} from '../src/index.js';
 import {openLeaseStore} from '../src/lease-store.mjs';
+import {ownPlaybackCanaryAdapter} from '../src/own-playback-canary.mjs';
 class Store{constructor(){this.data=new Map();this.queue=Promise.resolve()}async get(k){return structuredClone(this.data.get(k))}async put(k,v){this.data.set(k,structuredClone(v))}async delete(k){this.data.delete(k)}async deleteAll(){this.data.clear()}async setAlarm(){}async list({prefix}){return new Map([...this.data].filter(([k])=>k.startsWith(prefix)))}transaction(fn){const r=this.queue.then(()=>fn(this));this.queue=r.catch(()=>{});return r}}
+{
+ const storage=new Store(),requests=[],prepared=[],controller=new AbortController(),session={sid:'dedicated-canary-session',token:'private-test-token'};
+ let preferred=null,bad=new Set(['1']),catalogReads=0;
+ const adapter=ownPlaybackCanaryAdapter({env:{ENVIRONMENT:'production',PLAYBACK_CANARY_USERNAME:'testowner'},storage,directory:async(env,path,body)=>{assert.equal(path,'/canary-sample');assert.equal(body.username,'testowner');return Response.json({sample:preferred})},request:async request=>{
+  const body=await request.json();assert.equal(body.access_token,session.token);requests.push(body.op);
+  if(body.op==='live'){catalogReads++;return Response.json([{stream_id:1,name:'First dead channel'},{stream_id:2,name:'Working channel'},{stream_id:3,name:'Another working channel'}])}
+  if(body.op==='stream_token'){prepared.push(body);assert.equal(body.ext,'ts','live fallback follows the installed app TS transport');return bad.has(body.id)?Response.json({error:'sample_missing'},{status:body.id==='99'?403:404}):Response.json({url:'https://api.snaptvnow.com/stream?t=private-test-ticket'})}
+  throw Error('unexpected operation');
+ }});
+ const select=()=>adapter.select(session,{username:'testowner',type:'live'},{signal:controller.signal});
+ let selected=await select();assert.equal(selected.type,'live');assert.deepEqual(prepared.map(b=>b.id),['1','2'],'invalid first catalog candidate rotates immediately');
+ assert.equal(await storage.get('canary-sample-cursor:live'),2);
+ await storage.delete('canary-sample:live');await select();assert.equal(prepared.at(-1).id,'3','failed open/cleared sample advances durable cursor rather than repeating first row');
+ preferred={type:'live',id:'99',server:'ccf',ext:'ts'};const before=catalogReads;await select();assert.equal(prepared.at(-1).id,'99');assert.equal(catalogReads,before,'recent successful sample is prepared before reading the catalog');
+ bad.add('99');preferred={type:'live',id:'99',server:'ccf',ext:'ts'};await storage.delete('canary-sample:live');await select();assert.notEqual(prepared.at(-1).id,'99','known sample still uses normal signed permission/preparation checks and can fall back');
+ assert.ok(prepared.every(b=>b.request_id&&Number.isInteger(b.revision)));assert.equal(session.sid,'dedicated-canary-session');
+ assert.ok(!JSON.stringify(selected).includes(session.token),'target does not expose the normal account token');
+}
 const objects=new Map(),env={ENVIRONMENT:'production',PLAYBACK_CANARY_USERNAME:'testowner',TICKET_SECRET:'test-canary-secret-only',ADMIN_SETUP_SECRET:'test-setup-secret-long-enough-1234567890'};
 env.PLAYBACK_SESSIONS={idFromName:x=>x,get(id){if(!objects.has(id))objects.set(id,new PlaybackSession({storage:new Store(),waitUntil:p=>void p.catch(()=>{})},env));return {fetch:(url,opts)=>objects.get(id).fetch(new Request(url,opts))}}};
 const originalFetch=globalThis.fetch;let blocked=false;
@@ -35,5 +54,5 @@ try{
  for(const object of objects.values())if((await object.state.storage.get('identity'))?.username==='testowner')assert.fail('canary session must be deleted after completion');
  blocked=true;result=await probe('testowner');assert.equal(result.data.ok,false);assert.equal(await leases.count(),1,'source failure cannot leak probe reservations or remove the customer');
  assert.equal((await call({username:'testowner',type:'live'},'/canary-run')).status,403,'private adapter is not a public route');
- await Promise.all(pending);console.log('PASS: own-account canary traverses signed session, permission, catalog, allocation, HLS and real binary paths; cleanup and customer isolation on success and upstream failure.');
+ await Promise.all(pending);console.log('PASS: recent successful sample selection, bounded durable rotation, signed TS playback and permission/capacity checks; own-session cleanup and customer isolation on success and failure.');
 }finally{globalThis.fetch=originalFetch}

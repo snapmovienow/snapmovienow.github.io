@@ -150,8 +150,8 @@ export class OperationsMonitor{
   const store=this.state.storage,now=Date.now(),id=crypto.randomUUID();
   const claim=await store.transaction(async tx=>{
    const state=await tx.get('monitor')||empty(now),c=canaryState(state,this.env);
-   if(!state.config.enabled||!c.config.enabled||!c.config.username||c.run?.at>now-60000||c.lastStartedAt>now-(manual?60000:interval)){await putState(tx,state);return null}
-   const type=c.config.types[c.nextType%c.config.types.length];c.nextType=(c.nextType+1)%c.config.types.length;c.lastStartedAt=now;c.run={id,at:now,version:c.config.version};await putState(tx,state);return {...c.run,username:c.config.username,type};
+   if(!state.config.enabled||!c.config.enabled||!c.config.username||c.run?.at>now-60000||c.lastStartedAt>now-60000||!manual&&c.lastScheduledBucket===Math.floor(now/interval)){await putState(tx,state);return null}
+   const type=c.config.types[c.nextType%c.config.types.length];c.nextType=(c.nextType+1)%c.config.types.length;c.lastStartedAt=now;c.lastScheduledBucket=Math.floor(now/interval);c.run={id,at:now,version:c.config.version};await putState(tx,state);return {...c.run,username:c.config.username,type};
   });
   if(claim){
    let result;

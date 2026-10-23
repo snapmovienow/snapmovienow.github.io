@@ -54,7 +54,24 @@ try{
  const invalid=await start(7);await storage.put('user:viewer7',{id:'uid7',username:'viewer7',version:2,status:'active'});assert.equal((await call('/acquire',invalid.body)).status,401,'health never bypasses normal account version checks');
  const canary=await call('/canary-identity',{username:'viewer0'});assert.equal(canary.status,200);assert.ok(!JSON.stringify(canary.data).includes('must-not-return'));assert.deepEqual(Object.keys(canary.data).sort(),['id','permissions','username','version']);
  assert.equal((await call('/canary-identity',{username:'viewer1'})).status,403);assert.equal((await call('/canary-identity',{username:'viewer0'},{})).status,403);assert.equal((await call('/canary-identity',{username:'viewer0',admin:true})).status,403);
- await storage.put('user:viewer0',{id:'uid0',username:'viewer0',version:1,status:'suspended'});assert.equal((await call('/canary-identity',{username:'viewer0'})).status,409);
+ await storage.put('provider-health',{
+  'channel|live|ccf|7|m3u8|a':{ok:true,at:time-500},
+  'channel|live|ccf|8|m3u8|b':{ok:true,at:time-100},
+  'channel|live|ccf|9|m3u8|removed':{ok:true,at:time},
+  'channel|live|unknown|10|m3u8|a':{ok:true,at:time},
+  'channel|live|ccf|11|m3u8|a':{ok:true,at:time+1},
+  'channel|live|ccf|12|m3u8|a':{ok:true,at:time-1800001},
+  'channel|live|ccf|13|m3u8|a':{ok:false,at:time},
+  'channel|live|ccf|https://secret/password|m3u8|a':{ok:true,at:time},
+  'account|a':{ok:true,at:time}
+ });
+ const sample=await call('/canary-sample',{username:'viewer0',type:'live'});assert.equal(sample.status,200);assert.deepEqual(sample.data,{sample:{type:'live',id:'8',server:'ccf',ext:'m3u8'}});
+ assert.ok(!JSON.stringify(sample.data).includes('secret')&&!JSON.stringify(sample.data).includes('provider'));
+ assert.deepEqual((await call('/canary-sample',{username:'viewer0',type:'movie'})).data,{sample:null});
+ assert.equal((await call('/canary-sample',{username:'viewer1',type:'live'})).status,403);assert.equal((await call('/canary-sample',{username:'viewer0',type:'live'},{})).status,403);assert.equal((await call('/canary-sample',{username:'viewer0',type:'invalid'})).status,400);
+ await storage.put('pool',{syncedAt:time,lines:[{id:'a',server:'ccf'}]});assert.equal((await call('/canary-sample',{username:'viewer0',type:'live'})).data.sample.id,'7','removed source cannot remain a canary hint');
+ time+=1800001;assert.deepEqual((await call('/canary-sample',{username:'viewer0',type:'live'})).data,{sample:null},'stale or failed signals are ignored');
+ await storage.put('user:viewer0',{id:'uid0',username:'viewer0',version:1,status:'suspended'});assert.equal((await call('/canary-identity',{username:'viewer0'})).status,409);assert.equal((await call('/canary-sample',{username:'viewer0',type:'live'})).status,409);
  assert.equal((await call('/check',{username:'viewer1',uid:'uid1',version:1})).status,200,'canary identity does not weaken normal authorization');
  console.log('PASS: persisted scoped circuits, bounded backoff, one recovery probe, duplicate/late report isolation, healthy affinity, all-media routing, automatic recovery and restricted canary identity.');
 }finally{Date.now=actualNow}

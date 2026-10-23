@@ -104,13 +104,25 @@ export async function accountsFetch(state,env,req){
   if(p==='/login'){await safelyRecord(()=>recordClientAccess(store,store.sql,u,'login',b.connection,b.authKey?'xtream':'api'));await safelyRecord(()=>recordCustomerActivity(store,u.id,Date.now(),b.connection));}
   await store.delete(bucket);return answer({id:u.id,username:u.username,version:u.version,expiresAt:u.expiresAt,permissions:contentPermissions(u.permissions)});
  }
- if(p==='/canary-identity'){
+ if(p==='/canary-identity'||p==='/canary-sample'){
   // Scheduled probes may act only as the one explicitly configured customer.
   // This private route cannot enumerate users or mint an administrator session.
   const configured=env.PLAYBACK_CANARY_USERNAME;
   if(typeof configured!=='string'||!configured||b.username!==configured||b.admin||!validName(normal(configured)))return answer({error:'canary_not_configured'},403);
   const u=await store.get('user:'+normal(configured)),admin=await store.get('admin');
   if(!alive(u)||u.admin||u.role==='admin'||u.id===admin?.id)return answer({error:'canary_account_unavailable'},409);
+  if(p==='/canary-sample'){
+   if(!['live','movie','series'].includes(b.type))return answer({error:'canary_sample_type'},400);
+   const now=Date.now(),pool=await store.get('pool'),health=await store.get('provider-health')||{};
+   if(!pool?.lines?.length||pool.syncedAt<now-12*3600000)return answer({sample:null});
+   for(const [key,row]of Object.entries(health).filter(([,row])=>row?.ok===true&&row.at>now-1800000&&row.at<=now).sort((a,b)=>b[1].at-a[1].at)){
+    const [scope,type,server,id,ext,...provider]=key.split('|');
+    if(scope!=='channel'||type!==b.type||!/^\d{1,16}$/.test(id||'')||!/^[a-zA-Z0-9_-]{1,80}$/.test(server||'')||!/^[a-zA-Z0-9]{1,8}$/.test(ext||''))continue;
+    if(!pool.lines.some(line=>String(line.id)===provider.join('|')&&String(line.server||'ccf')===server))continue;
+    return answer({sample:{type,id,server,ext}});
+   }
+   return answer({sample:null});
+  }
   return answer({id:u.id,username:u.username,version:u.version,expiresAt:u.expiresAt,permissions:contentPermissions(u.permissions)});
  }
  if(p==='/check'){

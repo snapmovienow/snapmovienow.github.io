@@ -76,7 +76,7 @@ export class PlaybackSession {
  const exp=await this.state.storage.get("exp");const identity=await this.state.storage.get("identity");if(identity&&!(await directory(this.env,"/check",identity)).ok)return new Response("Inactive",{status:401});if(path.startsWith('/owner-access/'))return ownerAccessState(this.state.storage,path,await req.json(),exp,identity?.admin===true);return new Response(exp>Date.now()?"ok":"expired",{status:exp>Date.now()?200:401})}
  async alarm(){const sid=await this.state.storage.get("sid");if(sid)await directory(this.env,"/release-session",{sid});await this.state.storage.deleteAll()}
 }
-async function publicCanaryHealth(env){if(!env.PLAYBACK_CANARY_USERNAME)return {configured:false};try{const r=await monitorCall(env,'/status');if(!r.ok)return {configured:true,status:'unknown'};const c=(await r.json()).canary;return {configured:!!c?.configured,enabled:!!c?.enabled,lastCheckedAt:c?.lastCheckedAt||null,status:c?.status||'waiting',results:(c?.results||[]).map(({type,status,at,totalMs,reason})=>({type,status,at,totalMs,reason}))}}catch{return {configured:true,status:'unknown'}}}
+async function publicCanaryHealth(env){if(!env.PLAYBACK_CANARY_USERNAME)return {configured:false};try{const r=await monitorCall(env,'/status');if(!r.ok)return {configured:true,status:'unknown'};const c=(await r.json()).canary;return {configured:!!c?.configured,enabled:!!c?.enabled,lastCheckedAt:c?.lastCheckedAt||null,status:c?.status||'waiting',results:(c?.results||[]).map(({type,status,at,totalMs,reason,stages})=>({type,status,at,totalMs,reason,stages}))}}catch{return {configured:true,status:'unknown'}}}
 function envCanaryAllowed(env,config){return env.ENVIRONMENT!=='staging'&&!!env.PLAYBACK_CANARY_USERNAME&&String(config?.username||'').toLowerCase()===String(env.PLAYBACK_CANARY_USERNAME).toLowerCase()&&['live','movie','series'].includes(config?.type)}
 async function sessionCall(env,sid,path,body){if(!env.PLAYBACK_SESSIONS||!sid)return new Response("Unauthorized",{status:401});return env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName(sid)).fetch("https://session"+path,{method:body?"POST":"GET",...(body?{body:JSON.stringify({...body,sid})}:{})})}
 async function createSession(env,username,password,accountExpiresAt=null){const sid=crypto.randomUUID(),exp=Math.min(Date.now()+12*60*60*1000,accountExpiresAt||Infinity);const r=await sessionCall(env,sid,"/create",{exp});if(!r.ok)throw Error("session_unavailable");return {sid,username,password,exp,accountExpiresAt,kind:"session"}}
@@ -196,7 +196,7 @@ async function gnulaMedia(req,env,u,ctx){const t=u.searchParams.get("t")||"",d=a
 
 async function observedWebStream(object,req,ctx,trace){
  const env=object.env,u=new URL(req.url),d=await unticket(env,u.searchParams.get('t')||'');
- const observe=d?.provider_id&&d.lease_id&&!d.xtream&&!d.resource&&d.type!=='live'&&req.method==='GET';
+ const observe=d?.provider_id&&d.lease_id&&!d.xtream&&!d.resource&&(d.type!=='live'||d.ext!=='m3u8')&&req.method==='GET';
  const key=d?.lease_id+':'+d?.request_id,now=Date.now();object.signalReports??=new Map();
  for(const [id,at]of object.signalReports)if(at<now-300000)object.signalReports.delete(id);
  const fresh=observe&&!object.signalReports.has(key);if(fresh){if(object.signalReports.size>=128)object.signalReports.delete(object.signalReports.keys().next().value);object.signalReports.set(key,now)}

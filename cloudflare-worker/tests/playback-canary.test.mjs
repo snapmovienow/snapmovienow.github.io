@@ -66,6 +66,10 @@ try{
  await settings({enabled:false});now+=300000;await monitor.runCanary();assert.equal(probes,2);assert.equal((await (await monitor.status()).json()).canary.status,'disabled');
  const stage=new OperationsMonitor({storage:new Store()},{...env,ENVIRONMENT:'staging'});await stage.runCanary();assert.equal(probes,2);
  const unknown=new OperationsMonitor({storage:new Store()},{...env,PLAYBACK_CANARY_USERNAME:undefined});await unknown.runCanary();assert.equal(probes,2);assert.equal((await (await unknown.status()).json()).canary.status,'not_configured');
+ const cycle=Math.floor(now/300000)*300000;let jitterProbes=0;
+ const jitterEnv={...env,PLAYBACK_SESSIONS:{idFromName:x=>x,get:()=>({fetch:async()=>{jitterProbes++;return Response.json({ok:true,status:'healthy',reason:'ok'})}})}};
+ const jitter=new OperationsMonitor({storage:new Store()},jitterEnv);now=cycle+45000;await jitter.runCanary();now=cycle+310000;await jitter.runCanary();await jitter.runCanary();
+ assert.equal(jitterProbes,2,'a faster provider check in the next five-minute slot cannot skip that playback test; duplicate cron remains single-flight');
  const state={createdAt:now,config:{channel:'panel'},checks:{},incidents:{},history:[],outbox:[]};
  const snapshot={providers:{providers:[]},playback:{groups:[]},backups:{lastAutomaticAt:now},canary:{enabled:true,results:[{type:'live',at:now,status:'failed',reason:'timeout'}]}};
  applyObservations(state,snapshot,now);assert.equal(Object.keys(state.incidents).length,0);

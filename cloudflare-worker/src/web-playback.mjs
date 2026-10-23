@@ -21,7 +21,7 @@ export async function prepareWebPlayback(body,session,requestUrl,env,ctx,deps){
   }
   const data={sid:session.sid,username:credentials.username,password:credentials.password,origin:credentials.origin||deps.origin,lease_id,provider_id,request_id,type,id:String(body.id),ext,exp:session.exp};
   const url=new URL(requestUrl).origin+'/stream?t='+await deps.ticket(env,data);
-  if(type==='live'){
+  if(type==='live'&&ext==='m3u8'){
    const signalAt=Date.now(),mediaSession={...session,request_id};
    try{
     const checked=await deps.serverStream(startup?startup.prepare(new Request(url)):new Request(url,{headers:{'X-SMN-Prepare':'1'}}),env,new URL(url),ctx,deps.trace);
