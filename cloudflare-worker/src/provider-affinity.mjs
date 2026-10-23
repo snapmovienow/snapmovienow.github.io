@@ -15,7 +15,7 @@ export function providerAffinity(state,group,user,now=Date.now()){
 export function rememberProvider(state,lease,now=Date.now()){
  pruneAffinities(state,now);
  if(lease.provider_id===undefined||lease.providerFailed||lease.until<=now)return state;
- state.affinities[affinityGroup(lease)]={provider_id:lease.provider_id,uid:lease.uid,version:lease.version,request_id:lease.request_id,validatedAt:lease.validatedAt||0,until:now+GAP_MS};
+ state.affinities[affinityGroup(lease)]={provider_id:lease.provider_id,uid:lease.uid,version:lease.version,request_id:lease.request_id,credentialKey:lease.providerCredentialKey,validatedAt:lease.validatedAt||0,until:now+GAP_MS};
  return pruneAffinities(state,now);
 }
 export function forgetProvider(state,lease){

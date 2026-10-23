@@ -29,16 +29,19 @@ export function claimProviderTrial(old,id,mediaKey,claimId,now=Date.now(),option
  }
  return {health,claimed};
 }
-export function recordProviderHealth(old,id,mediaKey,ok,elapsedMs,stage,now=Date.now(),claimId=null){
+export function recordProviderHealth(old,id,mediaKey,ok,elapsedMs,stage,now=Date.now(),claimId=null,credentialKey=null){
  const next=prune(old,now,2),key=stage==='validation'?accountKey(id):channelKey(id,mediaKey),previous=old?.[key];
  const ms=Math.max(0,Math.min(30000,Number(elapsedMs)||0));
  // A late report cannot overtake the request currently testing recovery.
  if(liveRecord(previous,now)&&previous.probeId&&previous.probeUntil>now&&claimId&&previous.probeId!==claimId){next[key]=previous;return next}
  if(ok){
-  next[key]={at:now,ok:true,ms:previous?.ok?Math.round(previous.ms*0.75+ms*0.25):ms,failures:0};
+  next[key]={at:now,ok:true,ms:previous?.ok?Math.round(previous.ms*0.75+ms*0.25):ms,failures:0,...(stage==='validation'&&credentialKey?{credentialKey,validatedAt:now}:{})};
   // Successful media is a useful ranking hint, but cannot clear an account
   // validation circuit: that endpoint has its own independent recovery probe.
-  if(stage==='signal'&&!liveRecord(next[accountKey(id)],now))next[accountKey(id)]={at:now,ok:true,ms,failures:0};
+  if(stage==='signal'){
+   const account=next[accountKey(id)];
+   if(!liveRecord(account,now)||account.ok===true&&!account.openUntil)next[accountKey(id)]={...account,at:now,ok:true,ms:account?.ms??ms,failures:0,...(credentialKey?{credentialKey,mediaAt:now}:{})};
+  }
  }else{
   const fresh=liveRecord(previous,now)&&previous.at>now-PROVIDER_CIRCUIT_POLICY.failureWindowMs;
   const failures=fresh?(previous.failures||0)+1:1;
@@ -54,7 +57,7 @@ export function rankProviderCandidates(candidates,health,mediaKey,now=Date.now()
   const fresh=r=>r&&r.at>now-FRESH_MS;
   const cooling=r=>fresh(r)&&!r.ok&&r.at>now-COOLDOWN;
   return {p,cooling:!!(cooling(a)||cooling(c)),known:fresh(c)&&c.ok?2:fresh(a)&&a.ok?1:0,ms:fresh(c)&&c.ok?c.ms:30000};};
- return candidates.map(score).sort((a,b)=>Number(a.cooling)-Number(b.cooling)||b.known-a.known||a.ms-b.ms||a.p.occupied/a.p.maxConnections-b.p.occupied/b.p.maxConnections).map(s=>s.p);
+ return candidates.map(score).sort((a,b)=>Number(a.cooling)-Number(b.cooling)||b.known-a.known||a.ms-b.ms||a.p.occupied/a.p.maxConnections-b.p.occupied/b.p.maxConnections||(Number(b.p.expiresAt)||0)-(Number(a.p.expiresAt)||0)).map(s=>s.p);
 }
 export function providerHealthSummary(health,now=Date.now()){
  const groups=new Map();let lastObservedAt=null;

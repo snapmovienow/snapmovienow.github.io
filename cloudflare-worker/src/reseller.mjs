@@ -17,7 +17,8 @@ export function parseLines(data){
  const username=plain(r[1]),password=plain(String(r[2]).match(/class="table-trunc-copy-cell__text[^"]*"[^>]*title="([^"]+)"/)?.[1]||String(r[2]).match(/<span[^>]*class="table-trunc-copy-cell__text[^"]*"[^>]*>([^<]*)/)?.[1]||r[2]);
  const active=/title=["']Active["']/.test(String(r[4]));const used=Number(plain(r[7])),max=Math.min(3,Number(plain(r[8])));const date=plain(r[11]).match(/^\d{4}-\d{2}-\d{2}/)?.[0];
  if(!active||!username||!password||!Number.isFinite(used)||!Number.isInteger(max)||max<1||(date&&Date.parse(date+'T23:59:59Z')<Date.now()))return [];
- return [{id:plain(r[0]),username,password,maxConnections:max,external:used}];});
+ const expiresAt=date?Date.parse(date+'T23:59:59Z'):null;
+ return [{id:plain(r[0]),username,password,maxConnections:max,external:used,expiresAt:Number.isFinite(expiresAt)?expiresAt:null}];});
 }
 export async function panelSession(username,password,base=BASE,options={}){
  base=validateServerUrl(base,true);

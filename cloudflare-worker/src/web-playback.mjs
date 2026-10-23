@@ -1,4 +1,4 @@
-import {playbackStartup,reportLiveResult} from './live-startup.mjs';
+import {playbackStartup,reportLiveResult,deferPlaybackReport} from './live-startup.mjs';
 import {startPlaybackActivity,attachPlaybackActivity} from './playback-activity.mjs';
 // One client request owns every attempt. Release a failed allocation before
 // choosing another authorised account; a cancelled request cannot restart.
@@ -28,7 +28,7 @@ export async function prepareWebPlayback(body,session,requestUrl,env,ctx,deps){
     const checked=await deps.serverStream(startup?startup.prepare(new Request(url)):new Request(url,{headers:{'X-SMN-Prepare':'1'}}),env,new URL(url),ctx,deps.trace);
     if(!checked.ok){await checked.body?.cancel();throw Error(checked.status===410?'playback_superseded':'live_signal_unavailable')}
     if(!(await checked.text()).startsWith('#EXTM3U'))throw Error('live_signal_unavailable');
-    if(startup)await reportLiveResult(deps.directory,env,mediaSession,allocation,true,Date.now()-signalAt);
+    if(startup){const elapsed=Date.now()-signalAt;deferPlaybackReport(ctx,()=>reportLiveResult(deps.directory,env,mediaSession,allocation,true,elapsed));}
    }catch(error){
     if(startup&&!['media_origin_unapproved','playback_superseded'].includes(error.message))await reportLiveResult(deps.directory,env,mediaSession,allocation,false,Date.now()-signalAt);
     if(lease_id)await deps.directory(env,'/release',{sid:session.sid,lease_id,request_id,reason:'upstream_failed'});

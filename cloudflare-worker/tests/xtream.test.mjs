@@ -267,11 +267,11 @@ const nativeRequest = new Request(`${origin}/movie/${customer.username}/${custom
 let deadline;
 try {
   const quick = await Promise.race([worker.fetch(nativeRequest, env, context), new Promise((_,reject) => {deadline=setTimeout(()=>reject(Error('playback_waited_for_pool_refresh')),2000)})]);
-  assert.equal(quick.status,200); assert.equal(background.length,3,'inventory refresh, shared validation lifetime and optional timing persistence run without blocking playback'); assert.equal(await quick.text(),'data');
+  assert.equal(quick.status,200); assert.equal(background.length,4,'inventory refresh, validation lifetime, successful media reporting and timing persistence run without blocking playback'); assert.equal(await quick.text(),'data');
 } finally {clearTimeout(deadline); unblockRefresh(); await Promise.all(background); globalThis.fetch=savedFetch}
 
 // After the bounded validation cache expires, an upstream outage still fails closed.
-offset+=31000;failValidation=true;
+offset+=120001;failValidation=true;
 const unavailablePlayback=await media('movie',movies[0].stream_id,'mp4');
 assert.equal(unavailablePlayback.status,503);assert.equal((await unavailablePlayback.json()).error,'provider_unavailable');
 assert.equal((await leases()).length,0);

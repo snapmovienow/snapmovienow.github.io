@@ -56,13 +56,13 @@ const fourth=await start(session(0,'fourth'),32);assert.equal(fourth.status,409)
 for(let i=0;i<10;i++){current=await start(session(),40+i,i%2?'ts':'m3u8');assert.equal(current.status,200);assert.equal(current.data.provider_id,'a');assert.equal(await leases.count({uid:'u0'}),3);}
 await call('/playback-cancel',current.body);assert.equal(await leases.count({uid:'u0'}),2);current=await start(session(),60);assert.equal(current.data.provider_id,'a');
 await call('/release-session',{sid:'s0'});assert.equal(await storage.get('playback:s0'),undefined);assert.equal(await leases.count({uid:'u0'}),2);
-await call('/release-session',{sid:'third'});await storage.put('provider-health',{'account|b':{at:Date.now(),ok:true,ms:1}});current=await start(session(),61);assert.equal(current.data.provider_id,'b','explicit session close discards its binding');
+await call('/release-session',{sid:'third'});await storage.put('provider-health',{'account|b':{at:Date.now(),ok:true,ms:1}});current=await start(session(),61);assert.equal(current.data.provider_id,'a','session close releases capacity but keeps the durable user assignment');
 await storage.put('user:viewer0',{id:'u0',username:'viewer0',version:2,status:'active'});
 assert.equal((await start(session(),62)).status,401,'a hint does not bypass a local credential/permission version change');
 const renewed={...session(),version:2};current=await start(renewed,63);assert.equal(current.status,200);assert.equal(current.data.validatedRecently,undefined,'a new local version cannot inherit a validation cache');
 await storage.put('user:viewer0',{id:'u0',username:'viewer0',version:2,status:'suspended'});assert.equal((await start(renewed,64)).status,401);
 await storage.put('user:viewer0',{id:'u0',username:'viewer0',version:2,status:'active'});await release(current);offset+=90001;
-current=await start(renewed,65);assert.equal(current.data.affinity,undefined,'expired non-reserving hints do not pin an idle viewer');
+current=await start(renewed,65);assert.equal(current.data.affinity,true,'the durable user assignment survives an expired session hint without reserving capacity');
 let bounded={};for(let i=0;i<25;i++)bounded=rememberProvider(bounded,{provider_id:'a',providerServer:'group'+i,uid:'u',version:1,until:Date.now()+90000});assert.equal(Object.keys(bounded.affinities).length,16);
 offset+=90001;assert.equal(Object.keys(pruneAffinities(bounded).affinities).length,0);
 console.log('PASS: source affinity survives channels/formats/quick close and restart; atomic capacity, expiry, failover, server groups, revocation, three viewers and late cleanup remain isolated.');

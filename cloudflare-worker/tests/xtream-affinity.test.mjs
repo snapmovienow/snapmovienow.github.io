@@ -52,7 +52,7 @@ r=await play('smarters',1,'m3u8');await r.text();assert.equal((await only()).pro
 r=await play('smarters',2,'ts');const late=r;assert.equal((await only()).provider_id,initial.provider_id);
 r=await play('smarters',3,'ts');await late.body.cancel();assert.equal(await leases.count(),1,'late TS close preserves the newer channel');await r.body.cancel();
 await storage.put('provider-health',{'account|2':{at:Date.now(),ok:true,ms:1}});
-const legacy=await play('legacy',0,'ts'),legacyLease=await only();assert.equal(legacyLease.provider_id,'2');
+const legacy=await play('legacy',0,'ts'),legacyLease=await only();assert.equal(legacyLease.provider_id,'1','new app sessions retain the user assignment while counting separate slots');
 r=await play('smarters',0,'m3u8');await r.text();let active=await leases.active();assert.equal(active.size,2);assert.equal([...active.values()].find(l=>l.sid!==legacyLease.sid).provider_id,'1');
 await legacy.body.cancel();assert.equal(await leases.count(),1,'different apps on the same IP have independent bindings and slots');
 offset+=31000;r=await play('smarters',1,'m3u8');await r.text();assert.equal(validations.filter(v=>v==='source1').length,2,'validation refreshes after thirty seconds while the CCF account remains assigned');
@@ -67,7 +67,7 @@ assert.equal((await storage.get('playback:'+initial.sid)).affinities.ccf,undefin
 // The same affinity/recent validation applies to movie and episode byte ranges.
 const moviesResponse=await worker.fetch(new Request(origin+'/player_api.php?username=fixture-user&password=viewer-password-test&action=get_vod_streams',{headers:headers('smarters')}),env,ctx),movies=await moviesResponse.json();
 const vodUrl=origin+'/movie/fixture-user/viewer-password-test/'+movies[0].stream_id+'.mp4',beforeValidation=validations.length;
-for(let i=0;i<3;i++){const vod=await worker.fetch(new Request(vodUrl,{headers:{...headers('smarters'),Range:'bytes=0-12'}}),env,ctx);assert.equal(vod.status,206);assert.equal(await vod.text(),'fixture video');assert.equal(validations.length,beforeValidation+1,'seeks and repeat VOD requests reuse only a recently validated source');}
+for(let i=0;i<3;i++){const vod=await worker.fetch(new Request(vodUrl,{headers:{...headers('smarters'),Range:'bytes=0-12'}}),env,ctx);assert.equal(vod.status,206);assert.equal(await vod.text(),'fixture video');assert.equal(validations.length,beforeValidation,'fresh media proof avoids another metadata validation when opening VOD');}
 const auth=(await post({op:'auth',username:'fixture-user',password:'viewer-password-test'})).data.access_token;
 await admin('save',{username:'fixture-user',password:'changed-viewer-password-test',status:'active'});
 const stale=await worker.fetch(new Request(origin+'/player_api.php?username=fixture-user&password=viewer-password-test',{headers:headers('smarters')}),env,ctx);assert.equal(stale.status,401);

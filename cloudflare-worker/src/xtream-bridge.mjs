@@ -1,4 +1,4 @@
-import {playbackStartup,reportLiveResult} from './live-startup.mjs';
+import {playbackStartup,reportLiveResult,deferPlaybackReport} from './live-startup.mjs';
 import {timed} from './playback-timings.mjs';
 import {playbackMonitorClient,attachPlaybackQuality} from './native-playback-quality.mjs';
 import {requestConnectionClient} from './connection-monitor.mjs';
@@ -64,7 +64,7 @@ export function createXtreamBridge(deps) {
         const prepared=startup?startup.prepare(request):new Request(request);
         const response=await deps.serverStream(prepared,env,target,ctx,trace);
         if(!response.ok){lastFailure=response.status;if(startup&&response.status!==410)await reportLiveResult(deps.directory,env,mediaSession,allocation,false,Date.now()-signalAt);await privateCall('/release',{sid:session.sid,lease_id,request_id,reason:'upstream_failed'});await response.body?.cancel();if(retryableSourceStatus(response.status)&&allocation.provider_id&&attempt<2){excluded.push(allocation.provider_id);continue}return deps.json({error:'upstream_unavailable'},response.status)}
-        if(startup)await reportLiveResult(deps.directory,env,mediaSession,allocation,true,Date.now()-signalAt);
+        if(startup){const elapsed=Date.now()-signalAt;deferPlaybackReport(ctx,()=>reportLiveResult(deps.directory,env,mediaSession,allocation,true,elapsed));}
         attachPlaybackActivity(activityTask,{env,ctx,directory:deps.directory,session:mediaSession,lease_id,mediaKey:mediaSession.mediaKey});
         // Native clients load this master once, then refresh the signed media
         // playlist directly. Refreshing /live on every segment used to repeat

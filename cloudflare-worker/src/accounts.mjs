@@ -1,5 +1,6 @@
 import {recordProviderHealth,rankProviderCandidates,providerCircuitState,claimProviderTrial,providerHealthSummary} from './provider-health.mjs';
 import {affinityGroup,providerAffinity,rememberProvider,forgetProvider,recentlyValidated,pruneAffinities} from './provider-affinity.mjs';
+import {assignmentKey,usableProvider,assignedProvider,saveAssignment,mediaRecentlyFailed,recentAccountProof} from './provider-assignment.mjs';
 import {exclusiveCatalogRoute,exclusiveSnapshot,selectExclusive,visibleExclusive} from './exclusive-catalog.mjs';
 import {cleanConnectionClient,recordConnectionLimit,updateConnectionQuality,closeResellerConnection} from './connection-monitor.mjs';
 import {resellerPresence,resellerPlaybackSummary,resellerLiveConnections,recordCustomerActivity} from './reseller-presence.mjs';
@@ -147,7 +148,7 @@ export async function accountsFetch(state,env,req){
   if(b.password)u=await withPassword(u,b.password);else if(!old)return answer({error:'password_required'},400);
   return store.transaction(async tx=>{const latest=await tx.get('user:'+username),held=await tx.get('reseller-reservation:'+username);if(!latest&&held?.until>Date.now())return answer({error:'username_reserved'},409);if((latest?.version||0)!==(old?.version||0)||latest?.updatedAt!==old?.updatedAt)return answer({error:'edit_conflict'},409);await tx.put('user:'+username,u);if(accessChanged)await leases.in(tx).removeFor({uid:u.id});return answer({...adminUser(u),sessionsRevoked:accessChanged})});
  }
- if(p==='/delete')return store.transaction(async tx=>{const key='user:'+normal(b.username),u=await tx.get(key);if(!u)return answer({error:'not_found'},404);if(u.resellerBridge){const receipt=await tx.get('reseller-line:'+u.resellerBridge.accountId+':'+u.resellerBridge.lineId);if(receipt?.revoked!==true)return answer({error:'reseller_archive_required'},409);}await tx.delete(key);await leases.in(tx).removeFor({uid:u.id});return answer({ok:true})});
+ if(p==='/delete')return store.transaction(async tx=>{const key='user:'+normal(b.username),u=await tx.get(key);if(!u)return answer({error:'not_found'},404);if(u.resellerBridge){const receipt=await tx.get('reseller-line:'+u.resellerBridge.accountId+':'+u.resellerBridge.lineId);if(receipt?.revoked!==true)return answer({error:'reseller_archive_required'},409);}await tx.delete(key);await tx.delete(assignmentKey(u.id));await leases.in(tx).removeFor({uid:u.id});return answer({ok:true})});
  if(p==='/provider-save')return store.transaction(async tx=>{await tx.put('provider',{encrypted:b.encrypted,username:b.username,mode:b.mode||"single",maxConnections:Math.min(3,Math.max(1,Number(b.maxConnections)||3))});await leases.in(tx).clear();await tx.delete('pool');return answer({ok:true})});
  if(p==='/providers'){const list=await store.get('providers');const old=await store.get('provider');return answer(list|| (old?[{...old,source:old.mode==='panel'?'panel:'+normal(old.username):'single:'+normal(old.username)}]:[]))}
  if(p==='/provider-add')return store.transaction(async tx=>{
@@ -197,9 +198,13 @@ export async function accountsFetch(state,env,req){
   if(lease.providerReports?.[b.stage]!==undefined)return answer({ok:true,duplicate:true});
   lease.providerReports={...lease.providerReports,[b.stage]:b.ok};
   if(!b.ok){lease.providerFailed=true;forgetProvider(state,lease);}
-  else if(b.stage==='validation'){lease.validatedAt=Date.now();rememberProvider(state,lease);}
+  else if(b.stage==='validation'&&!b.capacityBusy){lease.validatedAt=Date.now();rememberProvider(state,lease);}else if(b.capacityBusy)lease.validatedAt=0;
   await local.put(b.lease_id,lease);await tx.put(key,pruneAffinities(state));
-  const health=recordProviderHealth(await tx.get('provider-health'),lease.provider_id,lease.mediaKey,b.ok,b.elapsedMs,b.stage,Date.now(),b.lease_id);
+  const health=recordProviderHealth(await tx.get('provider-health'),lease.provider_id,lease.mediaKey,b.ok,b.elapsedMs,b.stage,Date.now(),b.lease_id,lease.providerCredentialKey);
+  if(b.stage==='validation'&&b.ok&&b.capacityBusy===true){const row=health['account|'+lease.provider_id];row.busyUntil=Date.now()+5000;delete row.credentialKey;delete row.validatedAt;delete row.mediaAt;}
+  if(b.stage==='validation'&&!b.ok&&b.confirmedInactive===true){
+   const row=health['account|'+lease.provider_id];row.openUntil=Math.max(row.openUntil||0,Date.now()+30000);row.backoff=Math.max(row.backoff||0,30000);
+  }
   await tx.put('provider-health',health);return answer({ok:true});
  });
  if(p==='/acquire')return store.transaction(async tx=>{
@@ -231,22 +236,25 @@ export async function accountsFetch(state,env,req){
    // Project replacement of this viewer only. Keep a same-media lease ID and
    // its history intact; all other viewers still count towards capacity.
    for(const l of sessionLeases.values()){const key=String(l.provider_id||'');counts.set(key,Math.max(0,(counts.get(key)||0)-1));}
-   const candidates=pool.lines.filter(p=>(p.server||'ccf')===group&&!(b.exclude||[]).includes(p.id)).map(p=>({...p,occupied:p.external+(counts.get(String(p.id))||0)})).filter(p=>p.occupied<p.maxConnections-(canary?1:0)).sort((a,b)=>a.occupied/a.maxConnections-b.occupied/b.maxConnections);
+   const candidates=pool.lines.filter(p=>(p.server||'ccf')===group&&usableProvider(p)&&!(b.exclude||[]).includes(p.id)).map(p=>({...p,occupied:p.external+(counts.get(String(p.id))||0)})).filter(p=>p.occupied<p.maxConnections-(canary?1:0)).sort((a,b)=>a.occupied/a.maxConnections-b.occupied/b.maxConnections);
    const health=await tx.get('provider-health')||{},now=Date.now();
+   const profile=canary?null:await tx.get(assignmentKey(u.id)),primary=assignedProvider(profile,group,u.id,pool.lines,now);
+   const primaryFailed=primary&&providerCircuitState(health,primary.id,b.mediaKey,now,{ignoreMedia:true}).blocked;
    // Preserve an active viewer's proven assignment. Other viewers' reports
    // cannot evict it; a circuit for a different requested title still applies.
    const options=p=>{const active=owned.find(([,l])=>l.provider_id===p.id&&affinityGroup(l)===group);return {ignoreAccount:!!active,ignoreMedia:!!active&&active[1].mediaKey===b.mediaKey}};
-   const available=candidates.filter(p=>!providerCircuitState(health,p.id,b.mediaKey,now,options(p)).blocked);
+   const available=candidates.filter(p=>!(health['account|'+p.id]?.busyUntil>now)&&!providerCircuitState(health,p.id,b.mediaKey,now,options(p)).blocked);
    const ranked=rankProviderCandidates(available,health,b.mediaKey,now);
-   const preferred=hint&&available.find(p=>p.id===hint.provider_id),selected=preferred||ranked[0];
-   if(!selected){const retry=candidates.map(p=>providerCircuitState(health,p.id,b.mediaKey,now).retryAfterMs).filter(Boolean);return answer({error:candidates.length?'provider_temporarily_unavailable':'ccf_capacity',...(retry.length?{retry_after_ms:Math.min(...retry)}:{})},candidates.length?503:409);}
-   const previous=b.request_id&&owned.find(([,l])=>l.provider_id===selected.id&&affinityGroup(l)===group&&l.mediaKey===b.mediaKey),sameRequest=previous&&previous[1].request_id===b.request_id;
-   const id=previous?previous[0]:crypto.randomUUID(),trial=claimProviderTrial(health,selected.id,b.mediaKey,id,now,options(selected)),validatedAt=preferred&&!trial.claimed?hint.validatedAt:0;
+   const preferred=hint&&available.find(p=>p.id===hint.provider_id),home=primary&&!primaryFailed&&!mediaRecentlyFailed(health,primary.id,b.mediaKey,now)&&available.find(p=>p.id===primary.id),selected=preferred||home||ranked[0];
+   if(!selected){const capacityBusy=candidates.length&&candidates.every(p=>health['account|'+p.id]?.busyUntil>now);const retry=candidates.map(p=>providerCircuitState(health,p.id,b.mediaKey,now).retryAfterMs).filter(Boolean);return answer({error:candidates.length&&!capacityBusy?'provider_temporarily_unavailable':'ccf_capacity',...(retry.length?{retry_after_ms:Math.min(...retry)}:{})},candidates.length&&!capacityBusy?503:409);}
+   const previous=b.request_id&&owned.find(([,l])=>l.provider_id===selected.id&&l.providerCredentialKey===selected.credentialKey&&affinityGroup(l)===group&&l.mediaKey===b.mediaKey),sameRequest=previous&&previous[1].request_id===b.request_id;
+   const id=previous?previous[0]:crypto.randomUUID(),trial=claimProviderTrial(health,selected.id,b.mediaKey,id,now,options(selected)),proof=!trial.claimed?recentAccountProof(health,selected,pool.syncedAt,now):0,trustedHint=preferred&&hint.credentialKey===selected.credentialKey,validatedAt=trustedHint&&!trial.claimed?hint.validatedAt:0;
    if(trial.claimed)await tx.put('provider-health',trial.health);
    for(const [oldId]of sessionLeases)if(oldId!==id)await local.remove(oldId,'channel_changed');
-   const lease={...(sameRequest?previous[1]:{}),sid:b.sid,uid:b.uid,username:b.username,version:b.version,provider_id:selected.id,providerServer:group,validatedAt,until:Date.now()+90000,...extra,startedAt:previous?previous[1].startedAt||extra.startedAt:extra.startedAt};
+   const lease={...(sameRequest?previous[1]:{}),sid:b.sid,uid:b.uid,username:b.username,version:b.version,provider_id:selected.id,providerServer:group,providerCredentialKey:selected.credentialKey,validatedAt,until:Date.now()+90000,...extra,startedAt:previous?previous[1].startedAt||extra.startedAt:extra.startedAt};
    await local.put(id,lease);if(canary)await tx.put('background-canary-lease',id);rememberProvider(playback,lease);await tx.put(playbackKey,playback);await recordCustomerActivity(tx,u.id,Date.now(),b.client);
-   return answer({lease_id:id,provider_id:selected.id,encrypted:selected.encrypted,maxConnections:selected.maxConnections,...(previous?{reused:true,request_id:b.request_id}:{}),...(preferred?{affinity:true,validatedRecently:!trial.claimed&&recentlyValidated(hint)}:{})});
+   if(!canary&&(!primary||primaryFailed))await tx.put(assignmentKey(u.id),saveAssignment(profile,group,u.id,selected,now));
+   return answer({lease_id:id,provider_id:selected.id,encrypted:selected.encrypted,maxConnections:selected.maxConnections,...(previous?{reused:true,request_id:b.request_id}:{}),...(preferred||home?{affinity:true}:{}),...(!trial.claimed&&(preferred||proof)?{validatedRecently:!!proof||!!trustedHint&&recentlyValidated(hint)}:{})});
   }
   await local.removeFor({sid:b.sid});
   const max=Math.min(provider.maxConnections,Math.max(1,Number(b.upstreamMax)||3));
