@@ -63,9 +63,9 @@ export async function fetchApprovedMediaIP(value,headers,connectSocket,nativeStr
   const writer=stream.writable.getWriter();
   writer.closed.catch(error=>{nativeReader.cancel(error).catch(()=>{});socket.close().catch(()=>{})});
   (async()=>{try{
-   let received=prefix.length;if(prefix.length)await writer.write(prefix);
+   let received=prefix.length,initial=prefix.length===0;if(prefix.length)await writer.write(prefix);
    while(length===null||received<length){
-    const size=length===null?65536:Math.min(65536,length-received),chunk=await timed(readBlock(size));
+    const size=length===null?65536:Math.min(65536,length-received),chunk=await timed(readBlock(initial?1:size));initial=false;
     if(chunk.done){if(length!==null&&received<length)throw Error('truncated_http_body');break}
     const bytes=length===null?chunk.value:chunk.value.subarray(0,length-received);
     received+=bytes.length;await writer.write(bytes);

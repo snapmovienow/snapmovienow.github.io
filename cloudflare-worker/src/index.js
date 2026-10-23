@@ -1,4 +1,4 @@
-import {startupDeadline,readLivePlaylist,reportLiveResult} from './live-startup.mjs';
+import {startupDeadline,readLivePlaylist,readInitialMedia,VOD_STARTUP_MS,reportLiveResult} from './live-startup.mjs';
 import {boxpanelFetch} from './boxpanel.mjs';
 import {createBoxClient} from './boxpanel-client.mjs';
 import {TRUSTED_RESELLERS} from './reseller-trust.mjs';
@@ -111,7 +111,7 @@ async function managedPlayback(env,session,server,ctx,excluded=[],startup=null){
  let unavailable=false,busy=false;const exclude=[...excluded];for(let i=0;i<Math.min(pool.filter(l=>!server||(l.server||"ccf")===server).length,session.xtream?3:8);i++){if(startup&&!startup.claim())break;const r=await directory(env,"/acquire",{...session,exclude,server});if(!r.ok)return {r};const allocation=await r.json(),credentials=await unticket(env,allocation.encrypted);if((allocation.reused||(startup&&allocation.validatedRecently))&&credentials&&!exclude.includes(allocation.provider_id))return {r:json({lease_id:allocation.lease_id}),credentials,provider_id:allocation.provider_id};let a;const checkedAt=Date.now();try{if(credentials)a=await validateAccount(credentials.username,credentials.password,credentials.origin||ORIGIN,startup?startup.timeout(3500):6000)}catch{unavailable=true}
  if(a&&Number(a.user_info.max_connections)>=allocation.maxConnections&&Number(a.user_info.active_cons||0)<allocation.maxConnections){if(startup)await reportLiveResult(directory,env,session,allocation,true,Date.now()-checkedAt,'validation');return {r:json({lease_id:allocation.lease_id}),credentials,provider_id:allocation.provider_id};}
  if(a)busy=true;if(startup)await reportLiveResult(directory,env,session,allocation,false,Date.now()-checkedAt,'validation');await directory(env,"/release",{sid:session.sid,lease_id:allocation.lease_id,request_id:session.request_id,reason:'upstream_failed'});exclude.push(allocation.provider_id);}
- if(startup&&!startup.available)return {r:json({error:'live_startup_timeout'},504)};
+ if(startup&&startup.remaining()<=0)return {r:json({error:'live_startup_timeout'},504)};
  return {r:json({error:unavailable?'provider_unavailable':busy?'ccf_capacity':'provider_inactive'},unavailable||!busy?503:409)};
 }
 function accountInfo(s){return {user_info:{auth:1,status:"Active",username:s.username,exp_date:String(Math.floor(s.exp/1000))},access_token:null,server_time:Date.now(),session_expires_at:s.exp,account_expires_at:s.accountExpiresAt||null,permissions:s.permissions||{movies:true,series:true,tv:true}}}
@@ -197,9 +197,10 @@ async function serverStreamDirect(req,env,u,ctx){
  const warm=liveStarts.get(u.href);if(warm){liveStarts.delete(u.href);if(warm.until>Date.now()&&req.method==='GET')return new Response(warm.body,{headers:{...cors,'content-type':'application/vnd.apple.mpegurl'}})}
  const folder=d.type==='series'?'series':d.type==='live'?'live':'movie',start=d.resource||(d.origin||ORIGIN)+'/'+folder+'/'+encodeURIComponent(d.username)+'/'+encodeURIComponent(d.password)+'/'+d.id+'.'+cleanExt(d.ext);
  const sourceOrigin=d.origin||ORIGIN;
- const headers=new Headers({'User-Agent':'SnapMovieNow/1.0','Accept-Encoding':'identity'});for(const n of ['range','if-range'])if(req.headers.has(n))headers.set(n,req.headers.get(n));if(req.method==='HEAD')headers.set('range','bytes=0-0');const deadline=d.type==='live'&&!d.resource?startupDeadline(req):null;const fetched=await fetchValidatedMedia(start,headers,d.type,sourceOrigin,{deadline});let response=fetched.response;const next=fetched.url;
+ const headers=new Headers({'User-Agent':'SnapMovieNow/1.0','Accept-Encoding':'identity'});for(const n of ['range','if-range'])if(req.headers.has(n))headers.set(n,req.headers.get(n));if(req.method==='HEAD')headers.set('range','bytes=0-0');const deadline=!d.resource?startupDeadline(req,Date.now(),d.type==='live'?8000:VOD_STARTUP_MS):null;const fetched=await fetchValidatedMedia(start,headers,d.type,sourceOrigin,{deadline});let response=fetched.response;const next=fetched.url;
  if(d.lease_id&&!(await directory(env,"/lease-check",{sid:d.sid,lease_id:d.lease_id,request_id:d.request_id})).ok){await response.body?.cancel().catch(()=>{});return json({error:"playback_expired"},410)}
  const playlist=response.ok&&(/mpegurl/i.test(response.headers.get('content-type')||'')||new URL(next).pathname.endsWith('.m3u8'));
+ if(response.ok&&!playlist&&deadline!==null)response=await readInitialMedia(response,deadline);
  if(response.ok&&d.type==='live'&&d.ext==='m3u8'&&!d.resource&&!playlist){await response.body?.cancel();throw Error('invalid_playlist')}
  // Signed HLS endpoints often have no filename extension. Recover every finite
  // binary playlist resource by its declared byte range, including redirects.
@@ -234,7 +235,7 @@ if(matchesOwnerPortal(req))return ownerPortalRequest(req,env);if(matchesReseller
 if(req.method==='POST'&&req.headers.get('Cookie')?.includes('__Host-smn_')&&!canUseCookie(req,env))return json({error:'origin_not_allowed'},403);
 if(req.headers.get('Origin')&&!allowedOrigins(env).has(req.headers.get('Origin'))&&req.method==='POST')return json({error:'origin_not_allowed'},403);
 if(req.method==="OPTIONS")return new Response(null,{status:204,headers:cors});
-if(u.pathname==="/health")return json({ok:true,service:"snapmovienow-edge",version:SERVICE_VERSION,catalog_maintenance:await catalogMaintenanceStatus(env,directory),capabilities:['xtream','admin-recovery-renewal','backup-integrity','native-profile','metric-retry','admin-credentials-rotation','isolated-backup-recovery','xtream-series-diagnostic','operational-alerts','rotating-media-origins','admin-user-activity','admin-user-comments','reseller-bridge-v1','private-media-diagnostics-v1','live-startup-budget-v1','native-playback-release-v1','viewer-provider-affinity-v1']});
+if(u.pathname==="/health")return json({ok:true,service:"snapmovienow-edge",version:SERVICE_VERSION,catalog_maintenance:await catalogMaintenanceStatus(env,directory),capabilities:['xtream','admin-recovery-renewal','backup-integrity','native-profile','metric-retry','admin-credentials-rotation','isolated-backup-recovery','xtream-series-diagnostic','operational-alerts','rotating-media-origins','admin-user-activity','admin-user-comments','reseller-bridge-v1','private-media-diagnostics-v1','live-startup-budget-v1','native-playback-release-v1','viewer-provider-affinity-v1','vod-startup-budget-v1','hedged-detail-catalog-v1','first-media-byte-check-v1']});
 if(u.pathname==='/reseller-bridge')return resellerBridgeRequest(req,env,ctx);
 if(u.pathname==='/exclusive-media'&&['GET','HEAD'].includes(req.method)){try{return await exclusives.media(req,env,ctx)}catch(e){return json({error:e.message},e.status||502)}}
 if(/^\/exclusive-cover\/[a-f0-9]{64}$/.test(u.pathname)&&['GET','HEAD'].includes(req.method)){const image=await exclusives.cover(env,u.pathname.split('/').at(-1));return req.method==='HEAD'?new Response(null,{status:image.status,headers:image.headers}):image;}

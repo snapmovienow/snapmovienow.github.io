@@ -267,7 +267,8 @@ try {
   assert.equal(quick.status,200); assert.equal(background.length,1); assert.equal(await quick.text(),'data');
 } finally {clearTimeout(deadline); unblockRefresh(); await Promise.all(background); globalThis.fetch=savedFetch}
 
-failValidation=true;
+// After the bounded validation cache expires, an upstream outage still fails closed.
+offset+=31000;failValidation=true;
 const unavailablePlayback=await media('movie',movies[0].stream_id,'mp4');
 assert.equal(unavailablePlayback.status,503);assert.equal((await unavailablePlayback.json()).error,'provider_unavailable');
 assert.equal((await leases()).length,0);

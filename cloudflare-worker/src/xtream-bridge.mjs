@@ -1,4 +1,4 @@
-import {LiveStartup,reportLiveResult} from './live-startup.mjs';
+import {playbackStartup,reportLiveResult} from './live-startup.mjs';
 import {playbackMonitorClient,attachPlaybackQuality} from './native-playback-quality.mjs';
 import {requestConnectionClient} from './connection-monitor.mjs';
 import {handleXtream} from './xtream.mjs';
@@ -28,7 +28,8 @@ export function createXtreamBridge(deps) {
       const ensured = await deps.sessionCall(env,sid,'/ensure',{exp,identity});
       if (!ensured.ok) return deps.json({error:'session_unavailable'},503);
       const session = {kind:'session',managed:true,sid,exp:(await ensured.json()).exp,permissions:user.permissions,...identity};
-      const count = await (await privateCall('/xtream-count',{uid:user.id})).json();
+      const url=new URL(req.url),needsCount=url.pathname==='/player_api.php'&&!url.searchParams.get('action');
+      const count = needsCount?await (await privateCall('/xtream-count',{uid:user.id})).json():{connections:0};
       return {user,session,username:user.username,connections:count.connections};
     };
     const catalog = createProviderCatalog(deps, env, ctx);
@@ -47,7 +48,7 @@ export function createXtreamBridge(deps) {
       if(!activity)try{activity=await cachedPlaybackActivity(catalog,{type:item.type,server:item.server,id:item.upstreamId,parentId:item.parentId})}catch{}
       const request_id=crypto.randomUUID();
       const begun=await privateCall('/playback-begin',{sid:session.sid,request_id});if(!begun.ok)return deps.json(await begun.json(),begun.status);
-      const startup=item.type==='live'?new LiveStartup(request.signal):null;
+      const startup=playbackStartup(item.type,request.signal);
       const excluded=[];let lastFailure=null;
       for(let attempt=0;attempt<3&&(attempt===0||!startup||startup.available);attempt++){
       const mediaSession={...session,request_id,client:requestConnectionClient(request),mediaKey:item.type+'|'+item.server+'|'+item.upstreamId+'|'+item.ext,...(activity?{activity}:{})};

@@ -165,7 +165,7 @@ export async function accountsFetch(state,env,req){
  });
  if(p==='/provider-result')return store.transaction(async tx=>{
   const local=leases.in(tx),lease=await local.get(b.lease_id);
-  if(!lease||lease.sid!==b.sid||lease.request_id!==b.request_id||lease.provider_id!==b.provider_id||!String(lease.mediaKey||'').startsWith('live|')||!['signal','validation'].includes(b.stage)||typeof b.ok!=='boolean')return answer({error:'health_scope'},403);
+  if(!lease||lease.sid!==b.sid||lease.request_id!==b.request_id||lease.provider_id!==b.provider_id||!/^(live|movie|series)\|/.test(String(lease.mediaKey||''))||!['signal','validation'].includes(b.stage)||typeof b.ok!=='boolean')return answer({error:'health_scope'},403);
   const key='playback:'+b.sid,state=await tx.get(key);
   if(lease.until<=Date.now()||state?.request_id!==b.request_id)return answer({error:'playback_superseded'},410);
   if(!b.ok){lease.providerFailed=true;forgetProvider(state,lease);}

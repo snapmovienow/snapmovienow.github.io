@@ -17,9 +17,10 @@ globalThis.fetch=async(url,opts={})=>{const u=new URL(url);
  if(u.pathname.endsWith('/login'))return new Response(opts.method==='POST'?'<a href="dashboard">Welcome</a>':'<input name="password">',{headers:{'set-cookie':'PHPSESSID=fixture; path=/'}});
  if(u.pathname.endsWith('/table'))return Response.json({recordsFiltered:3,data:[1,2,3].map(row)});
  if(u.pathname==='/player_api.php'){
-  const action=u.searchParams.get('action');if(action==='get_live_streams')return Response.json([10,11,12,13].map(stream_id=>({stream_id,name:'Channel '+stream_id})));
+  const action=u.searchParams.get('action');if(action==='get_vod_streams')return Response.json([{stream_id:44,name:'Fixture movie',container_extension:'mp4'}]);if(action==='get_live_streams')return Response.json([10,11,12,13].map(stream_id=>({stream_id,name:'Channel '+stream_id})));
   if(action)return Response.json([]);validations.push(u.searchParams.get('username'));return Response.json({user_info:{auth:1,status:'Active',max_connections:'3',active_cons:'0'}});
  }
+ if(u.pathname.startsWith('/movie/')){signals.push(u.pathname.split('/')[2]);return new Response('fixture video',{status:206,headers:{'content-type':'video/mp4','content-length':'13','content-range':'bytes 0-12/100'}});}
  if(u.pathname.startsWith('/live/')){
   const source=u.pathname.split('/')[2];signals.push(source);
   if(failedSource==='*'||source===failedSource)return new Response('unavailable',{status:503});
@@ -63,6 +64,10 @@ failedSource='*';
 const broken=await worker.fetch(new Request(origin+'/live/fixture-user/viewer-password-test/'+channels[0].stream_id+'.ts',{headers:headers('smarters')}),env,ctx);
 assert.ok(broken.status>=500);await broken.body.cancel();assert.equal(await leases.count(),0);
 assert.equal((await storage.get('playback:'+initial.sid)).affinities.ccf,undefined,'failed TS response cancellation cannot repin the last failed source');failedSource=null;
+// The same affinity/recent validation applies to movie and episode byte ranges.
+const moviesResponse=await worker.fetch(new Request(origin+'/player_api.php?username=fixture-user&password=viewer-password-test&action=get_vod_streams',{headers:headers('smarters')}),env,ctx),movies=await moviesResponse.json();
+const vodUrl=origin+'/movie/fixture-user/viewer-password-test/'+movies[0].stream_id+'.mp4',beforeValidation=validations.length;
+for(let i=0;i<3;i++){const vod=await worker.fetch(new Request(vodUrl,{headers:{...headers('smarters'),Range:'bytes=0-12'}}),env,ctx);assert.equal(vod.status,206);assert.equal(await vod.text(),'fixture video');assert.equal(validations.length,beforeValidation+1,'seeks and repeat VOD requests reuse only a recently validated source');}
 const auth=(await post({op:'auth',username:'fixture-user',password:'viewer-password-test'})).data.access_token;
 await admin('save',{username:'fixture-user',password:'changed-viewer-password-test',status:'active'});
 const stale=await worker.fetch(new Request(origin+'/player_api.php?username=fixture-user&password=viewer-password-test',{headers:headers('smarters')}),env,ctx);assert.equal(stale.status,401);

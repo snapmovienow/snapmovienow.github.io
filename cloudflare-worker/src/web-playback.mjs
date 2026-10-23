@@ -1,4 +1,4 @@
-import {LiveStartup,reportLiveResult} from './live-startup.mjs';
+import {playbackStartup,reportLiveResult} from './live-startup.mjs';
 // One client request owns every attempt. Release a failed allocation before
 // choosing another authorised account; a cancelled request cannot restart.
 export async function prepareWebPlayback(body,session,requestUrl,env,ctx,deps){
@@ -9,7 +9,7 @@ export async function prepareWebPlayback(body,session,requestUrl,env,ctx,deps){
   const begun=await deps.directory(env,'/playback-begin',{sid:session.sid,request_id,revision:body.revision});
   if(!begun.ok)return deps.json(await begun.json(),begun.status);
  }
- const startup=type==='live'&&session.managed?new LiveStartup():null;
+ const startup=session.managed?playbackStartup(type):null;
  const excluded=[],attempts=type==='live'&&session.managed?3:1;
  for(let attempt=0;attempt<attempts&&(attempt===0||!startup||startup.available);attempt++){
   let credentials=session,lease_id,provider_id,allocation;

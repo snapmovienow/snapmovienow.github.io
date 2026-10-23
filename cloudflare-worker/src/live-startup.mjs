@@ -1,17 +1,30 @@
 // One budget is shared by account validation and signal retries for one channel.
 export const LIVE_STARTUP_MS=8000;
+export const VOD_STARTUP_MS=12000;
 export class LiveStartup {
- constructor(signal,now=Date.now){this.signal=signal;this.now=now;this.deadline=now()+LIVE_STARTUP_MS;this.attempts=0;}
+ constructor(signal,now=Date.now,budget=LIVE_STARTUP_MS){this.signal=signal;this.now=now;this.deadline=now()+budget;this.attempts=0;}
  remaining(){if(this.signal?.aborted)throw Error('playback_superseded');return Math.max(0,this.deadline-this.now());}
  timeout(cap){const left=this.remaining();if(!left)throw Error('live_startup_timeout');return Math.min(cap,left);}
  claim(){if(this.attempts>=3||!this.remaining())return false;this.attempts++;return true;}
  get available(){return this.attempts<3&&this.remaining()>0;}
  prepare(request){const headers=new Headers(request.headers);headers.set('X-SMN-Prepare','1');headers.set('X-SMN-Startup-Deadline',String(this.deadline));return new Request(request,{headers});}
 }
-export function startupDeadline(request,now=Date.now()){
+export function startupDeadline(request,now=Date.now(),maximum=LIVE_STARTUP_MS){
  if(request.headers.get('X-SMN-Prepare')!=='1')return null;
  const value=Number(request.headers.get('X-SMN-Startup-Deadline'));
- return Number.isFinite(value)&&value>0?Math.min(value,now+LIVE_STARTUP_MS):now+LIVE_STARTUP_MS;
+ return Number.isFinite(value)&&value>0?Math.min(value,now+maximum):now+maximum;
+}
+export const playbackStartup=(type,signal)=>new LiveStartup(signal,Date.now,type==='live'?LIVE_STARTUP_MS:VOD_STARTUP_MS);
+// A 200 header with a silent body is not a working source. Keep the same
+// startup deadline until its first payload, then relay without that deadline.
+export async function readInitialMedia(response,deadline){
+ const reader=response.body?.getReader();if(!reader)throw Error('media_empty');let timer,first;
+ try{const timeout=startupTimeout(deadline,VOD_STARTUP_MS);first=await Promise.race([reader.read(),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('live_startup_timeout')),timeout)})]);if(first.done||!first.value?.byteLength)throw Error('media_empty')}
+ catch(error){void reader.cancel(error).catch(()=>{});throw error}
+ finally{clearTimeout(timer)}
+ let prefix=first.value;
+ const body=new ReadableStream({async pull(controller){try{if(prefix){controller.enqueue(prefix);prefix=null;return}const next=await reader.read();if(next.done)controller.close();else controller.enqueue(next.value)}catch(error){controller.error(error)}},cancel:reason=>reader.cancel(reason)});
+ return new Response(body,{status:response.status,statusText:response.statusText,headers:response.headers});
 }
 export function startupTimeout(deadline,cap,now=Date.now()){
  if(deadline===null||deadline===undefined)return cap;

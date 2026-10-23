@@ -38,3 +38,7 @@ assert.ok(healthInfo.capabilities.includes('xtream-series-diagnostic'),'health i
 const unauthorised = await worker.fetch(new Request('https://example.test/player_api.php'),{});
 assert.equal(unauthorised.status,401); assert.equal((await unauthorised.json()).error,'credentials_required');
 console.log('PASS: bounded error diagnostics redact credentials, preserve cancellation/Range/CORS, survive logger failures, and retain Xtream authentication.');
+
+let clock=1000;
+const slow=await traceRequest(request,()=>{clock+=3000;return new Response('ok')},{now:()=>clock,logger:e=>events.push(e)});
+assert.equal(slow.headers.get('Server-Timing'),'smn;dur=3000');assert.equal(events.at(-1).event,'request_slow');assert.equal(events.at(-1).elapsed_ms,3000);assert.equal(events.at(-1).route,'/live/*');assert.ok(!JSON.stringify(events.at(-1)).includes(secret));

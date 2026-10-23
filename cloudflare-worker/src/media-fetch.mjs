@@ -40,7 +40,11 @@ export function recoverMedia(response, fetchRange, authorized, attempts = 2, idl
   const validator = response.headers.get(validatorName);
   // Cloudflare native byte streams can coalesce packets without a JS callback
   // per packet. Keep the ordinary reader for browsers and test runtimes.
-  const openReader=body=>{try{const r=body.getReader({mode:'byob'});if(typeof r.readAtLeast==='function')return {read:remaining=>r.readAtLeast(Math.min(65536,Math.max(1,remaining)),new Uint8Array(65536)),cancel:reason=>r.cancel(reason)};r.releaseLock()}catch{}return body.getReader()};
+  const openReader=body=>{
+    try{const r=body.getReader({mode:'byob'});if(typeof r.readAtLeast==='function'){
+      let initial=true;return {read:remaining=>{const minimum=initial?1:Math.min(65536,Math.max(1,remaining));initial=false;return r.readAtLeast(minimum,new Uint8Array(65536))},cancel:reason=>r.cancel(reason)};
+    }r.releaseLock()}catch{}return body.getReader();
+  };
   let reader = openReader(response.body), received = 0, retries = 0, closed = false;
   const body = new ReadableStream({
     async pull(controller) {

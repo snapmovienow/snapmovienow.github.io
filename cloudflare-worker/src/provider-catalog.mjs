@@ -1,5 +1,6 @@
 import {encodeCatalog,decodeCatalog} from './catalog-cache.mjs';
 import {countSeriesEpisodes} from './xtream-series.mjs';
+import {selectCatalogDetail} from './catalog-detail-race.mjs';
 const catalogs = new WeakMap();
 const MAX_CACHE_BYTES = 16 * 1024 * 1024;
 const encoder = new TextEncoder();
@@ -66,6 +67,18 @@ export function createProviderCatalog(deps, env, ctx) {
         if(!credentials.length)throw Error('server_unavailable');
         const groups=new Map();for(const account of credentials){if(!groups.has(account.server))groups.set(account.server,[]);groups.get(account.server).push(account)}
         let fresh=0;const replies=await Promise.all([...groups].map(async([id,accounts])=>{
+          if(action==='get_series_info'||action==='get_vod_info'){
+            const safe=await selectCatalogDetail(accounts,async(account,signal)=>{
+              const url=new URL(account.origin+'/player_api.php');
+              url.searchParams.set('username',account.username);url.searchParams.set('password',account.password);url.searchParams.set('action',action);
+              for(const [name,value]of Object.entries(params))url.searchParams.set(name,String(value));
+              const response=await fetch(url,{headers:{'User-Agent':'SnapMovieNow/1.0'},signal});
+              if(!response.ok){void response.body?.cancel();return null}
+              const raw=await response.json();if(!validProviderReply(action,raw))return null;
+              const data=publicMetadata(raw,account);return {data,empty:action==='get_series_info'&&!countSeriesEpisodes(data)};
+            });
+            if(safe!==null){fresh++;return safe}return null;
+          }
           let emptySeries=null;
           for(const account of accounts){
             const url=new URL(account.origin+'/player_api.php');
