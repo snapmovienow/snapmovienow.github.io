@@ -296,7 +296,7 @@ if(op==="auth"){
 }
 let session=await timed(trace,'auth',()=>unticket(env,String(b.access_token||cookieToken(req,env,"session"))));if(session?.kind!=="session"||!(await timed(trace,'auth',()=>sessionCall(env,session.sid,"/check"))).ok)return json({error:"session_required"},401);
 const permissions=contentPermissions(session.managed?await (await directory(env,'/permissions',{username:session.username})).json():null);session.permissions=permissions;
-const rawCatalog=createProviderCatalog(catalogDeps,env,ctx),catalog=(...args)=>timed(trace,'catalog',()=>rawCatalog(...args)),adultPolicy=createAdultPolicy(catalog);
+const rawCatalog=createProviderCatalog(catalogDeps,env,ctx),catalog=(...args)=>timed(trace,'catalog',()=>rawCatalog(...args)),adultPolicy=createAdultPolicy(catalog,rawCatalog.inspect);
 if(op==='session_info')return json(accountInfo(session));
 if(op==='playback_metric'){
  if(!session.managed)return json({ok:true,ignored:true});

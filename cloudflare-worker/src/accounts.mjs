@@ -12,6 +12,7 @@ import {catalogMaintenanceRoute,runCatalogMaintenance} from './catalog-maintenan
 // Private Durable Object routes. This module is never served as an HTTP endpoint.
 import {contentPermissions} from './content-permissions.mjs';
 import {catalogCacheRoute} from './catalog-cache.mjs';
+import {inspectCatalog} from './catalog-permissions.mjs';
 import {providerDashboard} from './provider-dashboard.mjs';
 import {openLeaseStore} from './lease-store.mjs';
 import {cleanPlaybackActivity} from './playback-activity.mjs';
@@ -65,6 +66,7 @@ export async function accountsFetch(state,env,req){
   if(result)return result;
   return backupRoute(store,env,p,b,leases);
  }
+ if(p==='/xtream-cache-inspect')return await inspectCatalog(store,b);
  if(p==='/xtream-cache-get'||p==='/xtream-cache-put')return await catalogCacheRoute(store,p,b);
  if(p==='/xtream-config')return answer(await store.get('xtream-config')||{enabled:true,version:1});
  if(p==='/xtream-save')return store.transaction(async tx=>{if(typeof b.enabled!=='boolean')return answer({error:'invalid_setting'},400);const old=await tx.get('xtream-config')||{enabled:true,version:1};const next={enabled:b.enabled,version:old.version+(old.enabled===b.enabled?0:1)};await tx.put('xtream-config',next);if(!next.enabled)await leases.in(tx).removeFor({xtream:true});return answer(next)});

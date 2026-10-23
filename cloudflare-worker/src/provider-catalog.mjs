@@ -40,14 +40,17 @@ export function validProviderReply(action,raw){
 export function createProviderCatalog(deps, env, ctx,{timeoutMs=CATALOG_FETCH_MS,hedgeMs=750}={}) {
   // One factory belongs to one incoming request. Sequential policy/detail
   // lookups share a budget; cache hits do not start or consume that budget.
-  let deadline;
-  return async (action, server, params={}, options={}) => {
+  let deadline,configuration;
+  const scopeForRequest=()=>configuration??=(async()=>{
+    const providers=await (await deps.directory(env,'/providers')).json();
+    if(!providers.length)throw Error('provider_not_configured');
+    return fingerprint(env.TICKET_SECRET,JSON.stringify(providers.map(p=>[p.source,p.origin,p.url,p.encrypted])));
+  })();
+  const catalog=async (action, server, params={}, options={}) => {
       const within=async promise=>{let timer;try{return await Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('catalog_timeout')),Math.max(1,deadline-Date.now()))})])}finally{clearTimeout(timer)}};
-      const providers = await (await deps.directory(env,'/providers')).json();
-      if (!providers.length) throw Error('provider_not_configured');
-      // Changing or removing a connection changes this scope. A cached catalog
-      // never survives removal of its authorised provider configuration.
-      const scope = await fingerprint(env.TICKET_SECRET, JSON.stringify(providers.map(p=>[p.source,p.origin,p.url,p.encrypted])));
+      // Read current authorized configuration once per incoming request, shared
+      // by parallel category/title checks; never across user requests.
+      const scope=await scopeForRequest();
       const key = await fingerprint(env.TICKET_SECRET, JSON.stringify([scope,action,server||'',params]));
       const list = ['get_live_categories','get_live_streams','get_vod_categories','get_vod_streams','get_series_categories','get_series'].includes(action);
       const detail=['get_series_info','get_vod_info'].includes(action),persist=list||detail;
@@ -111,4 +114,15 @@ export function createProviderCatalog(deps, env, ctx,{timeoutMs=CATALOG_FETCH_MS
       if(!options.fresh&&saved&&list&&ctx?.waitUntil){ctx.waitUntil(run().catch(()=>{}));return saved.data}
       try{return await run()}catch(error){if(saved&&list)return saved.data;throw error}
     };
+  catalog.inspect=async(kind,server,id)=>{
+    const spec={live:['get_live_streams','get_live_categories','stream_id'],movie:['get_vod_streams','get_vod_categories','stream_id'],series_list:['get_series','get_series_categories','series_id']}[kind];
+    if(!spec)return undefined;
+    const scope=await scopeForRequest();
+    const keys=action=>Promise.all([String(server||'ccf'),''].map(s=>fingerprint(env.TICKET_SECRET,JSON.stringify([scope,action,s,{}]))));
+    const [rowKeys,categoryKeys]=await Promise.all([keys(spec[0]),keys(spec[1])]);
+    const response=await deps.registry(env,'/xtream-cache-inspect',{rowKeys,categoryKeys,idField:spec[2],server:String(server||'ccf'),id:String(id)});
+    if(!response?.ok)return undefined;
+    const decision=await response.json();return decision.found?{_adult:decision.adult===true}:null;
+  };
+  return catalog;
 }

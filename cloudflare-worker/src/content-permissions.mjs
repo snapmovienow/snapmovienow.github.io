@@ -40,7 +40,7 @@ export function markAdultRows(rows, categories = []) {
   return rows.map(row => ({...row, _adult:isAdult(row) || idsFor(row).some(id => adult.has(rowKey(row._server, id)))}));
 }
 
-export function createAdultPolicy(catalog) {
+export function createAdultPolicy(catalog,inspectSnapshot=catalog.inspect) {
   const lists = new Map();
   const source = async (kind,server) => {
     const key=kind+'|'+String(server||'ccf');
@@ -53,6 +53,8 @@ export function createAdultPolicy(catalog) {
     return lists.get(key);
   };
   const inspect = async (kind, server, id) => {
+    if(inspectSnapshot){const selected=await inspectSnapshot(kind,server,id);if(selected!==undefined)return selected;}
+
     const {rows,adult}=await source(kind,server),row=findRow(rows,specs[kind][2],server,id);
     return row?{_adult:isAdult(row)||idsFor(row).some(id=>adult.has(rowKey(row._server,id)))}:null;
   };
