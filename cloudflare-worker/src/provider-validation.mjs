@@ -3,7 +3,7 @@
 export const PROVIDER_VALIDATION_MS=2500;
 export const VALIDATION_TOTAL_MS=5000;
 const scopes=new WeakMap();
-export function sharedProviderValidation(scope,key,read,{timeoutMs=PROVIDER_VALIDATION_MS,signal}={}){
+export function sharedProviderValidation(scope,key,read,{timeoutMs=PROVIDER_VALIDATION_MS,signal,ctx}={}){
  if(signal?.aborted)return Promise.reject(Error('playback_superseded'));
  let pending=scopes.get(scope);if(!pending)scopes.set(scope,pending=new Map());
  let entry=pending.get(key);
@@ -12,6 +12,9 @@ export function sharedProviderValidation(scope,key,read,{timeoutMs=PROVIDER_VALI
   // A waiter with a nearly exhausted startup budget must not shorten a second
   // viewer's valid request. Each waiter has its own timeout below.
   entry.work=Promise.resolve().then(()=>read(controller.signal,PROVIDER_VALIDATION_MS));
+  // Keep the originating invocation alive if its viewer leaves while another
+  // invocation still awaits the parsed result. No Response/stream is shared.
+  ctx?.waitUntil(entry.work.catch(()=>{}));
   entry.work.then(()=>{if(pending.get(key)===entry)pending.delete(key)},()=>{if(pending.get(key)===entry)pending.delete(key)});
   if(pending.size<64)pending.set(key,entry);
  }
