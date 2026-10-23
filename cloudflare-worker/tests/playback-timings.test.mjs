@@ -1,0 +1,23 @@
+import assert from 'node:assert/strict';
+import {PlaybackTimings,playbackTimingsRoute,startupTimingObservations} from '../src/playback-timings.mjs';
+import {traceRequest} from '../src/request-diagnostics.mjs';
+let now=0;const trace=new PlaybackTimings(()=>now).identify('series','android');
+await trace.run('auth',async()=>{now+=20});
+await assert.rejects(trace.run('origin',async()=>{now+=100;throw Error('secret-url')}));
+trace.add('https://password.example',500);trace.add('catalog',NaN);
+trace.merge(new Response(null,{headers:{'Server-Timing':'smn_first_byte;dur=37,smn_password;dur=999,smn_origin;dur=-10'}}));
+assert.deepEqual(trace.snapshot(502),{type:'series',platform:'android',status:502,totalMs:120,stages:{auth:{ms:20,count:1},origin:{ms:100,count:1},first_byte:{ms:37,count:1}}});
+let ingested;
+const r=await traceRequest(new Request('https://test/series/private/password/1.mp4'),async t=>{t.identify('series','android');await t.run('origin',async()=>{now+=200});return new Response('media',{headers:{'Server-Timing':'smn_origin;dur=200'}})},{now:()=>now,onTiming:t=>{ingested=t}});
+assert.equal((r.headers.get('Server-Timing').match(/smn_origin;/g)||[]).length,1,'DO timing is represented exactly once');
+assert.equal(ingested.stages.origin.ms,200);assert.ok(!JSON.stringify(ingested).includes('private'));
+class Store{constructor(){this.data=new Map()}async get(k){return structuredClone(this.data.get(k))}async put(k,v){this.data.set(k,structuredClone(v))}async delete(k){this.data.delete(k)}async list({prefix}){return new Map([...this.data].filter(([k])=>k.startsWith(prefix)))}async transaction(fn){return fn(this)}}
+const store=new Store(),route=(path,body={})=>playbackTimingsRoute(store,new Request('https://private/operations/'+path,{method:'POST',body:JSON.stringify(body)}));
+for(let i=0;i<20;i++)assert.equal((await route('timing-ingest',{timing:{type:'series',platform:'android',status:i===19?502:200,totalMs:i===19?5000:100,stages:{origin:{ms:i===19?4500:80,count:1}}}})).status,200);
+const report=await (await route('timing-read')).json();assert.equal(report.groups.length,1);assert.equal(report.groups[0].requests,20);assert.equal(report.groups[0].failures,1);assert.equal(report.groups[0].stages.total.p95UpperMs,100);assert.equal(report.groups[0].stages.origin.p95UpperMs,100);
+assert.equal((await route('timing-ingest',{timing:{...ingested,stages:{password:{ms:1,count:1}}}})).status,400,'only allowlisted scalar stages persist');
+assert.equal(startupTimingObservations([{...report.groups[0],stages:{total:{p95UpperMs:20000},origin:{p95UpperMs:15000}}}])[0].bad,true);
+assert.match(startupTimingObservations([{...report.groups[0],stages:{total:{p95UpperMs:20000},origin:{p95UpperMs:15000}}}])[0].detail,/respuesta del origen/);
+assert.equal(startupTimingObservations([{...report.groups[0],requests:1}]).length,0,'one sparse sample cannot declare an outage or recovery');
+assert.equal(startupTimingObservations([{...report.groups[0],failures:0}])[0].bad,false);
+console.log('PASS: bounded per-stage startup timing, failure attribution, DO merge without duplication, redacted aggregate p95 and invalid metric rejection.');

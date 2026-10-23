@@ -28,6 +28,10 @@ jobs:
         working-directory: cloudflare-worker
       - run: node scripts/build-pages.mjs
       - run: npm test
+      - name: Playback startup performance release gate
+        run: npm run test:performance
+        env:
+          SMN_PERFORMANCE_REPORT: artifacts/playback-performance.json
       - run: npm run test:platform
       - run: npm run test:staging
       - name: Build from Cloudflare deployment root

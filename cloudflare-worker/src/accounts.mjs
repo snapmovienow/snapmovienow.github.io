@@ -1,4 +1,4 @@
-import {recordProviderHealth,rankProviderCandidates} from './provider-health.mjs';
+import {recordProviderHealth,rankProviderCandidates,providerCircuitState,claimProviderTrial,providerHealthSummary} from './provider-health.mjs';
 import {affinityGroup,providerAffinity,rememberProvider,forgetProvider,recentlyValidated,pruneAffinities} from './provider-affinity.mjs';
 import {exclusiveCatalogRoute,exclusiveSnapshot,selectExclusive,visibleExclusive} from './exclusive-catalog.mjs';
 import {cleanConnectionClient,recordConnectionLimit,updateConnectionQuality,closeResellerConnection} from './connection-monitor.mjs';
@@ -104,6 +104,15 @@ export async function accountsFetch(state,env,req){
   if(p==='/login'){await safelyRecord(()=>recordClientAccess(store,store.sql,u,'login',b.connection,b.authKey?'xtream':'api'));await safelyRecord(()=>recordCustomerActivity(store,u.id,Date.now(),b.connection));}
   await store.delete(bucket);return answer({id:u.id,username:u.username,version:u.version,expiresAt:u.expiresAt,permissions:contentPermissions(u.permissions)});
  }
+ if(p==='/canary-identity'){
+  // Scheduled probes may act only as the one explicitly configured customer.
+  // This private route cannot enumerate users or mint an administrator session.
+  const configured=env.PLAYBACK_CANARY_USERNAME;
+  if(typeof configured!=='string'||!configured||b.username!==configured||b.admin||!validName(normal(configured)))return answer({error:'canary_not_configured'},403);
+  const u=await store.get('user:'+normal(configured)),admin=await store.get('admin');
+  if(!alive(u)||u.admin||u.role==='admin'||u.id===admin?.id)return answer({error:'canary_account_unavailable'},409);
+  return answer({id:u.id,username:u.username,version:u.version,expiresAt:u.expiresAt,permissions:contentPermissions(u.permissions)});
+ }
  if(p==='/check'){
   if(b.xtream){const config=await store.get('xtream-config')||{enabled:true,version:1};if(!config.enabled||config.version!==b.xtreamVersion)return answer({ok:false},401)}
   const u=await store.get(b.admin?'admin':'user:'+normal(b.username));return answer({ok:!!(u&&u.id===b.uid&&u.version===b.version&&(b.admin||alive(u)))},u&&u.id===b.uid&&u.version===b.version&&(b.admin||alive(u))?200:401);
@@ -163,15 +172,18 @@ export async function accountsFetch(state,env,req){
   if(used>=3){await recordConnectionLimit(tx,user,{...b,mediaKey,activity:{title:found.media===found.row?found.row.name:found.row.name+' · '+found.media.title}},used);return answer({error:'user_connection_limit'},409);}
   const id=crypto.randomUUID();await local.put(id,{sid:b.sid,uid:b.uid,username:user.username,version:user.version,request_id:b.request_id,exclusiveId:b.exclusiveId,exclusiveParentId:found.row.id,playbackRevision:b.playbackRevision,mediaKey,activity:{title:found.media===found.row?found.row.name:found.row.name+' · '+found.media.title},client:cleanConnectionClient(b.client),startedAt:Date.now(),until:Date.now()+90000,...(b.xtream?{xtream:true}:{})});await recordCustomerActivity(tx,user.id,Date.now(),b.client);return answer({lease_id:id});
  });
+ if(p==='/provider-health')return answer(providerHealthSummary(await store.get('provider-health')));
  if(p==='/provider-result')return store.transaction(async tx=>{
   const local=leases.in(tx),lease=await local.get(b.lease_id);
   if(!lease||lease.sid!==b.sid||lease.request_id!==b.request_id||lease.provider_id!==b.provider_id||!/^(live|movie|series)\|/.test(String(lease.mediaKey||''))||!['signal','validation'].includes(b.stage)||typeof b.ok!=='boolean')return answer({error:'health_scope'},403);
   const key='playback:'+b.sid,state=await tx.get(key);
   if(lease.until<=Date.now()||state?.request_id!==b.request_id)return answer({error:'playback_superseded'},410);
+  if(lease.providerReports?.[b.stage]!==undefined)return answer({ok:true,duplicate:true});
+  lease.providerReports={...lease.providerReports,[b.stage]:b.ok};
   if(!b.ok){lease.providerFailed=true;forgetProvider(state,lease);}
   else if(b.stage==='validation'){lease.validatedAt=Date.now();rememberProvider(state,lease);}
   await local.put(b.lease_id,lease);await tx.put(key,pruneAffinities(state));
-  const health=recordProviderHealth(await tx.get('provider-health'),lease.provider_id,lease.mediaKey,b.ok,b.elapsedMs,b.stage);
+  const health=recordProviderHealth(await tx.get('provider-health'),lease.provider_id,lease.mediaKey,b.ok,b.elapsedMs,b.stage,Date.now(),b.lease_id);
   await tx.put('provider-health',health);return answer({ok:true});
  });
  if(p==='/acquire')return store.transaction(async tx=>{
@@ -198,14 +210,21 @@ export async function accountsFetch(state,env,req){
    // its history intact; all other viewers still count towards capacity.
    for(const l of sessionLeases.values()){const key=String(l.provider_id||'');counts.set(key,Math.max(0,(counts.get(key)||0)-1));}
    const candidates=pool.lines.filter(p=>(p.server||'ccf')===group&&!(b.exclude||[]).includes(p.id)).map(p=>({...p,occupied:p.external+(counts.get(String(p.id))||0)})).filter(p=>p.occupied<p.maxConnections).sort((a,b)=>a.occupied/a.maxConnections-b.occupied/b.maxConnections);
-   const live=String(b.mediaKey||'').startsWith('live|'),ranked=live?rankProviderCandidates(candidates,await tx.get('provider-health'),b.mediaKey):candidates;
-   const preferred=hint&&candidates.find(p=>p.id===hint.provider_id),selected=preferred||ranked[0];if(!selected)return answer({error:candidates.length?'provider_unavailable':'ccf_capacity'},candidates.length?503:409);
+   const health=await tx.get('provider-health')||{},now=Date.now();
+   // Preserve an active viewer's proven assignment. Other viewers' reports
+   // cannot evict it; a circuit for a different requested title still applies.
+   const options=p=>{const active=owned.find(([,l])=>l.provider_id===p.id&&affinityGroup(l)===group);return {ignoreAccount:!!active,ignoreMedia:!!active&&active[1].mediaKey===b.mediaKey}};
+   const available=candidates.filter(p=>!providerCircuitState(health,p.id,b.mediaKey,now,options(p)).blocked);
+   const ranked=rankProviderCandidates(available,health,b.mediaKey,now);
+   const preferred=hint&&available.find(p=>p.id===hint.provider_id),selected=preferred||ranked[0];
+   if(!selected){const retry=candidates.map(p=>providerCircuitState(health,p.id,b.mediaKey,now).retryAfterMs).filter(Boolean);return answer({error:candidates.length?'provider_temporarily_unavailable':'ccf_capacity',...(retry.length?{retry_after_ms:Math.min(...retry)}:{})},candidates.length?503:409);}
    const previous=b.request_id&&owned.find(([,l])=>l.provider_id===selected.id&&affinityGroup(l)===group&&l.mediaKey===b.mediaKey),sameRequest=previous&&previous[1].request_id===b.request_id;
-   const id=previous?previous[0]:crypto.randomUUID(),validatedAt=preferred?hint.validatedAt:0;
+   const id=previous?previous[0]:crypto.randomUUID(),trial=claimProviderTrial(health,selected.id,b.mediaKey,id,now,options(selected)),validatedAt=preferred&&!trial.claimed?hint.validatedAt:0;
+   if(trial.claimed)await tx.put('provider-health',trial.health);
    for(const [oldId]of sessionLeases)if(oldId!==id)await local.remove(oldId,'channel_changed');
    const lease={...(sameRequest?previous[1]:{}),sid:b.sid,uid:b.uid,username:b.username,version:b.version,provider_id:selected.id,providerServer:group,validatedAt,until:Date.now()+90000,...extra,startedAt:previous?previous[1].startedAt||extra.startedAt:extra.startedAt};
    await local.put(id,lease);rememberProvider(playback,lease);await tx.put(playbackKey,playback);await recordCustomerActivity(tx,u.id,Date.now(),b.client);
-   return answer({lease_id:id,provider_id:selected.id,encrypted:selected.encrypted,maxConnections:selected.maxConnections,...(previous?{reused:true,request_id:b.request_id}:{}),...(preferred?{affinity:true,validatedRecently:recentlyValidated(hint)}:{})});
+   return answer({lease_id:id,provider_id:selected.id,encrypted:selected.encrypted,maxConnections:selected.maxConnections,...(previous?{reused:true,request_id:b.request_id}:{}),...(preferred?{affinity:true,validatedRecently:!trial.claimed&&recentlyValidated(hint)}:{})});
   }
   await local.removeFor({sid:b.sid});
   const max=Math.min(provider.maxConnections,Math.max(1,Number(b.upstreamMax)||3));

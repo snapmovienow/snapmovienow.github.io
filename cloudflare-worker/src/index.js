@@ -25,6 +25,9 @@ import {probeProviders} from './provider-monitor.mjs';
 export {OperationsMonitor} from './monitor.mjs';
 import {allowedOrigins,canUseCookie,cookieToken,withSessionCookie,browserResponse} from './browser-sessions.mjs';
 import {traceRequest, SERVICE_VERSION} from './request-diagnostics.mjs';
+import {PlaybackTimings,timed,playbackTimingsRoute} from './playback-timings.mjs';
+import {runPlaybackCanary} from './playback-canary.mjs';
+import {ownPlaybackCanaryAdapter} from './own-playback-canary.mjs';
 import {CCF_MEDIA_ORIGIN} from './ip-media.mjs';
 import {fetchValidatedMedia,validatedMediaTarget} from './media-origin.mjs';
 import {readPanel,readPanelRecord,validateServerUrl} from "./reseller.mjs";
@@ -45,7 +48,7 @@ const ORIGIN=CCF_MEDIA_ORIGIN;
 const SITE="https://snapmovienow.github.io";
 const actions={live:"get_live_streams",live_epg:"get_short_epg",live_categories:"get_live_categories",vod_categories:"get_vod_categories",vod:"get_vod_streams",series_categories:"get_series_categories",series:"get_series",series_info:"get_series_info",vod_info:"get_vod_info"};
 const cors={"Access-Control-Allow-Origin":SITE,"Access-Control-Allow-Methods":"GET, HEAD, POST, OPTIONS","Access-Control-Allow-Headers":"content-type, range, if-range","Access-Control-Expose-Headers":"Content-Length, Content-Range, Accept-Ranges, ETag, Last-Modified","Cache-Control":"no-store"};
-const json=(x,s=200)=>new Response(JSON.stringify(x),{status:s,headers:{...cors,"content-type":"application/json"}});
+const json=(x,s=200)=>new Response(JSON.stringify(x),{status:s,headers:{...cors,"content-type":"application/json",...(s===503&&Number(x?.retry_after_ms)>0?{"Retry-After":String(Math.ceil(Math.min(300000,x.retry_after_ms)/1000))}:{})}});
 const cleanExt=x=>String(x||"mp4").replace(/[^a-zA-Z0-9]/g,"")||"mp4";
 const aesKeys=new Map();
 async function aesKey(secret){if(!aesKeys.has(secret)){if(aesKeys.size>=2)aesKeys.delete(aesKeys.keys().next().value);aesKeys.set(secret,crypto.subtle.digest("SHA-256",new TextEncoder().encode(secret)).then(digest=>crypto.subtle.importKey("raw",digest,{name:"AES-GCM"},false,["encrypt","decrypt"])))}return aesKeys.get(secret)}
@@ -59,10 +62,13 @@ export class PlaybackSession {
  async fetch(req){const path=new URL(req.url).pathname;
  if(path==='/boxpanel/private')return boxpanelFetch(this.state,req);
  if(path==='/ccf-origin-snapshot')return originSnapshotResponse(this,async()=>{const body=await req.json();let p,credential;if(body.monitor){p=(await originMonitorProviders([body.monitor]))[0];if(p.source!==body.source)throw Error('panel_origin_source');credential=p.credential;}else{const providers=await (await directory(this.env,'/providers')).json();p=providers.find(p=>p.mode==='panel'&&p.source===body.source);if(!p)throw Error('panel_origin_source');credential=await unticket(this.env,p.encrypted);}if(await originProviderKey(p)!==body.key)throw Error('panel_origin_source');if(credential?.kind!=='reseller')throw Error('panel_invalid');return readOriginSnapshot({username:credential.username,password:credential.password,base:p.url||'http://ccf.center:8444/NYzkggyG/'});});
- if(path==='/stream'&&['GET','HEAD'].includes(req.method))return serverStreamDirect(req,this.env,new URL(req.url),{waitUntil:promise=>this.state.waitUntil?.(promise)});
+ if(path==='/stream'&&['GET','HEAD'].includes(req.method)){const trace=new PlaybackTimings();try{return trace.response(await observedWebStream(this,req,{waitUntil:promise=>this.state.waitUntil?.(promise)},trace))}catch(error){if(error.message==='media_origin_unapproved')throw error;return trace.response(json({error:['media_origin_unapproved','live_startup_timeout','media_empty'].includes(error.message)?error.message:'stream_unavailable'},error.message==='live_startup_timeout'?504:502))}}
  if(path==='/refresh-pool'){const force=req.method==='POST'&&(await req.json()).force===true;if(!this.refreshing)this.refreshing=refreshProviderPool(this.env,force).finally(()=>{this.refreshing=null});try{const lines=await this.refreshing;return Response.json({ok:true,single:lines===null})}catch(e){return Response.json({error:e.message},{status:503})}}
+ if(path==='/canary-run'){const config=await req.json();if(!envCanaryAllowed(this.env,config))return Response.json({error:'canary_account_not_allowed'},{status:403});const ctx={waitUntil:p=>this.state.waitUntil?.(p)},adapter=ownPlaybackCanaryAdapter({env:this.env,storage:this.state.storage,directory,ownSession,ticket,sessionCall,request:request=>traceRequest(request,trace=>handleRequest(request,this.env,ctx,trace))});const result=await runPlaybackCanary(config,adapter);if(!result.ok&&result.status!=='busy')await this.state.storage.delete('canary-sample:'+config.type);return Response.json(result)}
  if(path==='/monitor-providers'){const providers=await (await directory(this.env,'/providers')).json();return Response.json(await probeProviders(providers,{decrypt:value=>unticket(this.env,value),readPanel,validateAccount,identifier:hashId}))}
  if(path.startsWith('/profile/'))return profileRoute(this.state.storage,req);
+ if(path.startsWith('/operations/timing-'))return playbackTimingsRoute(this.state.storage,req);
+ if(path==='/operations/monitor'){const [playback,timings]=await Promise.all([operationsRoute(this.state.storage,req),playbackTimingsRoute(this.state.storage,new Request('https://private/operations/timing-read',{method:'POST',body:'{}'}))]);return Response.json({...await playback.json(),timings:(await timings.json()).groups})}
  if(path.startsWith('/operations/'))return operationsRoute(this.state.storage,req);
  if(path.startsWith("/accounts/"))return accountsFetch(this.state,this.env,req);if(path==="/create"){const {exp,identity,sid}=await req.json();await this.state.storage.put("exp",exp);if(sid)await this.state.storage.put("sid",sid);if(identity)await this.state.storage.put("identity",identity);await this.state.storage.setAlarm(exp);return new Response("ok")}
  if(path==="/logout"){await this.state.storage.deleteAll();return new Response("ok")}
@@ -70,6 +76,8 @@ export class PlaybackSession {
  const exp=await this.state.storage.get("exp");const identity=await this.state.storage.get("identity");if(identity&&!(await directory(this.env,"/check",identity)).ok)return new Response("Inactive",{status:401});if(path.startsWith('/owner-access/'))return ownerAccessState(this.state.storage,path,await req.json(),exp,identity?.admin===true);return new Response(exp>Date.now()?"ok":"expired",{status:exp>Date.now()?200:401})}
  async alarm(){const sid=await this.state.storage.get("sid");if(sid)await directory(this.env,"/release-session",{sid});await this.state.storage.deleteAll()}
 }
+async function publicCanaryHealth(env){if(!env.PLAYBACK_CANARY_USERNAME)return {configured:false};try{const r=await monitorCall(env,'/status');if(!r.ok)return {configured:true,status:'unknown'};const c=(await r.json()).canary;return {configured:!!c?.configured,enabled:!!c?.enabled,lastCheckedAt:c?.lastCheckedAt||null,status:c?.status||'waiting',results:(c?.results||[]).map(({type,status,at,totalMs,reason})=>({type,status,at,totalMs,reason}))}}catch{return {configured:true,status:'unknown'}}}
+function envCanaryAllowed(env,config){return env.ENVIRONMENT!=='staging'&&!!env.PLAYBACK_CANARY_USERNAME&&String(config?.username||'').toLowerCase()===String(env.PLAYBACK_CANARY_USERNAME).toLowerCase()&&['live','movie','series'].includes(config?.type)}
 async function sessionCall(env,sid,path,body){if(!env.PLAYBACK_SESSIONS||!sid)return new Response("Unauthorized",{status:401});return env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName(sid)).fetch("https://session"+path,{method:body?"POST":"GET",...(body?{body:JSON.stringify({...body,sid})}:{})})}
 async function createSession(env,username,password,accountExpiresAt=null){const sid=crypto.randomUUID(),exp=Math.min(Date.now()+12*60*60*1000,accountExpiresAt||Infinity);const r=await sessionCall(env,sid,"/create",{exp});if(!r.ok)throw Error("session_unavailable");return {sid,username,password,exp,accountExpiresAt,kind:"session"}}
 async function validateAccount(username,password,origin=ORIGIN,timeout=6000){const x=new URL(origin+"/player_api.php");x.searchParams.set("username",username);x.searchParams.set("password",password);const r=await fetch(x,{headers:{"User-Agent":"SnapMovieNow/1.0"},signal:AbortSignal.timeout(timeout)});if(!r.ok){await r.body?.cancel();throw Error('provider_unavailable')}const a=await r.json();if(!['0','1'].includes(String(a?.user_info?.auth)))throw Error('provider_unavailable');return String(a.user_info.auth)==="1"&&(!a.user_info.status||a.user_info.status==="Active")&&(!(Number(a.user_info.exp_date)>0)||Number(a.user_info.exp_date)*1000>Date.now())?a:null}
@@ -107,10 +115,10 @@ async function refreshProviderPool(env,force=false){
 async function catalogCredentials(env,server,ctx,limit=1){const pool=await providerPool(env,ctx);if(!pool)return [{...await providerCredentials(env),server:'ccf'}];const counts=new Map(),credentials=[];for(const l of pool){const id=l.server||'ccf';if((server&&server!==id)||(counts.get(id)||0)>=limit)continue;const d=await unticket(env,l.encrypted);if(d){credentials.push({...d,server:id});counts.set(id,(counts.get(id)||0)+1)}}return credentials}
 async function providerCredentials(env){const pool=await providerPool(env);if(pool){const d=await unticket(env,pool[0].encrypted);if(!d)throw Error("panel_unavailable");return {...d,maxConnections:pool[0].maxConnections}}
  const p=await (await directory(env,"/provider")).json(),d=await unticket(env,p.encrypted||"");if(d?.kind!=="provider")throw Error("provider_not_configured");return {...d,maxConnections:p.maxConnections}}
-async function managedPlayback(env,session,server,ctx,excluded=[],startup=null){const pool=await providerPool(env,ctx);if(!pool){const credentials=await providerCredentials(env);if(startup&&!startup.claim())return {r:json({error:'live_startup_timeout'},504)};const a=await validateAccount(credentials.username,credentials.password,credentials.origin||ORIGIN,startup?startup.timeout(3500):6000);if(!a)throw Error("provider_inactive");const r=await directory(env,"/acquire",{...session,upstreamMax:a.user_info.max_connections,upstreamExternal:session.xtream?a.user_info.active_cons:0});return {r,credentials}}
- let unavailable=false,busy=false;const exclude=[...excluded];for(let i=0;i<Math.min(pool.filter(l=>!server||(l.server||"ccf")===server).length,session.xtream?3:8);i++){if(startup&&!startup.claim())break;const r=await directory(env,"/acquire",{...session,exclude,server});if(!r.ok)return {r};const allocation=await r.json(),credentials=await unticket(env,allocation.encrypted);if((allocation.reused||(startup&&allocation.validatedRecently))&&credentials&&!exclude.includes(allocation.provider_id))return {r:json({lease_id:allocation.lease_id}),credentials,provider_id:allocation.provider_id};let a;const checkedAt=Date.now();try{if(credentials)a=await validateAccount(credentials.username,credentials.password,credentials.origin||ORIGIN,startup?startup.timeout(3500):6000)}catch{unavailable=true}
+async function managedPlayback(env,session,server,ctx,excluded=[],startup=null){const trace=startup?.trace,pool=await timed(trace,'allocation',()=>providerPool(env,ctx));if(!pool){const credentials=await providerCredentials(env);if(startup&&!startup.claim())return {r:json({error:'live_startup_timeout'},504)};const a=await timed(trace,'validation',()=>validateAccount(credentials.username,credentials.password,credentials.origin||ORIGIN,startup?startup.timeout(3500):6000));if(!a)throw Error("provider_inactive");const r=await directory(env,"/acquire",{...session,upstreamMax:a.user_info.max_connections,upstreamExternal:session.xtream?a.user_info.active_cons:0});return {r,credentials}}
+ let unavailable=false,busy=false;const exclude=[...excluded];for(let i=0;i<Math.min(pool.filter(l=>!server||(l.server||"ccf")===server).length,session.xtream?3:8);i++){if(startup&&!startup.claim())break;const r=await timed(trace,'allocation',()=>directory(env,"/acquire",{...session,exclude,server}));if(!r.ok)return {r};const allocation=await r.json(),credentials=await unticket(env,allocation.encrypted);if((allocation.reused||(startup&&allocation.validatedRecently))&&credentials&&!exclude.includes(allocation.provider_id))return {r:json({lease_id:allocation.lease_id}),credentials,provider_id:allocation.provider_id};let a;const checkedAt=Date.now();try{if(credentials)a=await timed(trace,'validation',()=>validateAccount(credentials.username,credentials.password,credentials.origin||ORIGIN,startup?startup.timeout(3500):6000))}catch{unavailable=true}
  if(a&&Number(a.user_info.max_connections)>=allocation.maxConnections&&Number(a.user_info.active_cons||0)<allocation.maxConnections){if(startup)await reportLiveResult(directory,env,session,allocation,true,Date.now()-checkedAt,'validation');return {r:json({lease_id:allocation.lease_id}),credentials,provider_id:allocation.provider_id};}
- if(a)busy=true;if(startup)await reportLiveResult(directory,env,session,allocation,false,Date.now()-checkedAt,'validation');await directory(env,"/release",{sid:session.sid,lease_id:allocation.lease_id,request_id:session.request_id,reason:'upstream_failed'});exclude.push(allocation.provider_id);}
+ if(a)busy=true;if(startup)await reportLiveResult(directory,env,session,allocation,!!a,Date.now()-checkedAt,'validation');await directory(env,"/release",{sid:session.sid,lease_id:allocation.lease_id,request_id:session.request_id,reason:'upstream_failed'});exclude.push(allocation.provider_id);}
  if(startup&&startup.remaining()<=0)return {r:json({error:'live_startup_timeout'},504)};
  return {r:json({error:unavailable?'provider_unavailable':busy?'ccf_capacity':'provider_inactive'},unavailable||!busy?503:409)};
 }
@@ -141,6 +149,8 @@ async function adminRequest(req,env,ctx){
  }
  const security={"admin-password":"/admin-password","mfa-replace-begin":"/mfa-replace-begin","security-status":"/security-status","mfa-begin":"/mfa-begin","mfa-confirm":"/mfa-confirm","mfa-disable":"/mfa-disable","mfa-recovery-renew":"/mfa-recovery-renew","audit":"/audit","backup-list":"/backup-list","backup-status":"/backup-status","backup-verify":"/backup-verify","backup-create":"/backup-create","backup-drill":"/backup-drill","backup-download":"/backup-download","backup-export":"/backup-export","backup-preview":"/backup-preview","backup-restore":"/backup-restore"};
  if(security[action]){const r=await directory(env,security[action],{...b,actor:s.username});return json(await r.json(),r.status)}
+ if(action==='playback-diagnostics'){const [providers,timings]=await Promise.all([directory(env,'/provider-health').then(r=>r.json()),env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_operations_v1')).fetch('https://private/operations/timing-read',{method:'POST',body:'{}'}).then(r=>r.json())]);return json({providers,timings})}
+ if(['playback-canary-status','playback-canary-settings','playback-canary-run'].includes(action)){const path=action==='playback-canary-settings'?'/canary/settings':action==='playback-canary-run'?'/canary/run':'/status';const result=await monitorCall(env,path,action==='playback-canary-settings'?{enabled:b.enabled,...(b.types?{types:b.types}:{})}:{});if(result.ok&&action!=='playback-canary-status')await directory(env,'/audit-write',{actor:s.username,action});return json(await result.json(),result.status)}
  if(action==='playback-health'){const r=await env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_operations_v1')).fetch('https://private/operations/read',{method:'POST',body:'{}'});return json(await r.json(),r.status)}
  if(['alerts-status','alerts-settings','alerts-check','alerts-test'].includes(action)){
   const paths={'alerts-status':'/status','alerts-settings':'/settings','alerts-check':'/tick','alerts-test':'/test'};
@@ -184,30 +194,40 @@ async function gnulaMedia(req,env,u,ctx){const t=u.searchParams.get("t")||"",d=a
  return guardPlaybackExpiry(new Response(req.method==="HEAD"?null:r.body,{status:r.status,headers:out}),d.exp,req.signal,()=>directory(env,"/release-session",{sid:d.sid}),ctx)
 }
 
-async function serverStream(req,env,u,ctx){
+async function observedWebStream(object,req,ctx,trace){
+ const env=object.env,u=new URL(req.url),d=await unticket(env,u.searchParams.get('t')||'');
+ const observe=d?.provider_id&&d.lease_id&&!d.xtream&&!d.resource&&d.type!=='live'&&req.method==='GET';
+ const key=d?.lease_id+':'+d?.request_id,now=Date.now();object.signalReports??=new Map();
+ for(const [id,at]of object.signalReports)if(at<now-300000)object.signalReports.delete(id);
+ const fresh=observe&&!object.signalReports.has(key);if(fresh){if(object.signalReports.size>=128)object.signalReports.delete(object.signalReports.keys().next().value);object.signalReports.set(key,now)}
+ const report=async(ok)=>{if(!fresh)return;await reportLiveResult(directory,env,{sid:d.sid,request_id:d.request_id},{lease_id:d.lease_id,provider_id:d.provider_id},ok,Date.now()-now);if(!ok)await directory(env,'/release',{sid:d.sid,lease_id:d.lease_id,request_id:d.request_id,reason:'upstream_failed'});};
+ try{const response=await serverStreamDirect(req,env,u,ctx,trace);if([410,416].includes(response.status)||req.signal.aborted){if(fresh)object.signalReports.delete(key)}else await report(response.ok);return response}
+ catch(error){if(!req.signal.aborted&&!['playback_superseded','media_origin_unapproved'].includes(error.message))await report(false);throw error}
+}
+async function serverStream(req,env,u,ctx,trace){
  const d=await unticket(env,u.searchParams.get('t')||'');if(!d?.sid||!['movie','series','live'].includes(d.type))return new Response('Expired',{status:410,headers:cors});
  // Keep video parsing, byte-range recovery and stream callbacks out of the
  // front-door request's small CPU budget. One relay per session avoids a shared
  // bottleneck; control-plane revocation and provider capacity remain separate.
- return env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_media_v1:'+d.sid)).fetch(new Request(u.href,req));
+ if(!d.resource)trace?.identify(d.type);const response=await env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_media_v1:'+d.sid)).fetch(new Request(u.href,req));if(trace)trace.merge(response);return response;
 }
-async function serverStreamDirect(req,env,u,ctx){
- const d=await unticket(env,u.searchParams.get('t')||'');if(!d||!['movie','series','live'].includes(d.type)||!/^\d+$/.test(String(d.id))||!(await sessionCall(env,d.sid,'/check')).ok)return new Response('Expired',{status:410,headers:cors});
+async function serverStreamDirect(req,env,u,ctx,trace){
+ const d=await unticket(env,u.searchParams.get('t')||'');if(!d||!['movie','series','live'].includes(d.type)||!/^\d+$/.test(String(d.id))||!(await timed(trace,'auth',()=>sessionCall(env,d.sid,'/check'))).ok)return new Response('Expired',{status:410,headers:cors});
  if(d.lease_id&&!(await directory(env,d.xtream?'/heartbeat':'/lease-check',{lease_id:d.lease_id,sid:d.sid,request_id:d.request_id})).ok)return json({error:'playback_expired'},410);
  const warm=liveStarts.get(u.href);if(warm){liveStarts.delete(u.href);if(warm.until>Date.now()&&req.method==='GET')return new Response(warm.body,{headers:{...cors,'content-type':'application/vnd.apple.mpegurl'}})}
  const folder=d.type==='series'?'series':d.type==='live'?'live':'movie',start=d.resource||(d.origin||ORIGIN)+'/'+folder+'/'+encodeURIComponent(d.username)+'/'+encodeURIComponent(d.password)+'/'+d.id+'.'+cleanExt(d.ext);
  const sourceOrigin=d.origin||ORIGIN;
- const headers=new Headers({'User-Agent':'SnapMovieNow/1.0','Accept-Encoding':'identity'});for(const n of ['range','if-range'])if(req.headers.has(n))headers.set(n,req.headers.get(n));if(req.method==='HEAD')headers.set('range','bytes=0-0');const deadline=!d.resource?startupDeadline(req,Date.now(),d.type==='live'?8000:VOD_STARTUP_MS):null;const fetched=await fetchValidatedMedia(start,headers,d.type,sourceOrigin,{deadline});let response=fetched.response;const next=fetched.url;
+ const headers=new Headers({'User-Agent':'SnapMovieNow/1.0','Accept-Encoding':'identity'});for(const n of ['range','if-range'])if(req.headers.has(n))headers.set(n,req.headers.get(n));if(req.method==='HEAD')headers.set('range','bytes=0-0');const maximum=d.type==='live'?8000:VOD_STARTUP_MS,deadline=!d.resource?(startupDeadline(req,Date.now(),maximum)??Date.now()+maximum):null;const fetched=await timed(trace,'origin',()=>fetchValidatedMedia(start,headers,d.type,sourceOrigin,{deadline}));let response=fetched.response;const next=fetched.url;
  if(d.lease_id&&!(await directory(env,"/lease-check",{sid:d.sid,lease_id:d.lease_id,request_id:d.request_id})).ok){await response.body?.cancel().catch(()=>{});return json({error:"playback_expired"},410)}
  const playlist=response.ok&&(/mpegurl/i.test(response.headers.get('content-type')||'')||new URL(next).pathname.endsWith('.m3u8'));
- if(response.ok&&!playlist&&deadline!==null)response=await readInitialMedia(response,deadline);
+ if(response.ok&&!playlist&&deadline!==null)response=await timed(trace,'first_byte',()=>readInitialMedia(response,deadline));
  if(response.ok&&d.type==='live'&&d.ext==='m3u8'&&!d.resource&&!playlist){await response.body?.cancel();throw Error('invalid_playlist')}
  // Signed HLS endpoints often have no filename extension. Recover every finite
  // binary playlist resource by its declared byte range, including redirects.
  if(!playlist&&(d.resource||d.type!=='live'))response=recoverMedia(response,async(range,validator)=>{const h=new Headers(headers);h.set('range',range);if(validator)h.set('if-range',validator);return (await fetchValidatedMedia(start,h,d.type,sourceOrigin)).response},async()=>(await sessionCall(env,d.sid,'/check')).ok&&(!d.lease_id||(await directory(env,d.xtream?'/heartbeat':'/lease-check',{sid:d.sid,lease_id:d.lease_id,request_id:d.request_id})).ok));
  const out=new Headers(cors);for(const n of ['content-type','content-length','content-range','accept-ranges','etag','last-modified'])if(response.headers.has(n))out.set(n,response.headers.get(n));
  if(req.method==='HEAD'){const total=response.headers.get('content-range')?.match(/\/(\d+)$/)?.[1];if(total)out.set('content-length',total);out.delete('content-range');await response.body?.cancel();return new Response(null,{status:response.status===206?200:response.status,headers:out})}
- if(playlist){const text=d.type==='live'?await readLivePlaylist(response,deadline):await response.text();if(!text.startsWith('#EXTM3U'))throw Error('invalid_playlist');const proxy=async value=>{const target=validatedMediaTarget(new URL(value,next),sourceOrigin);return u.origin+'/stream?t='+await ticket(env,{...d,resource:target.href})};
+ if(playlist){const text=await timed(trace,'first_byte',()=>readLivePlaylist(response,deadline));if(!text.startsWith('#EXTM3U'))throw Error('invalid_playlist');const proxy=async value=>{const target=validatedMediaTarget(new URL(value,next),sourceOrigin);return u.origin+'/stream?t='+await ticket(env,{...d,resource:target.href})};
  const lines=await Promise.all(text.split(/\r?\n/).map(async line=>{if(!line.trim())return line;if(!line.startsWith('#'))return proxy(line.trim());const matches=[...line.matchAll(/URI="([^"]+)"/g)];for(const m of matches)line=line.replace(m[0],'URI="'+await proxy(m[1])+'"');return line}));const body=lines.join('\n');if(req.headers.get('X-SMN-Prepare')==='1'&&!d.resource)rememberLiveStart(u.href,body);out.delete('content-length');out.set('content-type','application/vnd.apple.mpegurl');return new Response(body,{headers:out})}
  const result=new Response(response.body,{status:response.status,headers:out});
  if(d.xtream&&!d.resource&&d.ext!=='m3u8')return guardXtreamResponse(result,async()=>(await sessionCall(env,d.sid,'/check')).ok&&(await directory(env,'/heartbeat',{sid:d.sid,lease_id:d.lease_id,request_id:d.request_id})).ok,()=>directory(env,'/release',{sid:d.sid,lease_id:d.lease_id,request_id:d.request_id}),ctx,req.signal,d.exp);
@@ -229,20 +249,20 @@ const resellerPortalRequest=createResellerPortal({getConfig:portalConfig,catalog
 const ownerPortalRequest=createOwnerPortal({getConfig:portalConfig});
 const telegramTick=createTelegramTick({getConfig:portalConfig});
 const boxClientRequest=createBoxClient({call:boxpanelCall});
-async function handleRequest(req,env,ctx){
+async function handleRequest(req,env,ctx,trace){
 const boxClientResult=await boxClientRequest(req,env);if(boxClientResult)return boxClientResult;
 if(matchesOwnerPortal(req))return ownerPortalRequest(req,env);if(matchesResellerPortal(req))return resellerPortalRequest(req,env);const u=new URL(req.url);
 if(req.method==='POST'&&req.headers.get('Cookie')?.includes('__Host-smn_')&&!canUseCookie(req,env))return json({error:'origin_not_allowed'},403);
 if(req.headers.get('Origin')&&!allowedOrigins(env).has(req.headers.get('Origin'))&&req.method==='POST')return json({error:'origin_not_allowed'},403);
 if(req.method==="OPTIONS")return new Response(null,{status:204,headers:cors});
-if(u.pathname==="/health")return json({ok:true,service:"snapmovienow-edge",version:SERVICE_VERSION,catalog_maintenance:await catalogMaintenanceStatus(env,directory),capabilities:['xtream','admin-recovery-renewal','backup-integrity','native-profile','metric-retry','admin-credentials-rotation','isolated-backup-recovery','xtream-series-diagnostic','operational-alerts','rotating-media-origins','admin-user-activity','admin-user-comments','reseller-bridge-v1','private-media-diagnostics-v1','live-startup-budget-v1','native-playback-release-v1','viewer-provider-affinity-v1','vod-startup-budget-v1','hedged-detail-catalog-v1','first-media-byte-check-v1']});
+if(u.pathname==="/health")return json({ok:true,service:"snapmovienow-edge",version:SERVICE_VERSION,catalog_maintenance:await catalogMaintenanceStatus(env,directory),playback_canary:await publicCanaryHealth(env),capabilities:['xtream','admin-recovery-renewal','backup-integrity','native-profile','metric-retry','admin-credentials-rotation','isolated-backup-recovery','xtream-series-diagnostic','operational-alerts','rotating-media-origins','admin-user-activity','admin-user-comments','reseller-bridge-v1','private-media-diagnostics-v1','live-startup-budget-v1','native-playback-release-v1','viewer-provider-affinity-v1','vod-startup-budget-v1','hedged-detail-catalog-v1','first-media-byte-check-v1','playback-stage-timings-v1','provider-circuit-recovery-v1','own-account-playback-canary-v1','performance-release-gate-v1']});
 if(u.pathname==='/reseller-bridge')return resellerBridgeRequest(req,env,ctx);
 if(u.pathname==='/exclusive-media'&&['GET','HEAD'].includes(req.method)){try{return await exclusives.media(req,env,ctx)}catch(e){return json({error:e.message},e.status||502)}}
 if(/^\/exclusive-cover\/[a-f0-9]{64}$/.test(u.pathname)&&['GET','HEAD'].includes(req.method)){const image=await exclusives.cover(env,u.pathname.split('/').at(-1));return req.method==='HEAD'?new Response(null,{status:image.status,headers:image.headers}):image;}
-if(matchesXtream(u.pathname))return xtreamRequest(req,env,ctx);
+if(matchesXtream(u.pathname))return xtreamRequest(req,env,ctx,trace);
 if(u.pathname==="/admin"&&req.method==="POST"){try{return await adminRequest(req,env,ctx)}catch(e){return json({error:["body_too_large","invalid_json"].includes(e.message)?e.message:"admin_unavailable"},e.message==="body_too_large"?413:e.message==="invalid_json"?400:502)}}
 if(u.pathname==="/gnula-media"&&["GET","HEAD"].includes(req.method)){try{return await gnulaMedia(req,env,u,ctx)}catch{return json({error:"media_unavailable"},502)}}
-if(u.pathname==='/stream'&&['GET','HEAD'].includes(req.method)){try{return await serverStream(req,env,u,ctx)}catch(e){return json({error:e.message==='media_origin_unapproved'?'media_origin_unapproved':'stream_unavailable'},502)}}
+if(u.pathname==='/stream'&&['GET','HEAD'].includes(req.method)){const headers=new Headers(req.headers);headers.delete('X-SMN-Prepare');headers.delete('X-SMN-Startup-Deadline');const mediaRequest=new Request(req,{headers});try{return await serverStream(mediaRequest,env,u,ctx,trace)}catch(e){return json({error:e.message==='media_origin_unapproved'?'media_origin_unapproved':'stream_unavailable'},502)}}
 if(req.method!=="POST")return json({error:"method_not_allowed"},405);
 try{const b=await readLimitedJSON(req),op=String(b.op||"");if(!["auth","logout","gnula_catalog","gnula_series_info","gnula_token","stream_token","session_info","playback_heartbeat","playback_release","playback_cancel","profile_get","profile_patch","playback_metric"].includes(op)&&!Object.hasOwn(actions,op))return json({error:"operation_not_allowed"},403);
 if(op==="auth"){
@@ -253,9 +273,9 @@ if(op==="auth"){
  const old=await unticket(env,String(b.access_token||""));if(old?.kind==="session"&&old.username===session.username){await directory(env,"/release-session",{sid:old.sid});await sessionCall(env,old.sid,"/logout")}
  const token=await ticket(env,session);return withSessionCookie(json({...a,access_token:b.browser_cookie&&canUseCookie(req,env)?null:token}),req,env,"session",token,Math.max(0,Math.floor((session.exp-Date.now())/1000)));
 }
-let session=await unticket(env,String(b.access_token||cookieToken(req,env,"session")));if(session?.kind!=="session"||!(await sessionCall(env,session.sid,"/check")).ok)return json({error:"session_required"},401);
+let session=await timed(trace,'auth',()=>unticket(env,String(b.access_token||cookieToken(req,env,"session"))));if(session?.kind!=="session"||!(await timed(trace,'auth',()=>sessionCall(env,session.sid,"/check"))).ok)return json({error:"session_required"},401);
 const permissions=contentPermissions(session.managed?await (await directory(env,'/permissions',{username:session.username})).json():null);session.permissions=permissions;
-const catalog=createProviderCatalog(catalogDeps,env,ctx),adultPolicy=createAdultPolicy(catalog);
+const rawCatalog=createProviderCatalog(catalogDeps,env,ctx),catalog=(...args)=>timed(trace,'catalog',()=>rawCatalog(...args)),adultPolicy=createAdultPolicy(catalog);
 if(op==='session_info')return json(accountInfo(session));
 if(op==='playback_metric'){
  if(!session.managed)return json({ok:true,ignored:true});
@@ -297,13 +317,14 @@ if(op==="gnula_token"){
  const t=await ticket(env,data);return json({url:proxiedMedia(u.origin,t,source)});
 }
 if(op==="stream_token"){
+ trace?.identify(String(b.type||'movie'),req.headers.get('User-Agent')?.includes('SnapTvNow')?'android':'web');
  if(!["movie","series","live"].includes(String(b.type||"movie"))||!/^\d+$/.test(String(b.id||"")))return json({error:"invalid_stream"},400);
  if(!permissions.adults){
   let parentId=b.series_id;
   if(b.type==='series'&&!parentId)parentId=(await (await registry(env,'/xtream-episode',{server:b.server||'ccf',id:b.id})).json())?.parentId;
   if(!await adultPolicy.allowed({kind:b.type==='series'?'episode':b.type||'movie',server:b.server||'ccf',upstreamId:b.id,parentId}))return json({error:'adult_content_disabled'},403);
  }
- return await prepareWebPlayback(b,session,req.url,env,ctx,{directory,managedPlayback,ticket,serverStream,json,cleanExt,origin:ORIGIN,client:requestConnectionClient(req),activity:async item=>{
+ return await prepareWebPlayback(b,session,req.url,env,ctx,{trace,directory,managedPlayback,ticket,serverStream,json,cleanExt,origin:ORIGIN,client:requestConnectionClient(req),activity:async item=>{
   if(item.type==='series'&&!item.parentId){const record=await (await registry(env,'/xtream-episode',{server:item.server,id:item.id})).json();if(record?.activity)return record.activity;item.parentId=record?.parentId}
   return cachedPlaybackActivity(catalog,item);
  }});
@@ -313,6 +334,7 @@ if(session.managed){
  const kind=op==='live_epg'?'live':op==='series_info'?'series_list':op==='vod_info'?'movie':null;
  if(kind&&!permissions.adults&&!await adultPolicy.allowed({kind,server:b.server||'ccf',upstreamId:b.series_id||b.vod_id||b.stream_id}))return json({error:'adult_content_disabled'},403);
  const params=op==='series_info'?{series_id:b.series_id}:op==='vod_info'?{vod_id:b.vod_id}:op==='live_epg'?{stream_id:b.stream_id,limit:24}:{};
+ if(op==='series_info')trace?.identify('series','web');else if(op==='vod_info')trace?.identify('movie','web');
  let data=await catalog(actions[op],b.server,params);
  if(!permissions.adults){
   if(Array.isArray(data))data=await adultPolicy.filter(actions[op],data);
@@ -332,7 +354,7 @@ export default {scheduled(event,env,ctx){
  if(event.cron===MONITOR_CRON){ctx.waitUntil(telegramTick(env).catch(()=>console.error({event:'telegram_tick_failed'})));ctx.waitUntil(monitorCall(env,'/tick').then(async response=>{if(!response.ok)console.error({event:'monitor_failed'});await response.body?.cancel()}).catch(()=>console.error({event:'monitor_failed'})));if(env.CATALOG_MAINTENANCE_ENABLED==='true')ctx.waitUntil(directory(env,'/catalog-maintenance-tick').then(async r=>{await r.body?.cancel()}).catch(()=>console.error({event:'catalog_maintenance_failed'})));return}
  if(event.cron&&event.cron!=='17 5 * * *')return;
  ctx.waitUntil(directory(env,'/backup-automatic').then(async response=>{const result=await response.json();if(result.error)console.error({event:'backup_failed',reason:result.error});if(result.recovery?.error)console.error({event:'backup_drill_failed',reason:result.recovery.error})}).catch(()=>console.error({event:'backup_failed',reason:'backup_service_unavailable'})).finally(async()=>{const response=await monitorCall(env,'/tick');await response.body?.cancel()}));
-},async fetch(req, env, ctx) {await markServiceVerification(req);const response=await traceRequest(req, () => handleRequest(req, env, ctx), {allowedOrigin: SITE});return browserResponse(response,req,env);}};
+},async fetch(req, env, ctx) {await markServiceVerification(req);const response=await traceRequest(req, trace => handleRequest(req, env, ctx,trace), {allowedOrigin: SITE,onTiming:timing=>{if(new URL(req.url).pathname!=='/stream'&&ctx?.waitUntil&&env.PLAYBACK_SESSIONS)ctx.waitUntil(env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_operations_v1')).fetch('https://private/operations/timing-ingest',{method:'POST',body:JSON.stringify({timing})}).then(r=>r.body?.cancel()).catch(()=>{}))}});return browserResponse(response,req,env);}};
 
 
 

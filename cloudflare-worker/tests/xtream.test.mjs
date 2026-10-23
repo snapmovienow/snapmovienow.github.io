@@ -238,7 +238,10 @@ failMediaStatus=404;
 const missingOnFirstAccount=await media('movie',movies[0].stream_id,'mp4');
 assert.equal(missingOnFirstAccount.status,200);assert.equal(await missingOnFirstAccount.text(),'data');
 assert.equal((await leases()).length,0,'a provider 404 retries another authorised account and releases failed reservations');
+// Each injected status is an independent failover scenario. Production keeps
+// health/circuit history and avoids retrying a source already known to fail.
 for(const [i,status]of [500,520,522,524,525,526].entries()){
+ await objects.get('__smn_accounts_v1').state.storage.delete('provider-health');
  failMediaStatus=status;const before=providerCalls.length;
  const resumed=await media('series',episodes[0].id,'mkv',30+i,{headers:{range:'bytes=0-3'}});
  assert.equal(resumed.status,206,'a gateway '+status+' can recover an episode seek on another authorised source');
@@ -264,7 +267,7 @@ const nativeRequest = new Request(`${origin}/movie/${customer.username}/${custom
 let deadline;
 try {
   const quick = await Promise.race([worker.fetch(nativeRequest, env, context), new Promise((_,reject) => {deadline=setTimeout(()=>reject(Error('playback_waited_for_pool_refresh')),2000)})]);
-  assert.equal(quick.status,200); assert.equal(background.length,1); assert.equal(await quick.text(),'data');
+  assert.equal(quick.status,200); assert.equal(background.length,2,'inventory refresh and optional timing persistence both run without blocking playback'); assert.equal(await quick.text(),'data');
 } finally {clearTimeout(deadline); unblockRefresh(); await Promise.all(background); globalThis.fetch=savedFetch}
 
 // After the bounded validation cache expires, an upstream outage still fails closed.

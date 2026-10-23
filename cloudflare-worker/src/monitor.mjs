@@ -1,9 +1,20 @@
 import {seal,unseal} from './security.mjs';
+import {cleanCanarySettings,defaultCanarySettings,cleanCanaryResult} from './playback-canary.mjs';
+import {startupTimingObservations} from './playback-timings.mjs';
 
 export const MONITOR_CRON='*/5 * * * *';
 const interval=300000,freshness=36*3600000;
 const email=value=>typeof value==='string'&&value.length<=254&&/^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?\.[a-zA-Z]{2,63}$/.test(value);
 const defaults=()=>({enabled:true,channel:'panel',to:'',from:'',version:1});
+function canaryState(state,env){
+ const configured=defaultCanarySettings(env);
+ if(!state.canary||state.canary.config?.username!==configured.username)state.canary={config:{...configured,version:1},nextType:0,results:[],lastCheckedAt:null};
+ return state.canary;
+}
+function canaryStatus(state,env){
+ const c=canaryState(state,env),configured=!!c.config.username,last=c.lastResult;
+ return {enabled:c.config.enabled,configured,username:c.config.username,types:c.config.types,intervalMinutes:5,lastCheckedAt:c.lastCheckedAt,running:!!c.run&&c.run.at>Date.now()-60000,status:!configured?'not_configured':!c.config.enabled?'disabled':last?.status||'waiting',lastResult:last||null,results:c.results||[]};
+}
 function empty(now){return {createdAt:now,config:defaults(),checks:{},incidents:{},history:[],outbox:[],lastCheckedAt:null,delivery:{status:'not_configured'}}}
 function settings(config){return {enabled:config.enabled,channel:config.channel,to:config.to,from:config.from,keyConfigured:!!config.key,version:config.version}}
 async function putState(store,state){
@@ -23,6 +34,7 @@ async function read(response){if(!response.ok)throw Error('monitor_source_unavai
 // unknown, not proof that a failing stream has recovered.
 export function observations(snapshot,now,createdAt){
  const out=[];
+ out.push(...startupTimingObservations(snapshot.playback?.timings));
  for(const part of ['providers','playback','backups'])if(snapshot[part]===null)out.push({key:'monitor:'+part,kind:'monitor',title:'No se pudo comprobar '+({providers:'el proveedor',playback:'las reproducciones',backups:'las copias'}[part]),bad:true,confirm:2});else out.push({key:'monitor:'+part,kind:'monitor',bad:false,confirm:2});
  if(snapshot.providers)for(const p of snapshot.providers.providers||[])if(/^[a-zA-Z0-9_-]{1,80}$/.test(p.id))out.push({key:'provider:'+p.id,kind:'provider',title:'Proveedor sin respuesta o sin cuentas activas',detail:p.label, bad:p.ok!==true,confirm:2});
  if(snapshot.playback)for(const g of snapshot.playback.groups||[]){
@@ -31,6 +43,10 @@ export function observations(snapshot,now,createdAt){
   const healthy=g.starts>=5&&!g.failedStarts&&!g.errors&&g.stallPercent<=2&&(g.startupP95UpperMs===null||g.startupP95UpperMs<=10000);
   if(!bad&&!healthy)continue;
   out.push({key:'playback:'+g.server+':'+g.type+':'+g.quality+':'+g.platform,kind:'playback',title:'Fallos repetidos de reproducción',detail:({live:'TV',movie:'Películas',series:'Series'}[g.type])+' · '+(g.platform==='web'?'Web':'Android')+' · '+g.quality+' · '+g.failedStarts+' fallos de inicio · '+g.errors+' errores · '+g.stallPercent+'% cargando',bad,confirm:1});
+ }
+ if(snapshot.canary?.enabled)for(const result of snapshot.canary.results||[]){
+  if(!['live','movie','series'].includes(result.type)||!['healthy','failed'].includes(result.status)||result.at<now-15*60000)continue;
+  out.push({key:'canary:'+result.type,kind:'canary',title:'La prueba automática no recibe vídeo',detail:({live:'TV',movie:'Películas',series:'Series'}[result.type])+' · '+(result.status==='healthy'?'Vídeo recibido':result.reason),bad:result.status!=='healthy',confirm:2,sampleAt:result.at});
  }
  if(snapshot.backups){const b=snapshot.backups;
   const stale=now-(b.lastAutomaticAt||createdAt)>freshness;
@@ -47,7 +63,7 @@ export function applyObservations(state,snapshot,now){
   if(item.kind==='playback'&&!item.bad&&!state.incidents[item.key])continue;
   seen.add(item.key);const previous=state.checks[item.key]||{bad:0,good:0};
   // A manual check or duplicate cron in the same slot cannot amplify a streak.
-  if(previous.bucket!==bucket){previous.bad=item.bad?previous.bad+1:0;previous.good=item.bad?0:previous.good+1;previous.bucket=bucket}
+  if(previous.bucket!==bucket&&(!item.sampleAt||previous.sampleAt!==item.sampleAt)){previous.bad=item.bad?previous.bad+1:0;previous.good=item.bad?0:previous.good+1;previous.bucket=bucket;if(item.sampleAt)previous.sampleAt=item.sampleAt}
   state.checks[item.key]=previous;const incident=state.incidents[item.key];
   if(item.bad&&previous.bad>=item.confirm){
    if(!incident||incident.status==='resolved'){
@@ -59,7 +75,7 @@ export function applyObservations(state,snapshot,now){
  }
  for(const [key,incident]of Object.entries(state.incidents)){
   if(incident.status!=='open'||seen.has(key))continue;
-  if(incident.kind==='playback')incident.waitingForSamples=true;
+  if(incident.kind==='playback'||incident.kind==='canary'||incident.kind==='startup')incident.waitingForSamples=true;
   if(incident.kind==='provider'&&snapshot.providers){incident.status='resolved';incident.resolvedAt=now;changed.push({...incident,kind:'removed'})}
  }
  // A small durable outbox, stable notification IDs and a provider idempotency
@@ -78,7 +94,7 @@ export function applyObservations(state,snapshot,now){
  return state;
 }
 
-function publicStatus(state){return {settings:settings(state.config),createdAt:state.createdAt,lastCheckedAt:state.lastCheckedAt,intervalMinutes:5,monitorStale:!state.lastCheckedAt||Date.now()-state.lastCheckedAt>15*60000,incidents:Object.values(state.incidents).sort((a,b)=>b.openedAt-a.openedAt),history:state.history,delivery:state.delivery,pendingEmails:state.outbox.length,thresholds:{failedStarts:5,errors:5,minStarts:5,stallPercent:2,startupMs:10000,backupHours:36,playbackWindowMinutes:15}}}
+function publicStatus(state,env){return {settings:settings(state.config),createdAt:state.createdAt,lastCheckedAt:state.lastCheckedAt,intervalMinutes:5,monitorStale:!state.lastCheckedAt||Date.now()-state.lastCheckedAt>15*60000,incidents:Object.values(state.incidents).sort((a,b)=>b.openedAt-a.openedAt),history:state.history,delivery:state.delivery,pendingEmails:state.outbox.length,canary:canaryStatus(state,env),thresholds:{failedStarts:5,errors:5,minStarts:5,stallPercent:2,startupMs:10000,backupHours:36,playbackWindowMinutes:15}}}
 function mail(event,config){return {from:config.from,to:[config.to],subject:'SNAPTVNOW · '+(event.changes.every(c=>c.kind!=='opened')?'Recuperación / comprobación':'Aviso del sistema'),text:'SNAPTVNOW\n'+new Date(event.createdAt).toISOString()+'\n\n'+event.changes.map(c=>({opened:'INCIDENCIA',resolved:'RECUPERADO',removed:'CONEXIÓN RETIRADA',test:'PRUEBA'}[c.kind])+': '+c.title+(c.detail?'\n'+c.detail:'')).join('\n\n')+'\n\nRevisa el panel: https://app.snaptvnow.com/admin.html'} }
 
 export class OperationsMonitor{
@@ -86,6 +102,11 @@ export class OperationsMonitor{
  async fetch(req){
   const path=new URL(req.url).pathname,b=await req.json(),store=this.state.storage;
   if(path==='/tick'){if(!this.running)this.running=this.tick().finally(()=>{this.running=null});return Response.json(await this.running)}
+  if(path==='/canary/settings'){
+   const config=cleanCanarySettings(b,this.env.PLAYBACK_CANARY_USERNAME);if(config.error)return Response.json(config,{status:400});
+   await store.transaction(async tx=>{const state=await tx.get('monitor')||empty(Date.now()),c=canaryState(state,this.env);c.config={...config,version:c.config.version+1};delete c.run;await putState(tx,state)});return this.status();
+  }
+  if(path==='/canary/run'){await this.runCanary(true);return this.status()}
   if(path==='/settings'){
    if(typeof b.enabled!=='boolean'||!['panel','email'].includes(b.channel))return Response.json({error:'invalid_alert_settings'},{status:400});
    const to=String(b.to||'').trim(),from=String(b.from||'').trim(),apiKey=String(b.apiKey||'').trim();
@@ -98,7 +119,7 @@ export class OperationsMonitor{
     state.config={enabled:b.enabled,channel:b.channel,to,from,key:key||old.key||null,version:old.version+1};
     if(!old.enabled&&b.enabled){state.createdAt=Date.now();state.checks={}}
     for(const event of state.history)if(event.delivery==='pending')event.delivery='cancelled';state.outbox=[];
-    await putState(tx,state);return publicStatus(state);
+    await putState(tx,state);return publicStatus(state,this.env);
    });return Response.json(result,{status:result.error?400:200});
   }
   if(path==='/test'){
@@ -113,7 +134,7 @@ export class OperationsMonitor{
   if(path==='/status')return this.status();
   return Response.json({error:'not_found'},{status:404});
  }
- async status(){const state=await this.state.storage.get('monitor')||empty(Date.now());return Response.json(publicStatus(state))}
+ async status(){const state=await this.state.storage.get('monitor')||empty(Date.now());return Response.json(publicStatus(state,this.env))}
  async collect(){
   const binding=this.env.PLAYBACK_SESSIONS;
   const responses=await Promise.allSettled([
@@ -121,7 +142,24 @@ export class OperationsMonitor{
    binding.get(binding.idFromName('__smn_operations_v1')).fetch('https://private/operations/monitor',request('/operations/monitor')).then(read),
    directory(this.env,'/backup-status').then(read)
   ]);
-  return Object.fromEntries(['providers','playback','backups'].map((key,i)=>[key,responses[i].status==='fulfilled'?responses[i].value:null]));
+  const snapshot=Object.fromEntries(['providers','playback','backups'].map((key,i)=>[key,responses[i].status==='fulfilled'?responses[i].value:null]));
+  snapshot.canary=await this.runCanary();return snapshot;
+ }
+ async runCanary(manual=false){
+  if(this.env.ENVIRONMENT==='staging')return {enabled:false,status:'disabled',results:[]};
+  const store=this.state.storage,now=Date.now(),id=crypto.randomUUID();
+  const claim=await store.transaction(async tx=>{
+   const state=await tx.get('monitor')||empty(now),c=canaryState(state,this.env);
+   if(!state.config.enabled||!c.config.enabled||!c.config.username||c.run?.at>now-60000||c.lastStartedAt>now-(manual?60000:interval)){await putState(tx,state);return null}
+   const type=c.config.types[c.nextType%c.config.types.length];c.nextType=(c.nextType+1)%c.config.types.length;c.lastStartedAt=now;c.run={id,at:now,version:c.config.version};await putState(tx,state);return {...c.run,username:c.config.username,type};
+  });
+  if(claim){
+   let result;
+   try{const response=await this.env.PLAYBACK_SESSIONS.get(this.env.PLAYBACK_SESSIONS.idFromName('__smn_canary_v1')).fetch('https://private/canary-run',request('/canary-run',{username:claim.username,type:claim.type}));if(!response.ok)throw Error('canary_unavailable');result=cleanCanaryResult(await response.json(),claim.type,Date.now())}
+   catch{result=cleanCanaryResult({ok:false,status:'failed',reason:'playback_unavailable'},claim.type,Date.now())}
+   await store.transaction(async tx=>{const state=await tx.get('monitor');if(!state)return;const c=canaryState(state,this.env);if(c.run?.id!==id||c.config.version!==claim.version)return;delete c.run;c.lastCheckedAt=Date.now();c.lastResult=result;c.results=[result,...(c.results||[]).filter(r=>r.type!==result.type)].slice(0,3);await putState(tx,state)});
+  }
+  return canaryStatus(await store.get('monitor')||empty(now),this.env);
  }
  async tick(){
   if(this.env.ENVIRONMENT==='staging')return {ok:true,skipped:true};

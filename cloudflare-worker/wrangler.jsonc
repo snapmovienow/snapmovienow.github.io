@@ -10,6 +10,8 @@
   "preview_urls": true,
   "vars": {
     "CATALOG_MAINTENANCE_ENABLED": "true",
+    "PLAYBACK_CANARY_USERNAME": "dieguito2026",
+    "PLAYBACK_CANARY_ENABLED": "true",
     "ENVIRONMENT": "production",
     "WEB_ORIGINS": "https://snapmovienow.github.io,https://app.snaptvnow.com,https://panel.snaptvnow.com"
   },

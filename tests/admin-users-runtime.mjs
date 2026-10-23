@@ -3,7 +3,8 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import {chromium} from 'playwright';
-const root=process.cwd(),errors=[],saves=[];let browser,launchCalls=0;
+const root=process.cwd(),errors=[],saves=[],canaryCalls=[];let browser,launchCalls=0;
+const canary={configured:true,enabled:true,username:'own-test-account',types:['live','series'],intervalMinutes:5,lastCheckedAt:Date.now(),status:'healthy',running:false,lastResult:{ok:true,type:'live',at:Date.now(),totalMs:1600,firstMediaByteMs:1400},results:[{ok:true,type:'live',at:Date.now(),totalMs:1600,firstMediaByteMs:1400,stages:{authenticationMs:25,catalogPrepareMs:400,mediaHeadersMs:800,firstMediaByteMs:175}}]};
 const users=['cliente-demo1','cliente-demo2','cliente-demo3'].map((username,i)=>({username,name:['Cliente de ejemplo 1','Cliente de ejemplo 2','Cliente de ejemplo 3'][i],comments:i?'':'Cliente mensual.\nUsa Fire TV Cube.',status:'active',expiresAt:Date.now()+86400000+12345,updatedAt:Date.now()+i,permissions:{movies:true,series:true,tv:true,adults:false}}));
 const assignments=[{username:'cliente-demo1',accountUsername:'cuenta-demo1',type:'live',activity:{title:'ESPN 1 · 1080'}},{username:'cliente-demo2',accountUsername:'cuenta-demo2',type:'series',activity:{title:'El regreso',seriesTitle:'La casa de papel',season:2,episode:3}}].map(a=>({...a,client:'xtream',lastSeenAt:Date.now(),until:Date.now()+90000}));
 const inventory={accounts:[],assignments,sources:[],generatedAt:Date.now(),summary:{accounts:10,activeAccounts:10,totalCapacity:30,reported:2,reserved:2,available:26}};
@@ -27,13 +28,20 @@ try{
   if(action==='security-status')value={mfaEnabled:false,recoveryRemaining:0};
   if(action==='backup-status')value={status:'unknown',automaticStatus:'unknown',automaticStale:true,recovery:{status:'unknown'},scheduleUTC:'05:17'};
   if(action==='playback-health')value={groups:[],alerts:[]};
-  if(action==='alerts-status')value={settings:{enabled:false,channel:'panel',to:'',from:'',keyConfigured:false},incidents:[],history:[],delivery:{status:'not_configured'},pendingEmails:0};
+  if(action==='alerts-status')value={settings:{enabled:false,channel:'panel',to:'',from:'',keyConfigured:false},incidents:[],history:[],delivery:{status:'not_configured'},pendingEmails:0,canary};
+  if(action==='playback-canary-settings'){canaryCalls.push(action);canary.enabled=body.enabled;value=canary;}
+  if(action==='playback-canary-run'){canaryCalls.push(action);canary.lastCheckedAt=Date.now();canary.lastResult={ok:false,type:'series',at:Date.now(),reason:'media_timeout'};canary.status='failed';canary.results.push(canary.lastResult);value=canary;}
+  if(action==='playback-diagnostics')value={providers:{lastObservedAt:Date.now(),circuits:[{scope:'media',type:'live',state:'open',count:2,retryAfterMs:15000}]},timings:{groups:[{type:'live',platform:'android',requests:3,failures:1,stages:{auth:{samples:3,avgMs:30,p95UpperMs:100},first_byte:{samples:2,avgMs:250,p95UpperMs:500}}}]}};
   if(action==='save'){saves.push(body);const user=users.find(u=>u.username===body.username);Object.assign(user,{name:body.name,comments:body.comments,status:body.status,expiresAt:body.expiresAt,permissions:body.permissions,updatedAt:user.updatedAt+1});value={...user,sessionsRevoked:!!body.password};}
   await route.fulfill({status:200,headers,contentType:'application/json',body:JSON.stringify(value)});
  });
  const page=await context.newPage();page.on('pageerror',error=>errors.push(error.message));
  await page.goto(base+'/admin.html');await page.locator('#loginForm [name="username"]').fill('owner');await page.locator('#loginForm [name="password"]').fill('synthetic-preview-password');await page.locator('#loginForm button').click();await page.locator('#notice').filter({hasText:'Sesión iniciada'}).waitFor();
  assert.equal(await page.locator('#rows .admin-user-card').count(),3);
+ assert.match(await page.locator('#canarySummary').textContent(),/correcta/);assert.match(await page.locator('#canaryResults').textContent(),/Serie: Todavía sin prueba/);assert.equal(canaryCalls.length,0,'reading canary status never starts or changes a test');
+ await page.locator('#canaryToggle').click();await page.waitForFunction(()=>document.querySelector('#canarySummary').textContent.includes('pausada'));assert.equal(await page.locator('#canaryRun').isDisabled(),true);
+ await page.locator('#canaryToggle').click();await page.waitForFunction(()=>!document.querySelector('#canaryRun').disabled);await page.locator('#canaryRun').click();await page.waitForFunction(()=>document.querySelector('#canarySummary').textContent.includes('no se completó'));assert.match(await page.locator('#canaryResults').textContent(),/superó el tiempo de espera/);assert.deepEqual(canaryCalls,['playback-canary-settings','playback-canary-settings','playback-canary-run']);
+ await page.getByText('Fuentes y tiempos de inicio',{exact:true}).click();await page.locator('#diagnosticRefresh').click();await page.waitForFunction(()=>document.querySelector('#diagnosticSummary').textContent.includes('2 aislamientos'));assert.match(await page.locator('#diagnosticTimings').textContent(),/95 % hasta 500 ms/);
  assert.match(await page.locator('#providerAssignments').textContent(),/ESPN 1 · 1080/);assert.match(await page.locator('#providerAssignments').textContent(),/La casa de papel/);assert.match(await page.locator('#providerAssignments').textContent(),/Temporada 2 · Episodio 3/);
  const first=page.locator('.admin-user-card[data-username="cliente-demo1"]');
  for(const width of [360,390,1280]){
