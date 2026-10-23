@@ -9,6 +9,8 @@ import {nativeResellerImport} from './native-reseller-import.mjs';
 import {resellerIntegrity} from './reseller-integrity.mjs';
 import {readClientHistory,recordClientAccess,safelyRecord,touchPlayback,labelPlayback} from './client-history.mjs';
 import {catalogMaintenanceRoute,runCatalogMaintenance} from './catalog-maintenance.mjs';
+import {readServiceMonitor,sampleServiceMonitor} from './service-monitor.mjs';
+import {TRUSTED_RESELLERS} from './reseller-trust.mjs';
 // Private Durable Object routes. This module is never served as an HTTP endpoint.
 import {contentPermissions} from './content-permissions.mjs';
 import {catalogCacheRoute} from './catalog-cache.mjs';
@@ -34,6 +36,8 @@ export async function accountsFetch(state,env,req){
  const p=new URL(req.url).pathname.replace('/accounts','');const b=await req.json();const store=state.storage;
  try{
  const leases=await openLeaseStore(store);
+ if(p==='/reseller-service-monitor')return store.transaction(tx=>readServiceMonitor(tx,leases.in(tx),b));
+ if(p==='/service-monitor-sample'){await store.transaction(tx=>sampleServiceMonitor(tx,leases.in(tx),TRUSTED_RESELLERS.map(r=>r.accountId)));return answer({ok:true});}
  if(p==='/catalog-maintenance-tick'){
   await runCatalogMaintenance(env,{directory:(env,path,body={})=>env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_accounts_v1')).fetch('https://private/accounts'+path,{method:'POST',body:JSON.stringify(body)})});return answer({ok:true});
  }

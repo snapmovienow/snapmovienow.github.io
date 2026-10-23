@@ -1,5 +1,5 @@
 const limits=[500,1000,2000,5000,10000,20000,60000,120000,300000];
-function clean(b){
+export function cleanPlaybackMetric(b){
  const m=b.metric;if(!m||!['live','movie','series'].includes(m.type)||!['1080','720','other'].includes(m.quality)||!/^[a-zA-Z0-9_-]{1,80}$/.test(m.server||'ccf'))return null;
  if(m.report_id!==undefined&&!/^[a-zA-Z0-9_-]{8,80}$/.test(m.report_id)||m.platform!==undefined&&!['web','android'].includes(m.platform))return null;
  const out={type:m.type,quality:m.quality,server:m.server||'ccf',platform:m.platform||'web',reportId:m.report_id||null,attempted:m.attempted===true,failedStart:m.failedStart===true};
@@ -13,7 +13,7 @@ function clean(b){
 export async function operationsRoute(store,req){
  const b=await req.json(),path=new URL(req.url).pathname,now=Date.now();
  if(path==='/operations/ingest'){
-  const m=clean(b);if(!m||!b.uid)return Response.json({error:'invalid_metric'},{status:400});
+  const m=cleanPlaybackMetric(b);if(!m||!b.uid)return Response.json({error:'invalid_metric'},{status:400});
   return store.transaction(async tx=>{
    const receipt=m.reportId?'receipt:'+b.uid+':'+m.reportId:null;if(receipt&&await tx.get(receipt))return Response.json({ok:true,duplicate:true});
    const rate='rate:'+b.uid,last=await tx.get(rate)||0;if(now-last<15000)return Response.json({ok:true,limited:true});

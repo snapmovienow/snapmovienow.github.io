@@ -1,5 +1,6 @@
 import {isServiceVerification} from './service-verification.mjs';
 import {cleanPlaybackActivity} from './playback-activity.mjs';
+import {recordServiceMetric} from './service-monitor.mjs';
 const answer=(value,status=200)=>Response.json(value,{status});
 const identifier=x=>typeof x==='string'&&/^[A-Za-z0-9_.:-]{1,80}$/.test(x);
 const text=(value,max)=>typeof value==='string'&&!/https?:\/\/|password=|username=|authorization|bearer /i.test(value)?value.replace(/[\u0000-\u001f\u007f]/g,' ').trim().slice(0,max):null;
@@ -22,6 +23,7 @@ export async function updateConnectionQuality(store,leases,body,now=Date.now()){
  const user=await store.get('user:'+lease.username),age=body.observation?.ageMs??0;
  if(!user||user.id!==lease.uid||user.version!==lease.version||user.status!=='active'||user.expiresAt&&user.expiresAt<=now||!Number.isSafeInteger(age)||age<0||age>45000)return answer({ok:true,ignored:true});
  if(!m||typeof m.report_id!=='string'||m.report_id.length>100||!Number.isSafeInteger(m.watchMs)||m.watchMs<0||m.watchMs>300000||!Number.isSafeInteger(m.stallMs)||m.stallMs<0||m.stallMs>m.watchMs||!Number.isSafeInteger(m.decoded)||m.decoded<0||m.decoded>100000||!Number.isSafeInteger(m.dropped)||m.dropped<0||m.dropped>m.decoded||!Number.isSafeInteger(m.errors)||m.errors<0||m.errors>100)return answer({ok:true,ignored:true});
+ if(body.monitorAccepted===true&&await recordServiceMetric(store,lease,user,m,now))await leases.put(body.lease_id,lease);
  if(lease.qualityReport===m.report_id||m.watchMs<5000&&!m.errors||!m.decoded&&!m.errors&&!m.stallMs)return answer({ok:true,ignored:true});
  if(lease.qualityUpdatedAt>now-15000)return answer({ok:true,limited:true});
  const observedAt=now-age;if(lease.quality&&observedAt<=lease.quality.observedAt)return answer({ok:true,ignored:true});
