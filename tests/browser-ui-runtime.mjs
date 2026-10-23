@@ -62,7 +62,7 @@ try{
  await panel.locator('#alertSummary').filter({hasText:'1 incidencias abiertas'}).waitFor();
  assert.match(await panel.locator('#alertIncidents').textContent(),/Proveedor sin respuesta/);
  assert.equal(await panel.locator('#alertTest').isDisabled(),true,'mail cannot be sent without a configured recipient and encrypted key');
- await panel.locator('#automaticAlerts details').first().locator('summary').click();
+ await panel.locator('#automaticAlerts').getByText('Configurar avisos',{exact:true}).click();
  await panel.locator('#alertForm [name="channel"]').selectOption('email');
  await panel.locator('#alertForm [name="to"]').fill('owner@example.com');
  await panel.locator('#alertRefresh').click();
