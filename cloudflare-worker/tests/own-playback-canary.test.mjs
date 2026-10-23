@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import worker,{PlaybackSession} from '../src/index.js';
 import {openLeaseStore} from '../src/lease-store.mjs';
 import {ownPlaybackCanaryAdapter} from '../src/own-playback-canary.mjs';
-class Store{constructor(){this.data=new Map();this.queue=Promise.resolve()}async get(k){return structuredClone(this.data.get(k))}async put(k,v){this.data.set(k,structuredClone(v))}async delete(k){this.data.delete(k)}async deleteAll(){this.data.clear()}async setAlarm(){}async list({prefix}){return new Map([...this.data].filter(([k])=>k.startsWith(prefix)))}transaction(fn){const r=this.queue.then(()=>fn(this));this.queue=r.catch(()=>{});return r}}
+class Store{constructor(){this.data=new Map();this.queue=Promise.resolve()}async get(k){if(Array.isArray(k))return new Map(k.filter(x=>this.data.has(x)).map(x=>[x,structuredClone(this.data.get(x))]));return structuredClone(this.data.get(k))}async put(k,v){this.data.set(k,structuredClone(v))}async delete(k){this.data.delete(k)}async deleteAll(){this.data.clear()}async setAlarm(){}async list({prefix}){return new Map([...this.data].filter(([k])=>k.startsWith(prefix)))}transaction(fn){const r=this.queue.then(()=>fn(this));this.queue=r.catch(()=>{});return r}}
 {
  const storage=new Store(),requests=[],prepared=[],controller=new AbortController(),session={sid:'dedicated-canary-session',token:'private-test-token'};
  let preferred=null,bad=new Set(['1']),catalogReads=0;

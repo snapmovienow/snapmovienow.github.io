@@ -29,7 +29,7 @@ export function ownPlaybackCanaryAdapter({env,storage,directory,ownSession,ticke
    catch(error){await Promise.allSettled([directory(env,'/release-session',{sid:session.sid}),sessionCall(env,session.sid,'/logout')]);throw error}
   },
   async select(session,config,{signal}){
-   const prefix=config.transport==='ts'?'comparison':'canary',key=prefix+'-sample:'+config.type,cursorKey=prefix+'-sample-cursor:'+config.type,queue=[],seen=new Set();
+   const prefix=session.comparison?'comparison':'canary',key=prefix+'-sample:'+config.type,cursorKey=prefix+'-sample-cursor:'+config.type,queue=[],seen=new Set();
    // A recently successful real playback is a better sample than the first
    // catalog row. This is an advisory target only: normal stream_token still
    // enforces this test account's permissions, capacity and media checks.
@@ -53,7 +53,7 @@ export function ownPlaybackCanaryAdapter({env,storage,directory,ownSession,ticke
     if(signal.aborted)throw Error('canary_timeout');let sample;
     try{sample=queue.length?queue.shift():await nextCatalogSample()}catch(error){lastError=error;if(![400,403,404].includes(error.status))throw error;continue}
     if(!sample)continue;if(config.transport==='ts'&&sample.type==='live')sample={...sample,ext:'ts'};const identity=sample.type+'|'+sample.server+'|'+sample.id+'|'+sample.ext;if(seen.has(identity))continue;seen.add(identity);attempts++;
-    try{const comparison=session.comparison===true&&config.transport==='ts',body={...sample,request_id:crypto.randomUUID(),revision:comparison?100+attempts*2:attempts,...(comparison&&diagnosticExclude.length?{diagnosticExclude}:{})};let prepared;
+    try{const comparison=session.comparison===true,body={...sample,request_id:crypto.randomUUID(),revision:comparison?100+attempts*2:attempts,...(comparison&&diagnosticExclude.length?{diagnosticExclude}:{})};let prepared;
      try{prepared=await send(session,'stream_token',body,signal)}catch(error){if(!comparison||!diagnosticExclude.length||error.status!==409)throw error;prepared=await send(session,'stream_token',{...body,request_id:crypto.randomUUID(),revision:body.revision+1,diagnosticExclude:[]},signal)}
      if(comparison&&onDiagnosticTarget)await onDiagnosticTarget(session,prepared);await storage.put(key,{...sample,until:Date.now()+3600000});return {...prepared,type:sample.type}}
     catch(error){lastError=error;await storage.delete(key);if(![400,403,404].includes(error.status))throw error}

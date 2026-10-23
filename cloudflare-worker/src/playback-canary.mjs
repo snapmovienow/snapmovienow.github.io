@@ -1,5 +1,6 @@
 // A canary uses an explicitly configured owner account and the same permission,
 // allocation and stream paths as a viewer. It observes bytes, not decoder frames.
+import {comparisonError} from './playback-comparison.mjs';
 export const CANARY_TIMEOUT_MS=15000;
 const MAX_BYTES=65536,MAX_HOPS=4;
 const TYPES=new Set(['live','movie','series']);
@@ -22,7 +23,9 @@ export function cleanCanaryResult(value,type,at=Date.now()){
  const statuses=['healthy','failed','busy','skipped'],reasons=['ok','timeout','account_unavailable','capacity_busy','sample_unavailable','media_not_arriving','playback_unavailable','invalid_playlist','invalid_media','sample_not_configured'];
  const number=value=>Number.isFinite(value)&&value>=0?Math.min(300000,Math.round(value)):null;
  const stages={};for(const key of ['authenticationMs','catalogPrepareMs','mediaHeadersMs','firstMediaByteMs'])if(number(value?.stages?.[key])!==null)stages[key]=number(value.stages[key]);
- return {ok:value?.ok===true,status:statuses.includes(value?.status)?value.status:'failed',reason:reasons.includes(value?.reason)?value.reason:'playback_unavailable',type:TYPES.has(type)?type:'live',at,totalMs:number(value?.totalMs),firstMediaByteMs:number(value?.firstMediaByteMs),bytes:Math.min(MAX_BYTES,number(value?.bytes)||0),stages};
+ const failure=value?.failure,phases=['authentication','catalog_prepare','media_headers','first_media_byte'],codes=['timeout','http_error','origin_policy','http_parser','socket_error','invocation_context','internal_error','preempted'];
+ const detail=failure&&phases.includes(failure.phase)?{phase:failure.phase,code:codes.includes(failure.code)?failure.code:'internal_error',httpStatus:Number.isInteger(failure.httpStatus)&&failure.httpStatus>=100&&failure.httpStatus<=599?failure.httpStatus:null}:null;
+ return {ok:value?.ok===true,status:statuses.includes(value?.status)?value.status:'failed',reason:reasons.includes(value?.reason)?value.reason:'playback_unavailable',type:TYPES.has(type)?type:'live',at,totalMs:number(value?.totalMs),firstMediaByteMs:number(value?.firstMediaByteMs),bytes:Math.min(MAX_BYTES,number(value?.bytes)||0),stages,...(detail?{failure:detail}:{})};
 }
 
 // Adapters retain opaque sessions/URLs locally. No error message, credential,
@@ -39,7 +42,7 @@ export async function runPlaybackCanary(config,adapter,{timeoutMs=CANARY_TIMEOUT
  const stage=async(name,fn)=>{const at=now();try{if(signal.aborted)throw Error('canary_timeout');return await within(Promise.resolve().then(fn))}finally{stages[name]=Math.max(0,now()-at)}};
  const lateRelease=(value,item)=>{if(value&&adapter.release)void Promise.resolve().then(()=>adapter.release(value,item)).catch(()=>{})};
  const opened=async promise=>{const response=await promise;if(signal.aborted){void response?.body?.cancel().catch(()=>{});throw Error('canary_timeout')}return response};
- const check=response=>{if(!(response instanceof Response))throw Error('playback_unavailable');if(response.body)bodies.add(response.body);if(!response.ok){const error=Error('canary_http');error.status=response.status;throw error}return response};
+ const check=response=>{if(!(response instanceof Response))throw Error('playback_unavailable');if(response.body)bodies.add(response.body);if(!response.ok){const error=Error('canary_http');error.status=response.status;error.failureCode=response.headers.get('x-smn-canary-failure');throw error}return response};
  const isMedia=(data,content)=>{
   const ascii=(from,to)=>String.fromCharCode(...data.subarray(from,to)),sample=ascii(0,Math.min(data.length,64)).trimStart();
   if(/^(?:<|\{|\[|error\b|access denied\b|unauthorized\b|not found\b|bad gateway\b|service unavailable\b)/i.test(sample)||/^(?:text\/|application\/(?:json|problem\+json|xml))/i.test(content))return false;
@@ -79,7 +82,8 @@ export async function runPlaybackCanary(config,adapter,{timeoutMs=CANARY_TIMEOUT
   return cleanCanaryResult({ok:true,status:'healthy',reason:'ok',totalMs:now()-start,firstMediaByteMs,bytes,stages},config.type,now());
  }catch(error){
   const reason=signal.aborted||error?.message==='canary_timeout'?'timeout':['invalid_playlist','invalid_media','media_not_arriving','sample_not_configured'].includes(error?.message)?error.message:safeReason(error?.status,phase);
-  return cleanCanaryResult({ok:false,status:reason==='capacity_busy'?'busy':reason==='sample_not_configured'?'skipped':'failed',reason,totalMs:now()-start,firstMediaByteMs,bytes,stages},config.type,now());
+  const failureCode=signal.aborted?'timeout':error?.failureCode||(Number.isInteger(error?.status)?'http_error':comparisonError(error));
+  return cleanCanaryResult({ok:false,status:reason==='capacity_busy'?'busy':reason==='sample_not_configured'?'skipped':'failed',reason,totalMs:now()-start,firstMediaByteMs,bytes,stages,failure:{phase,httpStatus:error?.status,code:failureCode}},config.type,now());
  }finally{
   clearTimeout(timer);controller.abort();for(const body of bodies)void body.cancel().catch(()=>{});
   // Releasing the unique test session is independent of an uncooperative

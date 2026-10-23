@@ -19,6 +19,11 @@ assert.equal(busy.status,'busy');assert.equal(busy.reason,'capacity_busy','a ful
 const rejected=await runPlaybackCanary(config,{...adapter,authenticate:async()=>{throw Error('https://private/password=sensitive')}});
 assert.equal(rejected.reason,'playback_unavailable');assert.ok(!JSON.stringify(rejected).includes('sensitive'));
 
+const relayFailure=await runPlaybackCanary(config,{...adapter,open:async()=>new Response('',{status:502,headers:{'x-smn-canary-failure':'invocation_context'}})});
+assert.deepEqual(relayFailure.failure,{phase:'media_headers',code:'invocation_context',httpStatus:502});
+const unsafeFailure=await runPlaybackCanary(config,{...adapter,open:async()=>new Response('',{status:502,headers:{'x-smn-canary-failure':'https://private/password'}})});
+assert.equal(unsafeFailure.failure.code,'internal_error');assert.ok(!JSON.stringify(unsafeFailure).includes('private'),'failure details are allowlisted before persistence');
+
 let hops=[];
 const hls=await runPlaybackCanary(config,{...adapter,open:async()=>new Response('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nvariant.m3u8\n',{headers:{'content-type':'application/vnd.apple.mpegurl'}}),openResource:async(s,path)=>{hops.push(path);return path==='variant.m3u8'?new Response('#EXTM3U\n#EXTINF:2,\nsegment.ts\n',{headers:{'content-type':'application/vnd.apple.mpegurl'}}):binary()}});
 assert.equal(hls.ok,true);assert.deepEqual(hops,['variant.m3u8','segment.ts']);assert.equal(hls.bytes,376,'playlist bytes are not counted as video');
