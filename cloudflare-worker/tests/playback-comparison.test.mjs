@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {measureComparison,comparisonVerdict,comparisonError,compareOwnPlayback} from '../src/playback-comparison.mjs';
-import {fetchControlMediaIP} from '../src/playback-control-ip.mjs';
+import {fetchControlMediaIP,fetchControlMedia} from '../src/playback-control-ip.mjs';
 import {CCF_MEDIA_ORIGIN} from '../src/ip-media.mjs';
 const packet=new Uint8Array(188);packet.set([0x47,0x40,0,0x10]);
 const good=()=>new Response(packet,{headers:{'content-type':'video/mp2t'}});
@@ -22,4 +22,7 @@ let response=await fetchControlMediaIP(url,h,transport.connect,undefined,CCF_MED
 transport=socket('HTTP/1.0 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n');response=await fetchControlMediaIP(url,h,transport.connect,undefined,CCF_MEDIA_ORIGIN,Date.now()+100);assert.equal(await response.text(),'hello world');
 transport=socket('HTTP/1.0 503 Unavailable\r\nContent-Length: 0\r\n\r\n');assert.equal((await fetchControlMediaIP(url,h,transport.connect,undefined,CCF_MEDIA_ORIGIN,Date.now()+100)).status,503);assert.equal(transport.closed(),true);
 await assert.rejects(fetchControlMediaIP('http://127.0.0.1/',h,()=>{throw Error('must not connect')},undefined,CCF_MEDIA_ORIGIN),/invalid_media_origin/);
+transport=socket('HTTP/1.0 200 OK\r\nContent-Length: 5\r\n\r\nhello');let directAddress;
+response=await fetchControlMedia(CCF_MEDIA_ORIGIN+'/live/fixture/fixture/1.ts',h,CCF_MEDIA_ORIGIN,{deadline:Date.now()+100,fetchHost:async()=>new Response(null,{status:302,headers:{location:'http://194.76.0.119:8080/signed-media'}}),connectSocket:address=>{directAddress=address;return transport.connect()}});
+assert.equal(await response.text(),'hello');assert.deepEqual(directAddress,{hostname:'194.76.0.119',port:8080},'the origin control must not pass through our relay DNS alias');
 console.log('PASS: matched sequential origin/relay controls, bounded reads and cleanup, no secret output, explicit inconclusive timeouts, independent fragmented/chunked/interim HTTP control and reserved-address rejection.');

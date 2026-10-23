@@ -51,7 +51,7 @@ export async function compareOwnPlayback(adapter,control,{username,type='live'}=
   const origin=await measureComparison(options=>control(session,target,options),{timeoutMs:Math.max(1,Math.min(8000,deadline-Date.now()))});
   if(controller.signal.aborted)throw Error('comparison_timeout');
   const relay=await measureComparison(options=>adapter.open(session,target,options),{trustedRelay:true,timeoutMs:Math.max(1,Math.min(8000,deadline-Date.now()))});
-  return {at:Date.now(),type,transport:'ts',verdict:comparisonVerdict(origin,relay),origin,relay};
+  return {at:Date.now(),type,transport:'ts',control:'independent_origin_v2',verdict:comparisonVerdict(origin,relay),origin,relay};
  }catch(error){return {at:Date.now(),type,verdict:[409,410,429].includes(error?.status)?'deferred':'preparation_unconfirmed',phase,httpStatus:Number.isInteger(error?.status)?error.status:null,reason:comparisonError(error)}}
  finally{clearTimeout(timer);controller.abort();if(session){let cleanup;await Promise.race([Promise.resolve().then(()=>adapter.release(session)).catch(()=>{}),new Promise(r=>{cleanup=setTimeout(r,1000)})]);clearTimeout(cleanup)}}
 }

@@ -28,7 +28,7 @@ import {traceRequest, SERVICE_VERSION} from './request-diagnostics.mjs';
 import {PlaybackTimings,timed,playbackTimingsRoute} from './playback-timings.mjs';
 import {runPlaybackCanary} from './playback-canary.mjs';
 import {compareOwnPlayback,comparisonError} from './playback-comparison.mjs';
-import {fetchControlMediaIP} from './playback-control-ip.mjs';
+import {fetchControlMedia} from './playback-control-ip.mjs';
 import {sharedProviderValidation,PROVIDER_VALIDATION_MS} from './provider-validation.mjs';
 import {ownPlaybackCanaryAdapter} from './own-playback-canary.mjs';
 import {CCF_MEDIA_ORIGIN} from './ip-media.mjs';
@@ -225,9 +225,9 @@ async function ownPlaybackControl(env,session,target,{signal,deadline}){
  if(!(await sessionCall(env,session.sid,'/check')).ok||!(await directory(env,'/lease-check',{sid:d.sid,lease_id:d.lease_id,request_id:d.request_id})).ok)throw Object.assign(Error('playback_superseded'),{status:410});
  if(signal.aborted)throw Error('comparison_timeout');
  const source=d.origin||ORIGIN,start=source+'/live/'+encodeURIComponent(d.username)+'/'+encodeURIComponent(d.password)+'/'+d.id+'.ts';
- const fetched=await fetchValidatedMedia(start,new Headers({'User-Agent':'SnapMovieNow/1.0','Accept-Encoding':'identity'}),'live',source,{deadline,fetchIP:fetchControlMediaIP,fetchHost:(url,options,timeout)=>fetch(url,{...options,signal:AbortSignal.timeout(timeout)})});
- if(signal.aborted){void fetched.response.body?.cancel().catch(()=>{});throw Error('comparison_timeout')}
- return fetched.response;
+ const response=await fetchControlMedia(start,new Headers({'User-Agent':'SnapMovieNow/1.0','Accept-Encoding':'identity'}),source,{deadline});
+ if(signal.aborted){void response.body?.cancel().catch(()=>{});throw Error('comparison_timeout')}
+ return response;
 }
 async function serverStreamDirect(req,env,u,ctx,trace){
  const d=await unticket(env,u.searchParams.get('t')||'');if(!d||!['movie','series','live'].includes(d.type)||!/^\d+$/.test(String(d.id))||!(await timed(trace,'auth',()=>sessionCall(env,d.sid,'/check'))).ok)return new Response('Expired',{status:410,headers:cors});
