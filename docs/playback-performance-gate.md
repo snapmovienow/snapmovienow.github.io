@@ -23,6 +23,11 @@ latency, Cloudflare CPU, network capacity or device decoding performance.
 
 The ordinary regression suite also tests silent HTTP 200 responses, hedged
 episode metadata, initial native byte reads, source recovery and cancellation.
+It also checks selected-server permission lookup with ten thousand catalog rows,
+nonblocking administrator labels, cold-isolate snapshot reuse and strict
+thirty-second detail expiry. Real SQLite safety checks verify that concurrent
+customer starts preempt only the configured canary, preserve every customer
+lease and reject stale/foreign deferred metadata updates.
 The video smoke separately verifies generated H.264/AAC decoding in Chromium.
 
 Quality runs this gate before platform/browser checks. A failed assertion fails

@@ -18,7 +18,9 @@ export async function decodeCatalog(response) {
 }
 export async function catalogCacheRoute(store, path, body) {
   if (!keyValid(body.key)) return Response.json({error:'invalid_cache_key'},{status:400});
-  const indexKey = 'catalog-cache-index';
+  // Short-lived details have their own quota so many series cannot evict the
+  // full live/VOD catalogs that customers need for fast channel changes.
+  const detail=body.kind==='detail',indexKey = detail?'catalog-detail-index':'catalog-cache-index';
   if (path === '/xtream-cache-get') {
     const index = await store.get(indexKey) || {}, saved = index[body.key];
     if (!saved || saved.until <= Date.now()) return new Response(null,{status:404});
@@ -34,15 +36,17 @@ export async function catalogCacheRoute(store, path, body) {
   // updates cannot expose a partially written or mixed snapshot.
   return store.transaction(async tx=>{
     const index = await tx.get(indexKey) || {}, generation = crypto.randomUUID();
+    const savedAt=detail&&body.savedAt!==undefined?body.savedAt:Date.now(),ttl=detail?30000:TTL;
+    if(!Number.isSafeInteger(savedAt)||savedAt>Date.now()||savedAt<=Date.now()-ttl)return Response.json({error:'invalid_cache_age'},{status:400});
     const remove = async (key, saved) => {for(let i=0;i<saved.chunks;i++)await tx.delete(chunkKey(key,saved.generation,i));delete index[key]};
     if(index[body.key])await remove(body.key,index[body.key]);
     for(const [key,saved] of Object.entries(index))if(saved.until<=Date.now())await remove(key,saved);
-    while(Object.keys(index).length>=64 || Object.values(index).reduce((n,s)=>n+s.bytes,0)+bytes.length>16*1024*1024){
+    while(Object.keys(index).length>=(detail?32:64) || Object.values(index).reduce((n,s)=>n+s.bytes,0)+bytes.length>(detail?4:16)*1024*1024){
       const [key,saved]=Object.entries(index).sort((a,b)=>a[1].savedAt-b[1].savedAt)[0];await remove(key,saved);
     }
     const chunks=Math.ceil(bytes.length/CHUNK);
     for(let i=0;i<chunks;i++)await tx.put(chunkKey(body.key,generation,i),bytes.slice(i*CHUNK,(i+1)*CHUNK));
-    index[body.key]={generation,chunks,bytes:bytes.length,savedAt:Date.now(),until:Date.now()+TTL};
+    index[body.key]={generation,chunks,bytes:bytes.length,savedAt,until:savedAt+ttl};
     await tx.put(indexKey,index);return Response.json({ok:true});
   });
 }

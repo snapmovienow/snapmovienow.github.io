@@ -49,21 +49,32 @@ export function createProviderCatalog(deps, env, ctx,{timeoutMs=CATALOG_FETCH_MS
       // never survives removal of its authorised provider configuration.
       const scope = await fingerprint(env.TICKET_SECRET, JSON.stringify(providers.map(p=>[p.source,p.origin,p.url,p.encrypted])));
       const key = await fingerprint(env.TICKET_SECRET, JSON.stringify([scope,action,server||'',params]));
-      const persist = ['get_live_categories','get_live_streams','get_vod_categories','get_vod_streams','get_series_categories','get_series'].includes(action);
+      const list = ['get_live_categories','get_live_streams','get_vod_categories','get_vod_streams','get_series_categories','get_series'].includes(action);
+      const detail=['get_series_info','get_vod_info'].includes(action),persist=list||detail;
       let cache = catalogs.get(env.PLAYBACK_SESSIONS);
       if (!cache) catalogs.set(env.PLAYBACK_SESSIONS,cache={entries:new Map(),pending:new Map(),bytes:0});
       const remember = (data,savedAt) => {
         const bytes=JSON.stringify(data).length*2;if(bytes>MAX_CACHE_BYTES)return;
         const old=cache.entries.get(key);if(old){cache.entries.delete(key);cache.bytes-=old.bytes}
         while(cache.entries.size&&(cache.entries.size>=64||cache.bytes+bytes>MAX_CACHE_BYTES)){const k=cache.entries.keys().next().value;cache.bytes-=cache.entries.get(k).bytes;cache.entries.delete(k)}
-        cache.entries.set(key,{data,bytes,savedAt,until:savedAt+12*3600000});cache.bytes+=bytes;
+        cache.entries.set(key,{data,bytes,savedAt,until:savedAt+(detail?30000:12*3600000)});cache.bytes+=bytes;
       };
       let saved=cache.entries.get(key);
       if(saved?.until<=Date.now()){cache.entries.delete(key);cache.bytes-=saved.bytes;saved=null}
-      if(!saved&&persist){
-        try{const response=await deps.registry(env,'/xtream-cache-get',{key});if(response.ok){const savedAt=Number(response.headers.get('x-catalog-saved-at'));const data=await decodeCatalog(response);remember(data,savedAt);saved={data,savedAt,until:savedAt+12*3600000}}}catch{}
+      // A server-specific permission check can reuse an already verified full
+      // snapshot. It must never wait for unrelated providers or fetch it again.
+      if(!saved&&server&&list){
+        const allKey=await fingerprint(env.TICKET_SECRET,JSON.stringify([scope,action,'',params]));
+        let all=cache.entries.get(allKey);
+        if(all?.until<=Date.now())all=null;
+        if(!all&&!options.memoryOnly)try{const response=await deps.registry(env,'/xtream-cache-get',{key:allKey});if(response.ok){const savedAt=Number(response.headers.get('x-catalog-saved-at'));all={data:await decodeCatalog(response),savedAt,until:savedAt+12*3600000}}}catch{}
+        if(all&&all.until>Date.now()&&Array.isArray(all.data)){const data=all.data.filter(row=>String(row._server||'ccf')===String(server));remember(data,all.savedAt);saved={data,savedAt:all.savedAt,until:all.until}}
       }
-      const freshFor=persist?300000:30000;
+      if(!saved&&persist&&!options.memoryOnly){
+        try{const response=await deps.registry(env,'/xtream-cache-get',{key,...(detail?{kind:'detail'}:{})});if(response.ok){const savedAt=Number(response.headers.get('x-catalog-saved-at'));const data=await decodeCatalog(response);remember(data,savedAt);saved={data,savedAt,until:savedAt+(detail?30000:12*3600000)}}}catch{}
+      }
+      const freshFor=list?300000:30000;
+      if(detail&&saved&&saved.savedAt<=Date.now()-freshFor)saved=null;
       // Activity labels must not trigger provider traffic or delay a stream.
       if(options.cachedOnly)return saved?.data||null;
       if(!options.fresh&&saved&&saved.savedAt>Date.now()-freshFor)return saved.data;
@@ -80,7 +91,7 @@ export function createProviderCatalog(deps, env, ctx,{timeoutMs=CATALOG_FETCH_MS
               const response=await fetch(url,{headers:{'User-Agent':'SnapMovieNow/1.0'},signal:requestSignal});
               if(!response.ok){void response.body?.cancel();return null}
               const raw=await response.json();
-              if(persist&&!Array.isArray(raw)||!validProviderReply(action,raw))return null;
+              if(list&&!Array.isArray(raw)||!validProviderReply(action,raw))return null;
               const data=publicMetadata(raw,account),scoped=Array.isArray(data)?data.map(item=>({...item,_server:id})):data;
               return {data:scoped,empty:Array.isArray(scoped)?!scoped.length:action==='get_series_info'&&!countSeriesEpisodes(scoped)};
             },{hedgeMs,timeoutMs:Math.max(0,deadline-Date.now()),maxConcurrent:2});
@@ -90,14 +101,14 @@ export function createProviderCatalog(deps, env, ctx,{timeoutMs=CATALOG_FETCH_MS
         }));
         const good=replies.filter(x=>x!==null);if(!good.length||!fresh)throw Error('upstream_unavailable');
         const data=good.every(Array.isArray)?good.flat():good[0];
-        remember(data,fresh===groups.size?Date.now():saved?.savedAt||Date.now());
-        if(persist&&fresh===groups.size){const save=async()=>{try{const bytes=await encodeCatalog(data);let content='';for(let i=0;i<bytes.length;i+=24000)content+=String.fromCharCode(...bytes.slice(i,i+24000));await deps.registry(env,'/xtream-cache-put',{key,content:btoa(content)})}catch{}};if(ctx?.waitUntil)ctx.waitUntil(save());else await save()}
+        const savedAt=fresh===groups.size?Date.now():saved?.savedAt||Date.now();remember(data,savedAt);
+        if(persist&&fresh===groups.size){const save=async()=>{try{const bytes=await encodeCatalog(data);let content='';for(let i=0;i<bytes.length;i+=24000)content+=String.fromCharCode(...bytes.slice(i,i+24000));await deps.registry(env,'/xtream-cache-put',{key,content:btoa(content),...(detail?{kind:'detail',savedAt}:{})})}catch{}};if(ctx?.waitUntil)ctx.waitUntil(save());else await save()}
         return data;
       };
       const run=()=>{deadline??=Date.now()+Math.min(CATALOG_FETCH_MS,Math.max(1,timeoutMs));if(deadline<=Date.now())return Promise.reject(Error('catalog_timeout'));if(!cache.pending.has(key)){const work=refresh().finally(()=>cache.pending.delete(key));cache.pending.set(key,work);return work}return within(cache.pending.get(key))};
       // Old-but-valid snapshots are immediate while refresh runs in the
       // background. Local user permissions were already checked by handleXtream.
-      if(!options.fresh&&saved&&persist&&ctx?.waitUntil){ctx.waitUntil(run().catch(()=>{}));return saved.data}
-      try{return await run()}catch(error){if(saved&&persist)return saved.data;throw error}
+      if(!options.fresh&&saved&&list&&ctx?.waitUntil){ctx.waitUntil(run().catch(()=>{}));return saved.data}
+      try{return await run()}catch(error){if(saved&&list)return saved.data;throw error}
     };
 }

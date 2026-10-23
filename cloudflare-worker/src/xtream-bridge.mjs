@@ -6,7 +6,7 @@ import {handleXtream} from './xtream.mjs';
 
 import {createProviderCatalog,fingerprint} from './provider-catalog.mjs';
 import {createAdultPolicy} from './content-permissions.mjs';
-import {cleanPlaybackActivity,cachedPlaybackActivity} from './playback-activity.mjs';
+import {cleanPlaybackActivity,cachedPlaybackActivity,startPlaybackActivity,attachPlaybackActivity} from './playback-activity.mjs';
 export {publicMetadata} from './provider-catalog.mjs';
 // CCF can return gateway-specific 52x errors as well as ordinary 5xx. They
 // belong to the selected source, not to the subscriber or their bookmark.
@@ -46,7 +46,7 @@ export function createXtreamBridge(deps) {
     const resolve = async id => (await deps.registry(env,'/xtream-resolve',{id})).json();
     const play = async (request, session, item) => {
       let activity=cleanPlaybackActivity(item.activity,item.type);
-      if(!activity)try{activity=await cachedPlaybackActivity(catalog,{type:item.type,server:item.server,id:item.upstreamId,parentId:item.parentId})}catch{}
+      const activityTask=!activity?startPlaybackActivity(()=>cachedPlaybackActivity(rawCatalog,{type:item.type,server:item.server,id:item.upstreamId,parentId:item.parentId}),ctx):null;
       const request_id=crypto.randomUUID();
       const begun=await privateCall('/playback-begin',{sid:session.sid,request_id});if(!begun.ok)return deps.json(await begun.json(),begun.status);
       trace?.identify(item.type,playbackMonitorClient(request)?'android':'other');
@@ -65,6 +65,7 @@ export function createXtreamBridge(deps) {
         const response=await deps.serverStream(prepared,env,target,ctx,trace);
         if(!response.ok){lastFailure=response.status;if(startup&&response.status!==410)await reportLiveResult(deps.directory,env,mediaSession,allocation,false,Date.now()-signalAt);await privateCall('/release',{sid:session.sid,lease_id,request_id,reason:'upstream_failed'});await response.body?.cancel();if(retryableSourceStatus(response.status)&&allocation.provider_id&&attempt<2){excluded.push(allocation.provider_id);continue}return deps.json({error:'upstream_unavailable'},response.status)}
         if(startup)await reportLiveResult(deps.directory,env,mediaSession,allocation,true,Date.now()-signalAt);
+        attachPlaybackActivity(activityTask,{env,ctx,directory:deps.directory,session:mediaSession,lease_id,mediaKey:mediaSession.mediaKey});
         // Native clients load this master once, then refresh the signed media
         // playlist directly. Refreshing /live on every segment used to repeat
         // account allocation and retry logic, interrupting a healthy session.

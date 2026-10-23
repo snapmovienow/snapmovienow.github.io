@@ -7,7 +7,7 @@ const series={info:{name:'Test series'},seasons:[],episodes:{'1':[{id:'880',titl
 const deps={
   directory:async()=>Response.json([{source:'test',encrypted:'test-only'}]),
   catalogCredentials:async()=>[0,1].map(i=>({server:'test',origin:'https://provider.example.test',username:'provider-'+i,password:'test-only'})),
-  registry:async()=>{throw Error('details must not use durable snapshots')}
+  registry:async(env,path)=>path==='/xtream-cache-get'?new Response(null,{status:404}):Response.json({ok:true})
 };
 globalThis.fetch=async target=>{
   calls++;const url=new URL(target),first=url.searchParams.get('username')==='provider-0';
@@ -30,7 +30,7 @@ try{
   await catalog('get_series_info','test',{series_id:'220'});
   elapsed=31000;mode='outage';catalog=make(ctx,detailEnv); // A new request shares the same scoped cache.
   await assert.rejects(()=>catalog('get_series_info','test',{series_id:'220'}),/upstream_unavailable/,'expired detail responses must not be served as a twelve-hour background snapshot');
-  assert.equal(background.length,0);
+  assert.equal(background.length,1,'only the successful fresh detail is saved off the playback path');await Promise.all(background);
   mode='empty';globalThis.fetch=async()=>Response.json({info:{name:'Actually empty'},episodes:{}});
   assert.deepEqual(await make()('get_series_info','test',{series_id:'220'}),{info:{name:'Actually empty'},episodes:{}},'a genuinely empty series remains empty');
 }finally{Date.now=now}

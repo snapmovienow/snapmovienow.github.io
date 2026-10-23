@@ -19,6 +19,14 @@ assert.deepEqual(await decodeCatalog(await catalogCacheRoute(storage,'/xtream-ca
 assert.equal((await catalogCacheRoute(storage,'/xtream-cache-get',{key:'invalid'})).status,400);
 await Promise.all([catalogCacheRoute(storage,'/xtream-cache-put',{key,content:content(await encodeCatalog(['first']))}),catalogCacheRoute(storage,'/xtream-cache-put',{key,content:content(await encodeCatalog(['second']))})]);
 assert.deepEqual(await decodeCatalog(await catalogCacheRoute(storage,'/xtream-cache-get',{key})),['second']);
+const detailKey='b'.repeat(64),detailBytes=content(await encodeCatalog({episodes:{1:[{id:7}]}})),fetchedAt=Date.now();
+offset=10000;
+assert.equal((await catalogCacheRoute(storage,'/xtream-cache-put',{kind:'detail',key:detailKey,content:detailBytes,savedAt:fetchedAt})).status,200);
+assert.equal(Number((await catalogCacheRoute(storage,'/xtream-cache-get',{kind:'detail',key:detailKey})).headers.get('x-catalog-saved-at')),fetchedAt,'background writes preserve the original detail fetch timestamp');
+for(let i=0;i<34;i++)await catalogCacheRoute(storage,'/xtream-cache-put',{kind:'detail',key:i.toString(16).padStart(64,'0'),content:detailBytes,savedAt:Date.now()});
+assert.ok(Object.keys(await storage.get('catalog-detail-index')).length<=32);assert.equal((await catalogCacheRoute(storage,'/xtream-cache-get',{key})).status,200,'detail churn cannot evict the main catalog');
+offset=41000;assert.equal((await catalogCacheRoute(storage,'/xtream-cache-get',{kind:'detail',key:'21'.padStart(64,'0')})).status,404);
+assert.equal((await catalogCacheRoute(storage,'/xtream-cache-put',{kind:'detail',key:detailKey,content:detailBytes,savedAt:fetchedAt})).status,400,'a delayed write cannot revive an expired detail');offset=0;
 
 let configured=[{source:'provider-one',origin:'https://provider.example.test',encrypted:'test-provider-configuration'}], outage=false, disabled=false, upstreamCalls=0;
 const rows=[{category_id:'7',category_name:'News',parent_id:0}];

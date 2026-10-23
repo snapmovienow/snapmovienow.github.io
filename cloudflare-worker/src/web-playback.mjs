@@ -1,10 +1,11 @@
 import {playbackStartup,reportLiveResult} from './live-startup.mjs';
+import {startPlaybackActivity,attachPlaybackActivity} from './playback-activity.mjs';
 // One client request owns every attempt. Release a failed allocation before
 // choosing another authorised account; a cancelled request cannot restart.
 export async function prepareWebPlayback(body,session,requestUrl,env,ctx,deps){
  const type=String(body.type||'movie'),ext=deps.cleanExt(body.ext),server=String(body.server||'ccf');
  const request_id=String(body.request_id||crypto.randomUUID());
- const activity=session.managed&&deps.activity?await deps.activity({type,server,id:body.id,parentId:body.series_id}).catch(()=>null):null;
+ const activityTask=session.managed?startPlaybackActivity(deps.activity&&(()=>deps.activity({type,server,id:body.id,parentId:body.series_id})),ctx):null;
  if(session.managed){
   const begun=await deps.directory(env,'/playback-begin',{sid:session.sid,request_id,revision:body.revision});
   if(!begun.ok)return deps.json(await begun.json(),begun.status);
@@ -14,7 +15,7 @@ export async function prepareWebPlayback(body,session,requestUrl,env,ctx,deps){
  for(let attempt=0;attempt<attempts&&(attempt===0||!startup||startup.available);attempt++){
   let credentials=session,lease_id,provider_id,allocation;
   if(session.managed){
-   try{allocation=await deps.managedPlayback(env,{...session,request_id,client:deps.client,mediaKey:type+'|'+server+'|'+body.id+'|'+ext,...(activity?{activity}:{})},server,ctx,excluded,startup)}
+   try{allocation=await deps.managedPlayback(env,{...session,request_id,client:deps.client,mediaKey:type+'|'+server+'|'+body.id+'|'+ext},server,ctx,excluded,startup)}
    catch(error){return deps.json({error:error.message.startsWith('panel_')?error.message:'provider_not_configured'},503)}
    if(!allocation.r.ok)return deps.json(await allocation.r.json(),allocation.r.status);
    credentials=allocation.credentials;provider_id=allocation.provider_id;lease_id=(await allocation.r.json()).lease_id;allocation.lease_id=lease_id;
@@ -38,6 +39,7 @@ export async function prepareWebPlayback(body,session,requestUrl,env,ctx,deps){
    }
   }
   if(lease_id&&!(await deps.directory(env,'/lease-check',{sid:session.sid,lease_id,request_id})).ok)return deps.json({error:'playback_superseded'},410);
+  if(lease_id)attachPlaybackActivity(activityTask,{env,ctx,directory:deps.directory,session:{...session,request_id},lease_id,mediaKey:type+'|'+server+'|'+body.id+'|'+ext});
   return deps.json({url,lease_id,request_id});
  }
  return deps.json({error:'live_signal_unavailable'},504);

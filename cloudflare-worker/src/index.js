@@ -256,7 +256,7 @@ if(matchesOwnerPortal(req))return ownerPortalRequest(req,env);if(matchesReseller
 if(req.method==='POST'&&req.headers.get('Cookie')?.includes('__Host-smn_')&&!canUseCookie(req,env))return json({error:'origin_not_allowed'},403);
 if(req.headers.get('Origin')&&!allowedOrigins(env).has(req.headers.get('Origin'))&&req.method==='POST')return json({error:'origin_not_allowed'},403);
 if(req.method==="OPTIONS")return new Response(null,{status:204,headers:cors});
-if(u.pathname==="/health")return json({ok:true,service:"snapmovienow-edge",version:SERVICE_VERSION,catalog_maintenance:await catalogMaintenanceStatus(env,directory),playback_canary:await publicCanaryHealth(env),capabilities:['xtream','admin-recovery-renewal','backup-integrity','native-profile','metric-retry','admin-credentials-rotation','isolated-backup-recovery','xtream-series-diagnostic','operational-alerts','rotating-media-origins','admin-user-activity','admin-user-comments','reseller-bridge-v1','private-media-diagnostics-v1','live-startup-budget-v1','native-playback-release-v1','viewer-provider-affinity-v1','vod-startup-budget-v1','hedged-detail-catalog-v1','first-media-byte-check-v1','playback-stage-timings-v1','provider-circuit-recovery-v1','own-account-playback-canary-v1','performance-release-gate-v1','bounded-catalog-lookups-v1','shared-provider-validation-v1']});
+if(u.pathname==="/health")return json({ok:true,service:"snapmovienow-edge",version:SERVICE_VERSION,catalog_maintenance:await catalogMaintenanceStatus(env,directory),playback_canary:await publicCanaryHealth(env),capabilities:['xtream','admin-recovery-renewal','backup-integrity','native-profile','metric-retry','admin-credentials-rotation','isolated-backup-recovery','xtream-series-diagnostic','operational-alerts','rotating-media-origins','admin-user-activity','admin-user-comments','reseller-bridge-v1','private-media-diagnostics-v1','live-startup-budget-v1','native-playback-release-v1','viewer-provider-affinity-v1','vod-startup-budget-v1','hedged-detail-catalog-v1','first-media-byte-check-v1','playback-stage-timings-v1','provider-circuit-recovery-v1','own-account-playback-canary-v1','performance-release-gate-v1','bounded-catalog-lookups-v1','shared-provider-validation-v1','customer-priority-playback-v1','indexed-playback-policy-v1']});
 if(u.pathname==='/reseller-bridge')return resellerBridgeRequest(req,env,ctx);
 if(u.pathname==='/exclusive-media'&&['GET','HEAD'].includes(req.method)){try{return await exclusives.media(req,env,ctx)}catch(e){return json({error:e.message},e.status||502)}}
 if(/^\/exclusive-cover\/[a-f0-9]{64}$/.test(u.pathname)&&['GET','HEAD'].includes(req.method)){const image=await exclusives.cover(env,u.pathname.split('/').at(-1));return req.method==='HEAD'?new Response(null,{status:image.status,headers:image.headers}):image;}
@@ -327,7 +327,7 @@ if(op==="stream_token"){
  }
  return await prepareWebPlayback(b,session,req.url,env,ctx,{trace,directory,managedPlayback,ticket,serverStream,json,cleanExt,origin:ORIGIN,client:requestConnectionClient(req),activity:async item=>{
   if(item.type==='series'&&!item.parentId){const record=await (await registry(env,'/xtream-episode',{server:item.server,id:item.id})).json();if(record?.activity)return record.activity;item.parentId=record?.parentId}
-  return cachedPlaybackActivity(catalog,item);
+  return cachedPlaybackActivity(rawCatalog,item);
  }});
 }
 if(session.managed){

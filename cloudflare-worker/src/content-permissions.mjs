@@ -20,35 +20,42 @@ const specs = {
 };
 const rowKey = (server, id) => String(server || 'ccf') + ':' + String(id);
 const idsFor = row => [...new Set([row.category_id, ...(Array.isArray(row.category_ids) ? row.category_ids : [])].filter(id => id != null).map(String))];
+const categoryIndexes=new WeakMap(),rowIndexes=new WeakMap();
+function adultCategories(categories){
+  if(categoryIndexes.has(categories))return categoryIndexes.get(categories);
+  const adult=new Set(categories.filter(isAdult).map(row=>rowKey(row._server,row.category_id)));
+  let changed=true;while(changed){changed=false;for(const row of categories){const key=rowKey(row._server,row.category_id);if(!adult.has(key)&&Number(row.parent_id)>0&&adult.has(rowKey(row._server,row.parent_id))){adult.add(key);changed=true}}}
+  categoryIndexes.set(categories,adult);return adult;
+}
+function findRow(rows,idField,server,id){
+  let indexes=rowIndexes.get(rows);if(!indexes)rowIndexes.set(rows,indexes=new Map());
+  if(!indexes.has(idField)){const index=new Map();for(const row of rows){const key=rowKey(row._server,row[idField]);if(!index.has(key))index.set(key,row)}indexes.set(idField,index)}
+  return indexes.get(idField).get(rowKey(server,id));
+}
 
 // Category IDs are scoped to a provider. An innocuous title inside an adult
 // category inherits the restriction, including nested categories.
 export function markAdultRows(rows, categories = []) {
-  const adult = new Set(categories.filter(isAdult).map(row => rowKey(row._server, row.category_id)));
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (const row of categories) {
-      const key = rowKey(row._server, row.category_id);
-      if (!adult.has(key) && Number(row.parent_id) > 0 && adult.has(rowKey(row._server, row.parent_id))) {adult.add(key); changed = true;}
-    }
-  }
+  const adult = adultCategories(categories);
   return rows.map(row => ({...row, _adult:isAdult(row) || idsFor(row).some(id => adult.has(rowKey(row._server, id)))}));
 }
 
 export function createAdultPolicy(catalog) {
   const lists = new Map();
-  const marked = async kind => {
-    if (!lists.has(kind)) lists.set(kind, (async () => {
+  const source = async (kind,server) => {
+    const key=kind+'|'+String(server||'ccf');
+    if (!lists.has(key)) lists.set(key, (async () => {
       const [action, categoryAction] = specs[kind];
-      const [rows, categories] = await Promise.all([catalog(action), catalog(categoryAction)]);
+      const [rows, categories] = await Promise.all([catalog(action,server), catalog(categoryAction,server)]);
       if (!Array.isArray(rows) || !Array.isArray(categories)) throw Error('invalid_catalog');
-      return markAdultRows(rows, categories);
+      return {rows,adult:adultCategories(categories)};
     })());
-    return lists.get(kind);
+    return lists.get(key);
   };
-  const inspect = async (kind, server, id) => (await marked(kind)).find(row =>
-    String(row[specs[kind][2]]) === String(id) && String(row._server || 'ccf') === String(server || 'ccf'));
+  const inspect = async (kind, server, id) => {
+    const {rows,adult}=await source(kind,server),row=findRow(rows,specs[kind][2],server,id);
+    return row?{_adult:isAdult(row)||idsFor(row).some(id=>adult.has(rowKey(row._server,id)))}:null;
+  };
   const allowed = async record => {
     if (record.kind === 'episode') {
       // Old cached app IDs must refresh series details to establish parentage.

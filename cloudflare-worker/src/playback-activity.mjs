@@ -11,6 +11,16 @@ export function cleanPlaybackActivity(value,type){
 export function episodeActivity(info,row,season){
  return cleanPlaybackActivity({title:row.title||row.name,seriesTitle:info?.name||info?.title,season:row.season||season,episode:row.episode_num||row.episode},'series');
 }
+// Administrator labels are optional metadata. Opening a channel never awaits
+// a catalog read just to discover its name. Late results own one exact lease.
+export function startPlaybackActivity(read,ctx){
+ if(!read||!ctx?.waitUntil)return null;
+ return read;
+}
+export function attachPlaybackActivity(read,{env,ctx,directory,session,lease_id,mediaKey}){
+ if(!read||!ctx?.waitUntil)return;
+ ctx.waitUntil(Promise.resolve().then(read).then(async activity=>{if(!activity)return;const response=await directory(env,'/playback-activity',{sid:session.sid,uid:session.uid,version:session.version,request_id:session.request_id,lease_id,mediaKey,activity});void response.body?.cancel().catch(()=>{})}).catch(()=>{}));
+}
 export async function cachedPlaybackActivity(catalog,{type,server='ccf',id,parentId}){
  if(!/^\d{1,16}$/.test(String(id)))return null;
  const lookup=async(action,params={})=>await catalog(action,server,params,{cachedOnly:true})||await catalog(action,undefined,params,{cachedOnly:true});

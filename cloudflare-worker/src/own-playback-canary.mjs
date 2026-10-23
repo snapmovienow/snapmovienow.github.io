@@ -21,6 +21,7 @@ export function ownPlaybackCanaryAdapter({env,storage,directory,ownSession,ticke
    const r=await directory(env,'/canary-identity',{username:allowed});if(!r.ok)throw failure(r.status);const user=await r.json();
    if(signal.aborted)throw Error('canary_timeout');
    const session=await ownSession(env,{...user,expiresAt:Math.min(user.expiresAt||Infinity,Date.now()+60000)});
+   session.canary=true; // Only this private adapter can mint this signed claim.
    // Set the owned object before any additional await so late aborts can clean
    // it even when a session-info request stalls.
    try{session.token=await ticket(env,session);await send(session,'session_info',{},signal);return session}

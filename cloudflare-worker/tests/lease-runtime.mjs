@@ -12,7 +12,7 @@ const here=dirname(fileURLToPath(import.meta.url)),baseline=process.env.SMN_BASE
 let source=await readFile(resolve(here,'lease-runtime-worker.mjs'),'utf8');
 if(baseline)source=source.replace("'../src/accounts.mjs'",JSON.stringify(baseline));
 const built=await esbuild.build({stdin:{contents:source,resolveDir:here,sourcefile:'lease-runtime-worker.mjs'},bundle:true,format:'esm',platform:'browser',write:false});
-const options={name:'lease-runtime',modules:true,script:built.outputFiles[0].text,compatibilityDate:'2026-10-03',durableObjects:{TEST_DIRECTORY:{className:'LeaseTestDirectory',useSQLite:true}},durableObjectsPersist:false};
+const options={name:'lease-runtime',modules:true,script:built.outputFiles[0].text,compatibilityDate:'2026-10-03',bindings:{PLAYBACK_CANARY_USERNAME:'customer4'},durableObjects:{TEST_DIRECTORY:{className:'LeaseTestDirectory',useSQLite:true}},durableObjectsPersist:false};
 const mf=new Miniflare(convertV4MiniflareOptions?convertV4MiniflareOptions(options):options);
 let sequence=0;
 const call=async(object,path,body={})=>{
@@ -70,7 +70,29 @@ try{
   await call(totalsObject,'/accounts/release-session',{sid:'s0'});await call(totalsObject,'/accounts/release-session',{sid:'second-device-0'});
   const fewer=await call(totalsObject,'/accounts/reseller-playback-summary',{accountId:totalsAccount});assert.equal(fewer.data.connectionsUsed,2);assert.equal(fewer.data.linesOnline,2);
   report.checks.push('real SQLite dashboard totals span 201 paginated customers and distinguish concurrent devices from online users');
-  console.log('PASS workerd SQLite safety/migration/concurrency checks');
+  const priority='customer-priority';await call(priority,'/seed',{count:5,accounts:1});
+  const probe={...customer(4),canary:true};await call(priority,'/accounts/playback-begin',probe);
+  const probing=await call(priority,'/accounts/acquire',probe);assert.equal(probing.status,200);assert.equal((await call(priority,'/inspect',{id:probing.data.lease_id})).data.row.canary,true);
+  const arrivals=await Promise.all([0,1,2].map(async i=>{const c=customer(i);await call(priority,'/accounts/playback-begin',c);return call(priority,'/accounts/acquire',c)}));
+  assert.ok(arrivals.every(r=>r.status===200),'three customers acquire capacity atomically while the probe yields');
+  assert.equal((await call(priority,'/accounts/lease-check',{...probe,lease_id:probing.data.lease_id})).status,410);
+  assert.equal((await call(priority,'/inspect')).data.count,3);
+  await call(priority,'/accounts/release',{...probe,lease_id:probing.data.lease_id});assert.equal((await call(priority,'/inspect')).data.count,3,'late probe cleanup cannot release a customer');
+  assert.equal((await call(priority,'/accounts/acquire',probe)).status,409,'a probe cannot displace full customer capacity');
+  assert.equal((await call(priority,'/accounts/canary-identity',{username:'customer4'})).status,409,'a full provider defers the test before it can fetch catalogs');
+  await call(priority,'/accounts/release',{...customer(2),lease_id:arrivals[2].data.lease_id});
+  assert.equal((await call(priority,'/accounts/acquire',probe)).status,409,'a probe must leave the final free slot for customers');
+  assert.equal((await call(priority,'/accounts/canary-identity',{username:'customer4'})).status,409);
+  const spoof={...customer(3),canary:true};await call(priority,'/accounts/playback-begin',spoof);const forged=await call(priority,'/accounts/acquire',spoof);
+  assert.equal(forged.status,200);assert.equal((await call(priority,'/inspect',{id:forged.data.lease_id})).data.row.canary,undefined,'only the configured owner can hold a background lease');
+  const labels='deferred-labels';await call(labels,'/seed',{count:2,accounts:1});const owner=customer(0);
+  await call(labels,'/accounts/playback-begin',owner);const labeled=await call(labels,'/accounts/acquire',owner),labelBody={...owner,lease_id:labeled.data.lease_id,activity:{title:'Verified channel'}};
+  assert.equal((await call(labels,'/accounts/playback-activity',labelBody)).status,200);assert.equal((await call(labels,'/inspect',{id:labeled.data.lease_id})).data.row.activity.title,'Verified channel');
+  assert.equal((await call(labels,'/accounts/playback-activity',{...labelBody,uid:'u1'})).status,410);
+  const newer={...customer(0,2),mediaKey:'live|ccf|11|ts'};await call(labels,'/accounts/playback-begin',newer);await call(labels,'/accounts/acquire',newer);
+  assert.equal((await call(labels,'/accounts/playback-activity',labelBody)).status,410,'a late catalog label cannot update a changed channel');
+  report.checks.push('customer starts atomically preempt only the configured background canary, reserve its final slot and preserve all customer leases','deferred metadata attaches only to its current owned lease and cannot cross users or channel revisions');
+  console.log('PASS workerd SQLite safety/migration/concurrency, customer priority and deferred metadata ownership checks');
  }
  const levels=process.env.SMN_SAFETY_ONLY?[]:baseline?[500,1000]:[100,250,500,1000];
  for(const count of levels){

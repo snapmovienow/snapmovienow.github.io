@@ -32,6 +32,10 @@ export async function recordPlayback(store,sql,leaseId,lease,now=Date.now()){
  const type=String(lease.mediaKey||'').split('|')[0],activity=cleanPlaybackActivity(lease.activity,type),start=Number.isSafeInteger(lease.startedAt)&&lease.startedAt>0&&lease.startedAt<=now?lease.startedAt:now;
  await save(store,sql,{id:eventId,account_id:owner.accountId,line_id:owner.lineId,username:owner.username,kind:'playback',started_at:start,last_seen_at:now,ended_at:null,lease_id:String(leaseId),data:JSON.stringify({client:cleanConnectionClient(lease.client),access:lease.xtream?'xtream':'api',type:['live','movie','series'].includes(type)?type:null,title:activity?.title||null,seriesTitle:activity?.seriesTitle||null,season:activity?.season||null,episode:activity?.episode||null,trafficObserved:false})});await trim(store,sql,owner.accountId,now);return eventId;
 }
+export async function labelPlayback(store,sql,leaseId,activity){
+ const rows=(await rowsFor(store,sql,' WHERE lease_id=? AND ended_at IS NULL',[String(leaseId)])).filter(row=>row.lease_id===String(leaseId)&&row.ended_at===null);
+ for(const row of rows){const data=JSON.parse(row.data),safe=cleanPlaybackActivity(activity,data.type);if(!safe)continue;row.data=JSON.stringify({...data,title:safe.title||null,seriesTitle:safe.seriesTitle||null,season:safe.season||null,episode:safe.episode||null});await save(store,sql,row);}
+}
 export async function touchPlayback(store,sql,leaseId,now=Date.now(),traffic=false){
  const rows=(await rowsFor(store,sql,' WHERE lease_id=? AND ended_at IS NULL',[String(leaseId)])).filter(row=>row.lease_id===String(leaseId)&&row.ended_at===null);
  for(const row of rows){const data=JSON.parse(row.data);if(row.last_seen_at>now-15000&&(!traffic||data.trafficObserved))continue;row.last_seen_at=Math.max(row.last_seen_at,now);if(traffic)data.trafficObserved=true;row.data=JSON.stringify(data);await save(store,sql,row);}

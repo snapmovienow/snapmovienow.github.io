@@ -6,7 +6,7 @@ import {resellerPresence,resellerPlaybackSummary,resellerLiveConnections,recordC
 import {resellerAccounts} from './reseller-accounts.mjs';
 import {nativeResellerImport} from './native-reseller-import.mjs';
 import {resellerIntegrity} from './reseller-integrity.mjs';
-import {readClientHistory,recordClientAccess,safelyRecord,touchPlayback} from './client-history.mjs';
+import {readClientHistory,recordClientAccess,safelyRecord,touchPlayback,labelPlayback} from './client-history.mjs';
 import {catalogMaintenanceRoute,runCatalogMaintenance} from './catalog-maintenance.mjs';
 // Private Durable Object routes. This module is never served as an HTTP endpoint.
 import {contentPermissions} from './content-permissions.mjs';
@@ -111,6 +111,10 @@ export async function accountsFetch(state,env,req){
   if(typeof configured!=='string'||!configured||b.username!==configured||b.admin||!validName(normal(configured)))return answer({error:'canary_not_configured'},403);
   const u=await store.get('user:'+normal(configured)),admin=await store.get('admin');
   if(!alive(u)||u.admin||u.role==='admin'||u.id===admin?.id)return answer({error:'canary_account_unavailable'},409);
+  if(p==='/canary-identity'){
+   const pool=await store.get('pool');
+   if(pool?.lines?.length&&pool.syncedAt>Date.now()-12*3600000){const counts=await leases.providerCounts();if(!pool.lines.some(line=>Number(line.maxConnections)-Number(line.external||0)-(counts.get(String(line.id))||0)>=2))return answer({error:'ccf_capacity'},409);}
+  }
   if(p==='/canary-sample'){
    if(!['live','movie','series'].includes(b.type))return answer({error:'canary_sample_type'},400);
    const now=Date.now(),pool=await store.get('pool'),health=await store.get('provider-health')||{};
@@ -204,6 +208,12 @@ export async function accountsFetch(state,env,req){
   const provider=await tx.get('provider');if(!provider)return answer({error:'provider_not_configured'},503);
   const u=await tx.get('user:'+normal(b.username));if(!alive(u)||u.id!==b.uid||u.version!==b.version)return answer({error:'account_inactive'},401);
   const local=leases.in(tx);await local.prune();
+  const canary=b.canary===true&&!!env.PLAYBACK_CANARY_USERNAME&&normal(b.username)===normal(env.PLAYBACK_CANARY_USERNAME);
+  const probeId=await tx.get('background-canary-lease'),probe=probeId?await local.get(probeId):null;
+  if(probeId&&(!canary||!probe||probe.until<=Date.now())){
+   if(probe?.canary)await local.remove(probeId,'customer_priority');
+   await tx.delete('background-canary-lease');
+  }else if(canary&&probe?.canary&&probe.sid!==b.sid)return answer({error:'ccf_capacity'},409);
   const sessionLeases=await local.active({sid:b.sid});
   const owned=[...sessionLeases].filter(([,l])=>l.uid===b.uid&&l.version===b.version&&!l.providerFailed);
   // Preserve the active assignment even when it predates this deployment. A
@@ -212,7 +222,7 @@ export async function accountsFetch(state,env,req){
   const group=String(b.server||String(b.mediaKey||'').split('|')[1]||'ccf'),hint=providerAffinity(playback,group,b);
   if(b.xtream||u.resellerBridge){const used=await local.count({uid:b.uid})-[...sessionLeases.values()].filter(l=>l.uid===b.uid).length;if(used>=3){await local.removeFor({sid:b.sid});await recordConnectionLimit(tx,u,b,used);return answer({error:'user_connection_limit'},409);}}
   const activity=cleanPlaybackActivity(b.activity,String(b.mediaKey||'').split('|')[0]);
-  const extra={startedAt:Date.now(),client:cleanConnectionClient(b.client),...(b.xtream?{xtream:true}:{}),...(b.request_id?{mediaKey:b.mediaKey,request_id:b.request_id}:{}),...(activity?{activity}:{})};
+  const extra={startedAt:Date.now(),client:cleanConnectionClient(b.client),...(canary?{canary:true}:{}),...(b.xtream?{xtream:true}:{}),...(b.request_id?{mediaKey:b.mediaKey,request_id:b.request_id}:{}),...(activity?{activity}:{})};
   if(provider.mode==='panel'){
    // Inventory refresh stays off the streaming path. Counts use an index,
    // rather than deserializing all leases once for every provider candidate.
@@ -221,7 +231,7 @@ export async function accountsFetch(state,env,req){
    // Project replacement of this viewer only. Keep a same-media lease ID and
    // its history intact; all other viewers still count towards capacity.
    for(const l of sessionLeases.values()){const key=String(l.provider_id||'');counts.set(key,Math.max(0,(counts.get(key)||0)-1));}
-   const candidates=pool.lines.filter(p=>(p.server||'ccf')===group&&!(b.exclude||[]).includes(p.id)).map(p=>({...p,occupied:p.external+(counts.get(String(p.id))||0)})).filter(p=>p.occupied<p.maxConnections).sort((a,b)=>a.occupied/a.maxConnections-b.occupied/b.maxConnections);
+   const candidates=pool.lines.filter(p=>(p.server||'ccf')===group&&!(b.exclude||[]).includes(p.id)).map(p=>({...p,occupied:p.external+(counts.get(String(p.id))||0)})).filter(p=>p.occupied<p.maxConnections-(canary?1:0)).sort((a,b)=>a.occupied/a.maxConnections-b.occupied/b.maxConnections);
    const health=await tx.get('provider-health')||{},now=Date.now();
    // Preserve an active viewer's proven assignment. Other viewers' reports
    // cannot evict it; a circuit for a different requested title still applies.
@@ -235,13 +245,19 @@ export async function accountsFetch(state,env,req){
    if(trial.claimed)await tx.put('provider-health',trial.health);
    for(const [oldId]of sessionLeases)if(oldId!==id)await local.remove(oldId,'channel_changed');
    const lease={...(sameRequest?previous[1]:{}),sid:b.sid,uid:b.uid,username:b.username,version:b.version,provider_id:selected.id,providerServer:group,validatedAt,until:Date.now()+90000,...extra,startedAt:previous?previous[1].startedAt||extra.startedAt:extra.startedAt};
-   await local.put(id,lease);rememberProvider(playback,lease);await tx.put(playbackKey,playback);await recordCustomerActivity(tx,u.id,Date.now(),b.client);
+   await local.put(id,lease);if(canary)await tx.put('background-canary-lease',id);rememberProvider(playback,lease);await tx.put(playbackKey,playback);await recordCustomerActivity(tx,u.id,Date.now(),b.client);
    return answer({lease_id:id,provider_id:selected.id,encrypted:selected.encrypted,maxConnections:selected.maxConnections,...(previous?{reused:true,request_id:b.request_id}:{}),...(preferred?{affinity:true,validatedRecently:!trial.claimed&&recentlyValidated(hint)}:{})});
   }
   await local.removeFor({sid:b.sid});
   const max=Math.min(provider.maxConnections,Math.max(1,Number(b.upstreamMax)||3));
-  if(Math.max(await local.count(),Number(b.upstreamExternal)||0)>=max)return answer({error:'ccf_capacity',maxConnections:max},409);
-  const id=crypto.randomUUID();await local.put(id,{sid:b.sid,uid:b.uid,username:b.username,version:b.version,until:Date.now()+90000,...extra});await recordCustomerActivity(tx,u.id,Date.now(),b.client);return answer({lease_id:id});
+  if(Math.max(await local.count(),Number(b.upstreamExternal)||0)>=max-(canary?1:0))return answer({error:'ccf_capacity',maxConnections:max},409);
+  const id=crypto.randomUUID();await local.put(id,{sid:b.sid,uid:b.uid,username:b.username,version:b.version,until:Date.now()+90000,...extra});if(canary)await tx.put('background-canary-lease',id);await recordCustomerActivity(tx,u.id,Date.now(),b.client);return answer({lease_id:id});
+ });
+ if(p==='/playback-activity')return store.transaction(async tx=>{
+  const local=leases.in(tx),lease=await local.get(b.lease_id),state=await tx.get('playback:'+b.sid);
+  if(!lease||lease.sid!==b.sid||lease.uid!==b.uid||lease.version!==b.version||lease.request_id!==b.request_id||state?.request_id!==b.request_id||lease.mediaKey!==b.mediaKey||lease.until<=Date.now())return answer({error:'playback_superseded'},410);
+  const activity=cleanPlaybackActivity(b.activity,String(lease.mediaKey||'').split('|')[0]);
+  if(activity){await local.put(b.lease_id,{...lease,activity});await safelyRecord(()=>labelPlayback(tx,store.sql,b.lease_id,activity))}return answer({ok:true});
  });
  if(p==='/lease-check'||p==='/heartbeat'||p==='/release')return store.transaction(async tx=>{
   const local=leases.in(tx),l=await local.get(b.lease_id);if(!l||l.sid!==b.sid)return answer({error:'playback_expired'},410);

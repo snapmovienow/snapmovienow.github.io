@@ -17,7 +17,7 @@ export function defaultCanarySettings(env){
  const allowed=username(env.PLAYBACK_CANARY_USERNAME);
  return {enabled:!!allowed&&env.PLAYBACK_CANARY_ENABLED!=='false',username:allowed,types:['live','series']};
 }
-const safeReason=(status,phase)=>status===401||status===403?'account_unavailable':status===409||status===429?'capacity_busy':status===404?'sample_unavailable':phase==='first_media_byte'?'media_not_arriving':'playback_unavailable';
+const safeReason=(status,phase)=>status===401||status===403?'account_unavailable':status===409||status===410||status===429?'capacity_busy':status===404?'sample_unavailable':phase==='first_media_byte'?'media_not_arriving':'playback_unavailable';
 export function cleanCanaryResult(value,type,at=Date.now()){
  const statuses=['healthy','failed','busy','skipped'],reasons=['ok','timeout','account_unavailable','capacity_busy','sample_unavailable','media_not_arriving','playback_unavailable','invalid_playlist','invalid_media','sample_not_configured'];
  const number=value=>Number.isFinite(value)&&value>=0?Math.min(300000,Math.round(value)):null;
