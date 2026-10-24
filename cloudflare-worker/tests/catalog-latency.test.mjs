@@ -15,12 +15,15 @@ try{
  globalThis.fetch=(url,{signal})=>new Promise((_,reject)=>signal.addEventListener('abort',()=>{aborted++;reject(Error('abort'))}));
  const at=performance.now();await assert.rejects(make()('get_series'),/upstream_unavailable/);assert.ok(performance.now()-at<300);assert.ok(aborted>=2,'the entire lookup cancels pending source reads');
  const lookup=performance.now();await assert.rejects(make({catalogCredentials:()=>new Promise(()=>{})})('get_series'),/catalog_timeout/);assert.ok(performance.now()-lookup<300,'credential discovery shares the catalog deadline');
- let credentialReads=0;
+ let credentialReads=0;const sharedAt=Date.now();
  const shared=make({catalogCredentials:async()=>{credentialReads++;return credentials.slice(0,1)}},undefined,{timeoutMs:100,hedgeMs:5});
  globalThis.fetch=async()=>{await new Promise(r=>setTimeout(r,45));return Response.json([{stream_id:12}])};
  await shared('get_live_streams');
  globalThis.fetch=(url,{signal})=>new Promise((_,reject)=>signal.addEventListener('abort',()=>reject(Error('abort'))));
  await assert.rejects(shared('get_series'),/upstream_unavailable|catalog_timeout/);
+ // Timer completion may round a millisecond early. Exercise an actually
+ // exhausted budget rather than depending on scheduler rounding.
+ await new Promise(resolve=>setTimeout(resolve,Math.max(0,sharedAt+110-Date.now())));
  assert.equal((await shared('get_live_streams'))[0].stream_id,12,'cached catalogs stay available after the request budget expires');
  await assert.rejects(shared('get_vod_streams'),/catalog_timeout/);
  assert.equal(credentialReads,2,'exhausting a request budget prevents another sequential provider scan');
