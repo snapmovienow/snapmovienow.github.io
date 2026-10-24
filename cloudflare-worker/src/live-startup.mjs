@@ -42,7 +42,7 @@ export async function readLivePlaylist(response,deadline){
 }
 export async function reportLiveResult(directory,env,session,allocation,ok,elapsedMs,stage='signal',detail={}){
  if(!allocation.provider_id)return;
- try{const r=await directory(env,'/provider-result',{sid:session.sid,lease_id:allocation.lease_id,request_id:session.request_id,provider_id:allocation.provider_id,ok,elapsedMs,stage,...(stage==='validation'&&detail.confirmedInactive?{confirmedInactive:true}:{}),...(stage==='validation'&&detail.capacityBusy?{capacityBusy:true}:{})});await r.body?.cancel();}catch{} // Health is advisory, never a grant of access.
+ try{const r=await directory(env,'/provider-result',{sid:session.sid,lease_id:allocation.lease_id,request_id:session.request_id,provider_id:allocation.provider_id,ok,elapsedMs,stage,...(stage==='signal'&&!ok&&Number.isInteger(detail.httpStatus)&&detail.httpStatus>=400&&detail.httpStatus<=599?{httpStatus:detail.httpStatus}:{}),...(stage==='validation'&&detail.confirmedInactive?{confirmedInactive:true}:{}),...(stage==='validation'&&detail.capacityBusy?{capacityBusy:true}:{})});await r.body?.cancel();}catch{} // Health is advisory, never a grant of access.
 }
 export function deferPlaybackReport(ctx,report){
  const work=Promise.resolve().then(report).catch(()=>{});ctx?.waitUntil?.(work);return work;

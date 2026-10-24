@@ -10,7 +10,7 @@ function cleanSample(value,type){
 }
 // The configured account is an explicitly authorised owner test account. Every
 // run receives a new short-lived signed session; no customer session is reused.
-export function ownPlaybackCanaryAdapter({env,storage,directory,ownSession,ticket,sessionCall,request,diagnosticExclude=[],onDiagnosticTarget,onSample}){
+export function ownPlaybackCanaryAdapter({env,storage,directory,ownSession,ticket,sessionCall,request,diagnosticExclude=[],onDiagnosticTarget,onSample,onObserved404}){
  const allowed=String(env.PLAYBACK_CANARY_USERNAME||'').toLowerCase();
  const send=async(session,op,body,signal)=>{
   const r=await request(new Request(ORIGIN+'/',{method:'POST',headers:{'Content-Type':'application/json','User-Agent':'SNAPTVNOW-Own-Canary/1'},body:JSON.stringify({op,access_token:session.token,...body}),signal}));
@@ -34,7 +34,7 @@ export function ownPlaybackCanaryAdapter({env,storage,directory,ownSession,ticke
    // A recently successful real playback is a better sample than the first
    // catalog row. This is an advisory target only: normal stream_token still
    // enforces this test account's permissions, capacity and media checks.
-   try{const response=await directory(env,'/canary-sample',{username:allowed,type:config.type});if(response.ok){const data=await response.json(),sample=cleanSample(data.sample,config.type);if(sample)queue.push(sample)}else void response.body?.cancel().catch(()=>{})}catch{}
+   try{const response=await directory(env,'/canary-sample',{username:allowed,type:config.type});if(response.ok){const data=await response.json(),sample=cleanSample(data.sample,config.type),failed=config.type==='live'?cleanSample(data.failed404,'live'):null;if(!session.comparison&&failed?.ext==='ts'&&onObserved404)onObserved404(failed);if(sample)queue.push(sample)}else void response.body?.cancel().catch(()=>{})}catch{}
    const cached=await storage.get(key);if(cached?.until>Date.now()){const sample=cleanSample(cached,config.type);if(sample){if(session.comparison)queue.unshift(sample);else queue.push(sample)}}
    const requested=session.comparison===true?cleanSample(config.sample,config.type):null;
    if(session.comparison===true&&config.sample&&!requested)throw failure(400);

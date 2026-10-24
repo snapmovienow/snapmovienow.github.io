@@ -1,4 +1,4 @@
-import {recordProviderHealth,rankProviderCandidates,providerCircuitState,claimProviderTrial,providerHealthSummary} from './provider-health.mjs';
+import {recordProviderHealth,rankProviderCandidates,providerCircuitState,claimProviderTrial,providerHealthSummary,failedLive404Sample} from './provider-health.mjs';
 import {affinityGroup,providerAffinity,rememberProvider,forgetProvider,recentlyValidated,pruneAffinities} from './provider-affinity.mjs';
 import {assignmentKey,usableProvider,assignedProvider,saveAssignment,mediaRecentlyFailed,recentAccountProof} from './provider-assignment.mjs';
 import {exclusiveCatalogRoute,exclusiveSnapshot,selectExclusive,visibleExclusive} from './exclusive-catalog.mjs';
@@ -126,13 +126,14 @@ export async function accountsFetch(state,env,req){
    if(!['live','movie','series'].includes(b.type))return answer({error:'canary_sample_type'},400);
    const now=Date.now(),pool=await store.get('pool'),health=await store.get('provider-health')||{};
    if(!pool?.lines?.length||pool.syncedAt<now-12*3600000)return answer({sample:null});
+   const failed404=b.type==='live'?failedLive404Sample(health,pool,now):null;
    for(const [key,row]of Object.entries(health).filter(([,row])=>row?.ok===true&&row.at>now-1800000&&row.at<=now).sort((a,b)=>b[1].at-a[1].at)){
     const [scope,type,server,id,ext,...provider]=key.split('|');
     if(scope!=='channel'||type!==b.type||!/^\d{1,16}$/.test(id||'')||!/^[a-zA-Z0-9_-]{1,80}$/.test(server||'')||!/^[a-zA-Z0-9]{1,8}$/.test(ext||''))continue;
     if(!pool.lines.some(line=>String(line.id)===provider.join('|')&&String(line.server||'ccf')===server))continue;
-    return answer({sample:{type,id,server,ext}});
+    return answer({sample:{type,id,server,ext},...(failed404?{failed404}:{})});
    }
-   return answer({sample:null});
+   return answer({sample:null,...(failed404?{failed404}:{})});
   }
   return answer({id:u.id,username:u.username,version:u.version,expiresAt:u.expiresAt,permissions:contentPermissions(u.permissions)});
  }
@@ -206,7 +207,7 @@ export async function accountsFetch(state,env,req){
   if(!b.ok){lease.providerFailed=true;forgetProvider(state,lease);}
   else if(b.stage==='validation'&&!b.capacityBusy){lease.validatedAt=Date.now();rememberProvider(state,lease);}else if(b.capacityBusy)lease.validatedAt=0;
   await local.put(b.lease_id,lease);await tx.put(key,pruneAffinities(state));
-  const health=recordProviderHealth(await tx.get('provider-health'),lease.provider_id,lease.mediaKey,b.ok,b.elapsedMs,b.stage,Date.now(),b.lease_id,lease.providerCredentialKey);
+  const health=recordProviderHealth(await tx.get('provider-health'),lease.provider_id,lease.mediaKey,b.ok,b.elapsedMs,b.stage,Date.now(),b.lease_id,lease.providerCredentialKey,b.httpStatus);
   if(b.stage==='validation'&&b.ok&&b.capacityBusy===true){const row=health['account|'+lease.provider_id];row.busyUntil=Date.now()+5000;delete row.credentialKey;delete row.validatedAt;delete row.mediaAt;}
   if(b.stage==='validation'&&!b.ok&&b.confirmedInactive===true){
    const row=health['account|'+lease.provider_id];row.openUntil=Math.max(row.openUntil||0,Date.now()+30000);row.backoff=Math.max(row.backoff||0,30000);

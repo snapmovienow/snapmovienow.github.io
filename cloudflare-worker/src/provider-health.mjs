@@ -29,7 +29,7 @@ export function claimProviderTrial(old,id,mediaKey,claimId,now=Date.now(),option
  }
  return {health,claimed};
 }
-export function recordProviderHealth(old,id,mediaKey,ok,elapsedMs,stage,now=Date.now(),claimId=null,credentialKey=null){
+export function recordProviderHealth(old,id,mediaKey,ok,elapsedMs,stage,now=Date.now(),claimId=null,credentialKey=null,httpStatus=null){
  const next=prune(old,now,2),key=stage==='validation'?accountKey(id):channelKey(id,mediaKey),previous=old?.[key];
  const ms=Math.max(0,Math.min(30000,Number(elapsedMs)||0));
  // A late report cannot overtake the request currently testing recovery.
@@ -48,7 +48,7 @@ export function recordProviderHealth(old,id,mediaKey,ok,elapsedMs,stage,now=Date
   const wasOpen=liveRecord(previous,now)&&previous.openUntil>0;
   const reopen=wasOpen||failures>=PROVIDER_CIRCUIT_POLICY.failureThreshold;
   const backoff=reopen?Math.min(PROVIDER_CIRCUIT_POLICY.maxCooldownMs,wasOpen?Math.max(PROVIDER_CIRCUIT_POLICY.initialCooldownMs,previous.backoff||0)*2:PROVIDER_CIRCUIT_POLICY.initialCooldownMs):0;
-  next[key]={at:now,ok:false,ms,failures:Math.min(100,failures),...(reopen?{backoff,openUntil:now+backoff}:{})};
+  next[key]={at:now,ok:false,ms,failures:Math.min(100,failures),...(stage==='signal'&&Number.isInteger(httpStatus)&&httpStatus>=400&&httpStatus<=599?{httpStatus}:{}),...(reopen?{backoff,openUntil:now+backoff}:{})};
  }
  return next;
 }
@@ -69,4 +69,16 @@ export function providerHealthSummary(health,now=Date.now()){
   row.count++;row.retryAfterMs=Math.max(row.retryAfterMs,Math.max(r.openUntil||0,r.probeUntil||0)-now,0);groups.set(group,row);
  }
  return {policy:PROVIDER_CIRCUIT_POLICY,lastObservedAt,circuits:[...groups.values()]};
+}
+
+// A private diagnostic hint comes only from an observed, lease-scoped 404.
+// This comparison driver supports TS bytes; never silently change HLS format.
+export function failedLive404Sample(health,pool,now=Date.now()){
+ if(!pool?.lines?.length||pool.syncedAt<now-12*3600000)return null;
+ for(const [key,row]of Object.entries(health||{}).filter(([,r])=>r?.ok===false&&r.httpStatus===404&&r.at>now-15*60000&&r.at<=now).sort((a,b)=>b[1].at-a[1].at)){
+  const [scope,type,server,id,ext,...provider]=key.split('|');
+  if(scope!=='channel'||type!=='live'||ext!=='ts'||!/^\d{1,16}$/.test(id||'')||!/^[a-zA-Z0-9_-]{1,80}$/.test(server||''))continue;
+  if(pool.lines.some(p=>String(p.id)===provider.join('|')&&String(p.server||'ccf')===server))return {type,id,server,ext};
+ }
+ return null;
 }
