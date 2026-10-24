@@ -43,12 +43,12 @@ export async function measureComparison(open,{timeoutMs=8000,trustedRelay=false}
  }catch(error){return outcome(false,comparisonError(error))}
  finally{clearTimeout(timer);controller.abort();let cleanup;try{const cancel=reader?reader.cancel():response?.body?.cancel();if(cancel)await Promise.race([cancel.catch(()=>{}),new Promise(r=>{cleanup=setTimeout(r,200)})])}finally{clearTimeout(cleanup)}}
 }
-export async function compareOwnPlayback(adapter,control,{username,type='live',directCcfEntry=false}={}){
+export async function compareOwnPlayback(adapter,control,{username,type='live',directCcfEntry=false,sample}={}){
  const controller=new AbortController(),deadline=Date.now()+30000,timer=setTimeout(()=>controller.abort(),30000);let session,target,phase='authentication';
  const within=promise=>new Promise((resolve,reject)=>{const abort=()=>reject(Error('comparison_timeout'));if(controller.signal.aborted)return abort();controller.signal.addEventListener('abort',abort,{once:true});Promise.resolve(promise).then(resolve,reject).finally(()=>controller.signal.removeEventListener('abort',abort))});
  try{
   session=await within(adapter.authenticate({username,type,diagnostic:true},{signal:controller.signal}).then(value=>{if(controller.signal.aborted)void adapter.release(value).catch(()=>{});return value}));phase='preparation';
-  target=await within(adapter.select(session,{username,type,transport:type==='live'?'ts':'auto'},{signal:controller.signal}));
+  target=await within(adapter.select(session,{username,type,transport:type==='live'?'ts':'auto',...(sample?{sample}:{})},{signal:controller.signal}));
   if(controller.signal.aborted)throw Error('comparison_timeout');
   const origin=await measureComparison(options=>control(session,target,options),{timeoutMs:Math.max(1,Math.min(8000,deadline-Date.now()))});
   if(controller.signal.aborted)throw Error('comparison_timeout');

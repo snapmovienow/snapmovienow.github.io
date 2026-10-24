@@ -10,7 +10,7 @@ function cleanSample(value,type){
 }
 // The configured account is an explicitly authorised owner test account. Every
 // run receives a new short-lived signed session; no customer session is reused.
-export function ownPlaybackCanaryAdapter({env,storage,directory,ownSession,ticket,sessionCall,request,diagnosticExclude=[],onDiagnosticTarget}){
+export function ownPlaybackCanaryAdapter({env,storage,directory,ownSession,ticket,sessionCall,request,diagnosticExclude=[],onDiagnosticTarget,onSample}){
  const allowed=String(env.PLAYBACK_CANARY_USERNAME||'').toLowerCase();
  const send=async(session,op,body,signal)=>{
   const r=await request(new Request(ORIGIN+'/',{method:'POST',headers:{'Content-Type':'application/json','User-Agent':'SNAPTVNOW-Own-Canary/1'},body:JSON.stringify({op,access_token:session.token,...body}),signal}));
@@ -36,6 +36,9 @@ export function ownPlaybackCanaryAdapter({env,storage,directory,ownSession,ticke
    // enforces this test account's permissions, capacity and media checks.
    try{const response=await directory(env,'/canary-sample',{username:allowed,type:config.type});if(response.ok){const data=await response.json(),sample=cleanSample(data.sample,config.type);if(sample)queue.push(sample)}else void response.body?.cancel().catch(()=>{})}catch{}
    const cached=await storage.get(key);if(cached?.until>Date.now()){const sample=cleanSample(cached,config.type);if(sample){if(session.comparison)queue.unshift(sample);else queue.push(sample)}}
+   const requested=session.comparison===true?cleanSample(config.sample,config.type):null;
+   if(session.comparison===true&&config.sample&&!requested)throw failure(400);
+   if(requested){queue.length=0;queue.push(requested)}
    let rows,cursor=await storage.get(cursorKey),lastError=failure(404);cursor=Number.isSafeInteger(cursor)&&cursor>=0?cursor:0;
    const nextCatalogSample=async()=>{
     if(rows===undefined){const data=await send(session,config.type==='series'?'series':config.type==='movie'?'vod':'live',{},signal);rows=Array.isArray(data)?data.filter(row=>numeric(config.type==='series'?row.series_id:row.stream_id)&&!isAdult(row)):[]}
@@ -56,8 +59,10 @@ export function ownPlaybackCanaryAdapter({env,storage,directory,ownSession,ticke
     if(!sample)continue;if(config.transport==='ts'&&sample.type==='live')sample={...sample,ext:'ts'};const identity=sample.type+'|'+sample.server+'|'+sample.id+'|'+sample.ext;if(seen.has(identity))continue;seen.add(identity);attempts++;
     try{const comparison=session.comparison===true,body={...sample,request_id:crypto.randomUUID(),revision:comparison?100+attempts*2:attempts,...(comparison&&diagnosticExclude.length?{diagnosticExclude}:{})};let prepared;
      try{prepared=await send(session,'stream_token',body,signal)}catch(error){if(!comparison||!diagnosticExclude.length||error.status!==409)throw error;prepared=await send(session,'stream_token',{...body,request_id:crypto.randomUUID(),revision:body.revision+1,diagnosticExclude:[]},signal)}
+     if(requested&&(sample.id!==requested.id||sample.server!==requested.server||sample.ext!==requested.ext))throw failure(404);
+     if(onSample)onSample(sample);
      if(comparison&&onDiagnosticTarget)await onDiagnosticTarget(session,prepared);await storage.put(key,{...sample,until:Date.now()+3600000});return {...prepared,type:sample.type}}
-    catch(error){lastError=error;await storage.delete(key);if(![400,403,404].includes(error.status))throw error}
+    catch(error){lastError=error;await storage.delete(key);if(requested||![400,403,404].includes(error.status))throw error}
    }
    throw lastError;
   },
