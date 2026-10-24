@@ -45,6 +45,11 @@ try{
   const r=await prepare();assert.equal(r.status,200);const failed=await stream(r);assert.equal(failed.status,503);await failed.text();assert.equal(await leases.count(),1);assert.ok(await leases.get(healthyLeaseId),'other viewer keeps its existing lease');
  }
  summary=(await admin('playback-diagnostics')).data.providers;assert.ok(summary.circuits.some(c=>c.scope==='media'&&c.type==='movie'&&c.state==='open'));
+ assert.equal(summary.recentMediaFailures.length,1);assert.equal(summary.recentMediaFailures[0].id,'123');assert.deepEqual(summary.recentMediaFailures[0].httpStatuses,[503]);
+ assert.ok(!JSON.stringify(summary.recentMediaFailures).includes('source-password-test'));
+ assert.equal((await call({action:'playback-diagnostics'},'/admin')).status,401,'media failure IDs remain administrator-only');
+ assert.equal((await call({action:'playback-diagnostics',access_token:tokens[0]},'/admin')).status,401,'viewer sessions cannot read administrator diagnostics');
+
  const before=mediaCalls,blocked=await prepare();assert.equal(blocked.status,503);assert.equal(blocked.data.error,'provider_temporarily_unavailable');assert.equal(mediaCalls,before,'open circuit avoids another upstream wait');
  time+=30001;broken=false;const recovery=await prepare();assert.equal(recovery.status,200);const recovered=await stream(recovery);assert.equal(recovered.status,200);await recovered.arrayBuffer();await flush();assert.deepEqual((await admin('playback-diagnostics')).data.providers.circuits,[],'real web VOD success completes half-open recovery');
  await call({op:'playback_release',access_token:tokens[0],lease_id:recovery.data.lease_id,request_id:recovery.data.request_id});assert.equal(await leases.count(),1);await Promise.all(pending);

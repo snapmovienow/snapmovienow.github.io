@@ -68,7 +68,25 @@ export function providerHealthSummary(health,now=Date.now()){
   const row=groups.get(group)||{scope,type:['live','movie','series','all'].includes(type)?type:'other',state,count:0,retryAfterMs:0};
   row.count++;row.retryAfterMs=Math.max(row.retryAfterMs,Math.max(r.openUntil||0,r.probeUntil||0)-now,0);groups.set(group,row);
  }
- return {policy:PROVIDER_CIRCUIT_POLICY,lastObservedAt,circuits:[...groups.values()]};
+ return {policy:PROVIDER_CIRCUIT_POLICY,lastObservedAt,circuits:[...groups.values()],recentMediaFailures:recentMediaFailures(health,now)};
+}
+
+// Administrator-only diagnostic projection of existing observations. Never
+// return storage keys, provider account IDs, credentials, leases or media URLs.
+// Absence from this bounded, expiring snapshot is not proof of recovery.
+export function recentMediaFailures(health,now=Date.now()){
+ const groups=new Map();
+ for(const [key,row]of Object.entries(prune(health,now))){
+  if(row.ok!==false||!Number.isFinite(row.at)||row.at>now||!Number.isInteger(row.httpStatus)||row.httpStatus<400||row.httpStatus>599)continue;
+  const [scope,type,server,id,ext,...account]=key.split('|');
+  if(scope!=='channel'||!['live','movie','series'].includes(type)||!/^[a-zA-Z0-9_-]{1,80}$/.test(server||'')||!/^\d{1,16}$/.test(id||'')||!/^[a-zA-Z0-9]{1,10}$/.test(ext||'')||!account.join('|'))continue;
+  const groupKey=[type,server,id,ext].join('|');
+  const group=groups.get(groupKey)||{type,server,id,ext,lastObservedAt:row.at,httpStatuses:[],sourcesObserved:0};
+  group.lastObservedAt=Math.max(group.lastObservedAt,row.at);group.sourcesObserved++;
+  if(!group.httpStatuses.includes(row.httpStatus))group.httpStatuses.push(row.httpStatus);
+  groups.set(groupKey,group);
+ }
+ return [...groups.values()].sort((a,b)=>b.lastObservedAt-a.lastObservedAt).slice(0,30).map(row=>({...row,httpStatuses:row.httpStatuses.sort((a,b)=>a-b)}));
 }
 
 // A private diagnostic hint comes only from an observed, lease-scoped 404.
