@@ -1,9 +1,11 @@
 // Bounded, owner-only comparison. Never store URLs, media IDs, credentials,
 // exception text, response bodies or arbitrary upstream headers.
-const reasons=new Set(['ok','timeout','http_error','invalid_media','empty_media','preempted','origin_policy','http_parser','socket_error','invocation_context','internal_error','prepare_failed']);
+import {safeValidationFailure} from './playback-diagnostics.mjs';
+const reasons=new Set(['ok','timeout','http_error','invalid_reply','invalid_media','empty_media','preempted','origin_policy','http_parser','socket_error','invocation_context','internal_error','prepare_failed']);
 export function comparisonError(error){
  const message=String(error?.message||'');
  if([409,410,429].includes(error?.status))return 'preempted';
+ const code=safeValidationFailure(error?.failureCode);if(code)return code;
  if(/different request|I\/O context|request context/i.test(message))return 'invocation_context';
  if(/media_origin_unapproved|invalid_media_origin/.test(message))return 'origin_policy';
  if(/invalid_http|truncated_http/.test(message))return 'http_parser';
@@ -41,7 +43,7 @@ export async function measureComparison(open,{timeoutMs=8000,trustedRelay=false}
  }catch(error){return outcome(false,comparisonError(error))}
  finally{clearTimeout(timer);controller.abort();let cleanup;try{const cancel=reader?reader.cancel():response?.body?.cancel();if(cancel)await Promise.race([cancel.catch(()=>{}),new Promise(r=>{cleanup=setTimeout(r,200)})])}finally{clearTimeout(cleanup)}}
 }
-export async function compareOwnPlayback(adapter,control,{username,type='live'}={}){
+export async function compareOwnPlayback(adapter,control,{username,type='live',directCcfEntry=false}={}){
  const controller=new AbortController(),deadline=Date.now()+30000,timer=setTimeout(()=>controller.abort(),30000);let session,target,phase='authentication';
  const within=promise=>new Promise((resolve,reject)=>{const abort=()=>reject(Error('comparison_timeout'));if(controller.signal.aborted)return abort();controller.signal.addEventListener('abort',abort,{once:true});Promise.resolve(promise).then(resolve,reject).finally(()=>controller.signal.removeEventListener('abort',abort))});
  try{
@@ -51,7 +53,7 @@ export async function compareOwnPlayback(adapter,control,{username,type='live'}=
   const origin=await measureComparison(options=>control(session,target,options),{timeoutMs:Math.max(1,Math.min(8000,deadline-Date.now()))});
   if(controller.signal.aborted)throw Error('comparison_timeout');
   const relay=await measureComparison(options=>adapter.open(session,target,options),{trustedRelay:true,timeoutMs:Math.max(1,Math.min(8000,deadline-Date.now()))});
-  return {at:Date.now(),type,transport:type==='live'?'ts':'range',control:'independent_origin_v2',verdict:comparisonVerdict(origin,relay),origin,relay};
+  return {at:Date.now(),type,transport:type==='live'?'ts':'range',control:directCcfEntry?'independent_tcp_entry_v3':'independent_origin_v2',verdict:comparisonVerdict(origin,relay),origin,relay};
  }catch(error){return {at:Date.now(),type,verdict:[409,410,429].includes(error?.status)?'deferred':'preparation_unconfirmed',phase,httpStatus:Number.isInteger(error?.status)?error.status:null,reason:comparisonError(error)}}
  finally{clearTimeout(timer);controller.abort();if(session){let cleanup;await Promise.race([Promise.resolve().then(()=>adapter.release(session)).catch(()=>{}),new Promise(r=>{cleanup=setTimeout(r,1000)})]);clearTimeout(cleanup)}}
 }

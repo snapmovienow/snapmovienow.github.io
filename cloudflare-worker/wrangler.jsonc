@@ -12,6 +12,7 @@
     "CATALOG_MAINTENANCE_ENABLED": "true",
     "PLAYBACK_CANARY_USERNAME": "dieguito2026",
     "PLAYBACK_CANARY_ENABLED": "true",
+    "PLAYBACK_CONTROL_CCF_SOCKET": "true",
     "ENVIRONMENT": "production",
     "WEB_ORIGINS": "https://snapmovienow.github.io,https://app.snaptvnow.com,https://panel.snaptvnow.com"
   },

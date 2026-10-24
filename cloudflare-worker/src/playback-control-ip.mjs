@@ -1,12 +1,13 @@
-import {isApprovedMediaIP} from './ip-media.mjs';
+import {CCF_MEDIA_ORIGIN,isApprovedMediaIP} from './ip-media.mjs';
 import {validatedMediaTarget} from './media-origin.mjs';
-export async function fetchControlMedia(start,headers,sourceOrigin,{deadline,fetchHost=fetch,connectSocket}={}){
+export async function fetchControlMedia(start,headers,sourceOrigin,{deadline,fetchHost=fetch,connectSocket,directCcfEntry=false}={}){
  let next=start;
  for(let hop=0;hop<6;hop++){
   const original=new URL(next);validatedMediaTarget(original,sourceOrigin);
   // Validate with the production policy, but keep CCF's original destination.
   // Applying our relay's DNS alias here would confound origin versus gateway.
-  const response=isApprovedMediaIP(original,sourceOrigin)?await fetchControlMediaIP(original.href,headers,connectSocket,undefined,sourceOrigin,deadline):await fetchHost(original.href,{headers,redirect:'manual',signal:AbortSignal.timeout(Math.max(1,Math.min(8000,(deadline||Date.now()+8000)-Date.now())))});
+  const directEntry=directCcfEntry&&sourceOrigin===CCF_MEDIA_ORIGIN&&original.origin===CCF_MEDIA_ORIGIN;
+  const response=isApprovedMediaIP(original,sourceOrigin)||directEntry?await fetchControlMediaIP(original.href,headers,connectSocket,undefined,sourceOrigin,deadline):await fetchHost(original.href,{headers,redirect:'manual',signal:AbortSignal.timeout(Math.max(1,Math.min(8000,(deadline||Date.now()+8000)-Date.now())))});
   if(![301,302,303,307,308].includes(response.status))return response;
   const location=response.headers.get('location');void response.body?.cancel().catch(()=>{});if(!location||hop===5)throw Error('invalid_http_control_redirect');next=new URL(location,original).href;
  }
@@ -14,7 +15,7 @@ export async function fetchControlMedia(start,headers,sourceOrigin,{deadline,fet
 // Independent, prefix-only HTTP control for the owner's diagnostic. It does
 // not use the relay's body parser, buffering, native transforms or recovery.
 export async function fetchControlMediaIP(value,headers,connectSocket,unused,sourceOrigin,deadline){
- const url=new URL(value);if(!isApprovedMediaIP(url,sourceOrigin))throw Error('invalid_media_origin');
+ const url=new URL(value);if(!isApprovedMediaIP(url,sourceOrigin)&&!(sourceOrigin===CCF_MEDIA_ORIGIN&&url.origin===CCF_MEDIA_ORIGIN&&!url.username&&!url.password))throw Error('invalid_media_origin');
  const connect=connectSocket||(await import('cloudflare:sockets')).connect,socket=connect({hostname:url.hostname,port:Number(url.port||80)},{secureTransport:'off'});socket.closed.catch(()=>{});
  let reader,timer;const expired=new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('control_timeout')),Math.max(1,Math.min(8000,(deadline||Date.now()+8000)-Date.now())))}),within=p=>Promise.race([p,expired]);
  try{

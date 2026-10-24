@@ -11,6 +11,7 @@ const timeout=await measureComparison(()=>new Promise(()=>{}),{timeoutMs:10});as
 assert.equal((await measureComparison(async()=>new Response('<html>not a video</html>'))).reason,'invalid_media');
 assert.equal((await measureComparison(async()=>new Response(null,{status:410}))).reason,'preempted');assert.equal(comparisonError(Error('Cannot perform I/O on behalf of a different request')),'invocation_context');
 assert.equal(comparisonError(Error('https://private.example/secret PASSWORD')),'internal_error');
+assert.equal(comparisonError({status:503,failureCode:'timeout'}),'timeout');assert.equal(comparisonError({status:503,failureCode:'invalid_reply'}),'invalid_reply');assert.equal(comparisonError({failureCode:'https://private/password'}),'internal_error');
 const session={sid:'private-session'},target={url:'https://private.example/secret'},events=[];
 const adapter={authenticate:async()=>session,select:async s=>{assert.equal(s,session);return target},open:async(s,t)=>{assert.equal(s,session);assert.equal(t,target);events.push('relay');return new Response(null,{status:502})},release:async s=>{assert.equal(s,session);events.push('released')}};
 const compared=await compareOwnPlayback(adapter,async(s,t)=>{assert.equal(s,session);assert.equal(t,target);events.push('origin');return good()},{username:'configured-owner'});
@@ -25,4 +26,9 @@ await assert.rejects(fetchControlMediaIP('http://127.0.0.1/',h,()=>{throw Error(
 transport=socket('HTTP/1.0 200 OK\r\nContent-Length: 5\r\n\r\nhello');let directAddress;
 response=await fetchControlMedia(CCF_MEDIA_ORIGIN+'/live/fixture/fixture/1.ts',h,CCF_MEDIA_ORIGIN,{deadline:Date.now()+100,fetchHost:async()=>new Response(null,{status:302,headers:{location:'http://194.76.0.119:8080/signed-media'}}),connectSocket:address=>{directAddress=address;return transport.connect()}});
 assert.equal(await response.text(),'hello');assert.deepEqual(directAddress,{hostname:'194.76.0.119',port:8080},'the origin control must not pass through our relay DNS alias');
+const entry=socket('HTTP/1.0 302 Found\r\nLocation: http://89.44.33.22:8080/video\r\nContent-Length: 0\r\n\r\n'),media=socket('HTTP/1.0 200 OK\r\nContent-Length: 5\r\n\r\nhello'),addresses=[];
+response=await fetchControlMedia(CCF_MEDIA_ORIGIN+'/series/fixture/fixture/1.mp4',new Headers({range:'bytes=0-65535'}),CCF_MEDIA_ORIGIN,{deadline:Date.now()+100,directCcfEntry:true,fetchHost:async()=>{throw Error('the direct control must not reuse the production hostname fetch')},connectSocket:address=>{addresses.push(address);return(address.hostname==='ccf.center'?entry:media).connect()}});
+assert.equal(await response.text(),'hello');assert.deepEqual(addresses,[{hostname:'ccf.center',port:8444},{hostname:'89.44.33.22',port:8080}]);assert.ok(entry.closed()&&media.closed());
+await assert.rejects(fetchControlMediaIP(CCF_MEDIA_ORIGIN+'/series/fixture/fixture/1.mp4',h,()=>{throw Error('untrusted entry must not open')},undefined,'https://other.example'),/invalid_media_origin/);
+await assert.rejects(fetchControlMedia(CCF_MEDIA_ORIGIN+'/series/fixture/fixture/1.mp4',h,CCF_MEDIA_ORIGIN,{deadline:Date.now()+100,directCcfEntry:true,fetchHost:async()=>{throw Error('unexpected')},connectSocket:()=>socket('HTTP/1.0 302 Found\r\nLocation: http://127.0.0.1/private\r\nContent-Length: 0\r\n\r\n').connect()}),/media_origin_unapproved/);
 console.log('PASS: matched sequential origin/relay controls, bounded reads and cleanup, no secret output, explicit inconclusive timeouts, independent fragmented/chunked/interim HTTP control and reserved-address rejection.');
