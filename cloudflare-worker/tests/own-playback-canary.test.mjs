@@ -23,7 +23,7 @@ class Store{constructor(){this.data=new Map();this.queue=Promise.resolve()}async
 }
 const objects=new Map(),env={ENVIRONMENT:'production',PLAYBACK_CANARY_USERNAME:'testowner',TICKET_SECRET:'test-canary-secret-only',ADMIN_SETUP_SECRET:'test-setup-secret-long-enough-1234567890'};let relayFault=false;
 env.PLAYBACK_SESSIONS={idFromName:x=>x,get(id){if(!objects.has(id))objects.set(id,new PlaybackSession({storage:new Store(),waitUntil:p=>void p.catch(()=>{})},env));return {fetch:(url,opts)=>relayFault&&id.startsWith('__smn_media_v1:')?Response.json({error:'stream_unavailable'},{status:502,headers:{'x-smn-canary-failure':'invocation_context'}}):objects.get(id).fetch(new Request(url,opts))}}};
-const originalFetch=globalThis.fetch;let blocked=false;
+const originalFetch=globalThis.fetch;let blocked=false,validationFault=false;
 const video=new Uint8Array(188);video.set([0x47,0x40,0,0x10]);
 globalThis.fetch=async(url,opts={})=>{const u=new URL(url),action=u.searchParams.get('action');
  if(u.pathname.endsWith('/login'))return new Response(opts.method==='POST'?'<a href="dashboard">Welcome</a>':'<input name="password">',{headers:{'set-cookie':'PHPSESSID=test; path=/'}});
@@ -32,7 +32,7 @@ globalThis.fetch=async(url,opts={})=>{const u=new URL(url),action=u.searchParams
   if(action==='get_live_streams')return Response.json([{stream_id:123,name:'Canary channel'}]);
   if(action==='get_series')return Response.json([{series_id:456,name:'Canary series'}]);
   if(action==='get_series_info')return Response.json({info:{name:'Canary series'},episodes:{1:[{id:789,title:'Episode',season:1,episode_num:1,container_extension:'ts'}]}});
-  if(action)return Response.json([]);return Response.json({user_info:{auth:1,status:'Active',max_connections:'3',active_cons:'0'}});
+  if(action)return Response.json([]);if(validationFault==='http_error')return Response.json({error:'private fixture details'},{status:503});if(validationFault==='invalid_reply')return Response.json({unexpected:'private fixture details'});if(validationFault==='timeout')throw Error('provider_validation_timeout');if(validationFault)throw Error('Cannot perform I/O on behalf of a different request; private fixture details');return Response.json({user_info:{auth:1,status:'Active',max_connections:'3',active_cons:'0'}});
  }
  if(blocked)return new Response('unavailable',{status:503});
  if(u.pathname.endsWith('.m3u8'))return new Response('#EXTM3U\n#EXTINF:4,\nsegment.ts\n',{headers:{'content-type':'application/vnd.apple.mpegurl'}});
@@ -57,6 +57,11 @@ try{
  blocked=true;result=await probe('testowner');assert.equal(result.data.ok,false);assert.equal(await leases.count(),1,'source failure cannot leak probe reservations or remove the customer');
  assert.equal((await objects.get('__smn_canary_v1').state.storage.get('owner-comparison-20261023-v1')).attempts,2,'matched comparisons stop after two completed pairs');
  const publicHealth=await(await worker.fetch(new Request(origin+'/health'),env,ctx)).json();assert.equal(publicHealth.playback_comparison.attempts,2);assert.ok(!/source-password|testowner|provider_id|https/.test(JSON.stringify(publicHealth.playback_comparison)),'only redacted comparison outcomes are public');
+ blocked=false;for(const code of ['invocation_context','http_error','invalid_reply','timeout']){
+  validationFault=code;await objects.get('__smn_accounts_v1').state.storage.delete('provider-health');
+  const failedValidation=await probe('testowner');assert.deepEqual(failedValidation.data.failure,{phase:'catalog_prepare',code,httpStatus:503,operation:'stream_token',serviceError:'provider_unavailable'},'account validation distinguishes internal I/O, upstream HTTP, malformed replies and timeouts');
+  assert.ok(!JSON.stringify(failedValidation).includes('private fixture'));assert.equal(await leases.count(),1,'failed validation releases only the test reservation');
+ }validationFault=false;
  assert.equal((await call({username:'testowner',type:'live'},'/canary-run')).status,403,'private adapter is not a public route');
  await Promise.all(pending);console.log('PASS: recent successful sample selection, bounded durable rotation, signed TS playback and permission/capacity checks; own-session cleanup and customer isolation on success and failure.');
 }finally{globalThis.fetch=originalFetch}

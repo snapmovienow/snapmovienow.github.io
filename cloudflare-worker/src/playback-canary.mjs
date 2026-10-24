@@ -24,7 +24,7 @@ export function cleanCanaryResult(value,type,at=Date.now()){
  const statuses=['healthy','failed','busy','skipped'],reasons=['ok','timeout','account_unavailable','capacity_busy','sample_unavailable','media_not_arriving','playback_unavailable','invalid_playlist','invalid_media','sample_not_configured'];
  const number=value=>Number.isFinite(value)&&value>=0?Math.min(300000,Math.round(value)):null;
  const stages={};for(const key of ['authenticationMs','catalogPrepareMs','mediaHeadersMs','firstMediaByteMs'])if(number(value?.stages?.[key])!==null)stages[key]=number(value.stages[key]);
- const failure=value?.failure,phases=['authentication','catalog_prepare','media_headers','first_media_byte'],codes=['timeout','http_error','origin_policy','http_parser','socket_error','invocation_context','internal_error','preempted'];
+ const failure=value?.failure,phases=['authentication','catalog_prepare','media_headers','first_media_byte'],codes=['timeout','http_error','invalid_reply','origin_policy','http_parser','socket_error','invocation_context','internal_error','preempted'];
  const detail=failure&&phases.includes(failure.phase)?{phase:failure.phase,code:codes.includes(failure.code)?failure.code:'internal_error',httpStatus:Number.isInteger(failure.httpStatus)&&failure.httpStatus>=100&&failure.httpStatus<=599?failure.httpStatus:null,...playbackRequestDiagnostic(failure)}:null;
  return {ok:value?.ok===true,status:statuses.includes(value?.status)?value.status:'failed',reason:reasons.includes(value?.reason)?value.reason:'playback_unavailable',type:TYPES.has(type)?type:'live',at,totalMs:number(value?.totalMs),firstMediaByteMs:number(value?.firstMediaByteMs),bytes:Math.min(MAX_BYTES,number(value?.bytes)||0),stages,...(detail?{failure:detail}:{})};
 }

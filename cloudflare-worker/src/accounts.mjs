@@ -211,6 +211,10 @@ export async function accountsFetch(state,env,req){
   if(b.stage==='validation'&&!b.ok&&b.confirmedInactive===true){
    const row=health['account|'+lease.provider_id];row.openUntil=Math.max(row.openUntil||0,Date.now()+30000);row.backoff=Math.max(row.backoff||0,30000);
   }
+  if(lease.canary&&b.ok&&!b.capacityBusy&&env.PLAYBACK_CANARY_USERNAME&&normal(lease.username)===normal(env.PLAYBACK_CANARY_USERNAME)){
+   const pool=await tx.get('pool'),provider=pool?.lines?.find(p=>p.id===lease.provider_id&&p.credentialKey===lease.providerCredentialKey&&usableProvider(p));
+   if(provider){const key='canary-'+assignmentKey(lease.uid);await tx.put(key,saveAssignment(await tx.get(key),affinityGroup(lease),lease.uid,provider));}
+  }
   await tx.put('provider-health',health);return answer({ok:true});
  });
  if(p==='/acquire')return store.transaction(async tx=>{
@@ -221,10 +225,11 @@ export async function accountsFetch(state,env,req){
   const local=leases.in(tx);await local.prune();
   const canary=b.canary===true&&!!env.PLAYBACK_CANARY_USERNAME&&normal(b.username)===normal(env.PLAYBACK_CANARY_USERNAME);
   const probeId=await tx.get('background-canary-lease'),probe=probeId?await local.get(probeId):null;
-  if(probeId&&(!canary||!probe||probe.until<=Date.now())){
+  if(probeId&&(!probe||probe.until<=Date.now())){
    if(probe?.canary)await local.remove(probeId,'customer_priority');
    await tx.delete('background-canary-lease');
   }else if(canary&&probe?.canary&&probe.sid!==b.sid)return answer({error:'ccf_capacity'},409);
+  const reclaimProbe=async()=>{if(canary||!probe?.canary)return false;await local.remove(probeId,'customer_priority');await tx.delete('background-canary-lease');return true;};
   const sessionLeases=await local.active({sid:b.sid});
   const owned=[...sessionLeases].filter(([,l])=>l.uid===b.uid&&l.version===b.version&&!l.providerFailed);
   // Preserve the active assignment even when it predates this deployment. A
@@ -242,14 +247,22 @@ export async function accountsFetch(state,env,req){
    // Project replacement of this viewer only. Keep a same-media lease ID and
    // its history intact; all other viewers still count towards capacity.
    for(const l of sessionLeases.values()){const key=String(l.provider_id||'');counts.set(key,Math.max(0,(counts.get(key)||0)-1));}
-   const candidates=pool.lines.filter(p=>(p.server||'ccf')===group&&usableProvider(p)&&!(b.exclude||[]).includes(p.id)).map(p=>({...p,occupied:p.external+(counts.get(String(p.id))||0)})).filter(p=>p.occupied<p.maxConnections-(canary?1:0)).sort((a,b)=>a.occupied/a.maxConnections-b.occupied/b.maxConnections);
+   const eligible=pool.lines.filter(p=>(p.server||'ccf')===group&&usableProvider(p)&&!(b.exclude||[]).includes(p.id));
    const health=await tx.get('provider-health')||{},now=Date.now();
-   const profile=canary?null:await tx.get(assignmentKey(u.id)),primary=assignedProvider(profile,group,u.id,pool.lines,now);
+   const profile=await tx.get((canary?'canary-':'')+assignmentKey(u.id)),primary=assignedProvider(profile,group,u.id,pool.lines,now);
    const primaryFailed=primary&&providerCircuitState(health,primary.id,b.mediaKey,now,{ignoreMedia:true}).blocked;
    // Preserve an active viewer's proven assignment. Other viewers' reports
    // cannot evict it; a circuit for a different requested title still applies.
    const options=p=>{const active=owned.find(([,l])=>l.provider_id===p.id&&affinityGroup(l)===group);return {ignoreAccount:!!active,ignoreMedia:!!active&&active[1].mediaKey===b.mediaKey}};
-   const available=candidates.filter(p=>!(health['account|'+p.id]?.busyUntil>now)&&!providerCircuitState(health,p.id,b.mediaKey,now,options(p)).blocked);
+   const permitted=p=>!(health['account|'+p.id]?.busyUntil>now)&&!providerCircuitState(health,p.id,b.mediaKey,now,options(p)).blocked;
+   const occupied=p=>p.external+(counts.get(String(p.id))||0);
+   // Background video yields only when its slot would unblock this customer
+   // or preserve the customer's healthy assigned account. Unrelated starts
+   // and channel changes with spare capacity must not invalidate the probe.
+   const trialProvider=!canary&&probe?.canary&&eligible.find(p=>p.id===probe.provider_id&&permitted(p)&&occupied(p)>=p.maxConnections&&occupied(p)-1<p.maxConnections);
+   if(trialProvider&&((hint?.provider_id===trialProvider.id||primary?.id===trialProvider.id)||!eligible.some(p=>permitted(p)&&occupied(p)<p.maxConnections))&&await reclaimProbe())counts.set(String(trialProvider.id),Math.max(0,(counts.get(String(trialProvider.id))||0)-1));
+   const candidates=eligible.map(p=>({...p,occupied:occupied(p)})).filter(p=>p.occupied<p.maxConnections-(canary?1:0)).sort((a,b)=>a.occupied/a.maxConnections-b.occupied/b.maxConnections);
+   const available=candidates.filter(permitted);
    const ranked=rankProviderCandidates(available,health,b.mediaKey,now);
    const preferred=hint&&available.find(p=>p.id===hint.provider_id),home=primary&&!primaryFailed&&!mediaRecentlyFailed(health,primary.id,b.mediaKey,now)&&available.find(p=>p.id===primary.id),selected=preferred||home||ranked[0];
    if(!selected){const capacityBusy=candidates.length&&candidates.every(p=>health['account|'+p.id]?.busyUntil>now);const retry=candidates.map(p=>providerCircuitState(health,p.id,b.mediaKey,now).retryAfterMs).filter(Boolean);return answer({error:candidates.length&&!capacityBusy?'provider_temporarily_unavailable':'ccf_capacity',...(retry.length?{retry_after_ms:Math.min(...retry)}:{})},candidates.length&&!capacityBusy?503:409);}
@@ -264,6 +277,7 @@ export async function accountsFetch(state,env,req){
   }
   await local.removeFor({sid:b.sid});
   const max=Math.min(provider.maxConnections,Math.max(1,Number(b.upstreamMax)||3));
+  if(Math.max(await local.count(),Number(b.upstreamExternal)||0)>=max&&!canary)await reclaimProbe();
   if(Math.max(await local.count(),Number(b.upstreamExternal)||0)>=max-(canary?1:0))return answer({error:'ccf_capacity',maxConnections:max},409);
   const id=crypto.randomUUID();await local.put(id,{sid:b.sid,uid:b.uid,username:b.username,version:b.version,until:Date.now()+90000,...extra});if(canary)await tx.put('background-canary-lease',id);await recordCustomerActivity(tx,u.id,Date.now(),b.client);return answer({lease_id:id});
  });

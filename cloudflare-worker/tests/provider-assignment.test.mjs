@@ -57,7 +57,13 @@ try{
  r=await g.start('proof');assert.notEqual(r.data.lease_id,oldLease);assert.equal(r.data.reused,undefined);assert.equal(r.data.validatedRecently,false,'credential rotation invalidates both the session hint and account proof');
  await g.call('/release-session',{sid:'proof'});
  r=await g.start('canary',2,{canary:true,exclude:['b']});assert.equal(r.data.provider_id,'a');assert.equal((await g.storage.get(assignmentKey('viewer-id'))).groups.ccf.provider_id,'b','background tests cannot change a real viewer assignment');
+ await g.report(r,true,'validation');
+ assert.equal((await g.storage.get('canary-'+assignmentKey('viewer-id'))).groups.ccf.provider_id,'a','the probe records a separate preference only after a positive check');
  await g.call('/release-session',{sid:'canary'});
+ const nextProbe=await g.start('next-canary',3,{canary:true});assert.equal(nextProbe.data.provider_id,'a','independent scheduled sessions retain their proven account');
+ assert.equal((await g.storage.get(assignmentKey('viewer-id'))).groups.ccf.provider_id,'b','probe preference cannot replace the customer assignment');
+ await g.report(nextProbe,false,'validation',{confirmedInactive:true});await g.call('/release-session',{sid:'next-canary'});
+ const replacementProbe=await g.start('replacement-canary',4,{canary:true});assert.equal(replacementProbe.data.provider_id,'b','failed probe accounts still follow normal health and capacity failover');await g.call('/release-session',{sid:'replacement-canary'});
  await g.storage.put('user:viewer',{id:'viewer-id',username:'viewer',version:1,status:'suspended'});assert.equal((await g.start('blocked')).status,401);
 
  const provider={id:'a',credentialKey:'key'},at=now;

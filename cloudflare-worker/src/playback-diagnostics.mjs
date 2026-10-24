@@ -1,5 +1,7 @@
 // Diagnostics are an allowlist, never exception text or an upstream body.
 const operations=new Set(['session_info','live','vod','series','series_info','stream_token']);
+const validationCodes=new Set(['timeout','http_error','invalid_reply','socket_error','invocation_context','internal_error']);
+export const safeValidationFailure=value=>validationCodes.has(value)?value:undefined;
 const errors=new Set(['provider_unavailable','provider_inactive','provider_not_configured','provider_temporarily_unavailable','panel_unavailable','panel_invalid','panel_no_active_lines','server_unavailable','catalog_timeout','upstream_unavailable','ccf_capacity','user_connection_limit','playback_superseded','playback_expired','account_inactive','content_disabled','adult_content_disabled','invalid_stream','live_signal_unavailable','live_startup_timeout','provider_validation_timeout','media_origin_unapproved','playback_preparation_failed']);
 export function preparationFailure(error){
  const code=errors.has(error?.message)?error.message:'playback_preparation_failed';

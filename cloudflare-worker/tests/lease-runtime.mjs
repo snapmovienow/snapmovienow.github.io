@@ -73,7 +73,9 @@ try{
   const priority='customer-priority';await call(priority,'/seed',{count:5,accounts:1});
   const probe={...customer(4),canary:true};await call(priority,'/accounts/playback-begin',probe);
   const probing=await call(priority,'/accounts/acquire',probe);assert.equal(probing.status,200);assert.equal((await call(priority,'/inspect',{id:probing.data.lease_id})).data.row.canary,true);
-  const arrivals=await Promise.all([0,1,2].map(async i=>{const c=customer(i);await call(priority,'/accounts/playback-begin',c);return call(priority,'/accounts/acquire',c)}));
+  const firstCustomer=customer(0);await call(priority,'/accounts/playback-begin',firstCustomer);const firstArrival=await call(priority,'/accounts/acquire',firstCustomer);assert.equal(firstArrival.status,200);
+  assert.equal((await call(priority,'/accounts/lease-check',{...probe,lease_id:probing.data.lease_id})).status,200,'a real SQLite allocation with spare capacity preserves the probe');
+  const arrivals=[firstArrival,...await Promise.all([1,2].map(async i=>{const c=customer(i);await call(priority,'/accounts/playback-begin',c);return call(priority,'/accounts/acquire',c)}))];
   assert.ok(arrivals.every(r=>r.status===200),'three customers acquire capacity atomically while the probe yields');
   assert.equal((await call(priority,'/accounts/lease-check',{...probe,lease_id:probing.data.lease_id})).status,410);
   assert.equal((await call(priority,'/inspect')).data.count,3);
