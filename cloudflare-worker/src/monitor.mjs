@@ -2,6 +2,7 @@ import {seal,unseal} from './security.mjs';
 import {cleanCanarySettings,defaultCanarySettings,cleanCanaryResult} from './playback-canary.mjs';
 import {startupTimingObservations} from './playback-timings.mjs';
 import {canaryIncident} from './playback-diagnostics.mjs';
+import {mediaFailureContext} from './monitor-content-context.mjs';
 
 export const MONITOR_CRON='*/5 * * * *';
 const interval=300000,freshness=36*3600000;
@@ -55,6 +56,10 @@ export function observations(snapshot,now,createdAt){
   if(b.status==='failed'||b.status==='success')out.push({key:'backup:creation',kind:'backup',title:'Falló la creación de una copia',bad:b.status==='failed',confirm:1});
   if(b.recovery?.status==='failed'||b.recovery?.status==='success')out.push({key:'backup:restore',kind:'backup',title:'Falló la comprobación de recuperación de una copia',bad:b.recovery.status==='failed',confirm:1});
  }
+ for(const item of out)if(item.bad&&['startup','playback'].includes(item.kind)){
+  const parts=item.key.split(':'),type=parts[item.kind==='startup'?1:2],server=item.kind==='playback'?parts[1]:null;
+  const context=mediaFailureContext(snapshot.mediaFailures,type,server,now);if(context)item.diagnosticContext=context;
+ }
  return out;
 }
 
@@ -69,9 +74,9 @@ export function applyObservations(state,snapshot,now){
   if(item.bad&&previous.bad>=item.confirm){
    if(!incident||incident.status==='resolved'){
     if(Object.values(state.incidents).filter(i=>i.status==='open').length>=80)continue;
-    state.incidents[item.key]={id:crypto.randomUUID(),key:item.key,kind:item.kind,title:item.title,detail:item.detail||'',status:'open',openedAt:now,lastObservedAt:now,waitingForSamples:false};
+    state.incidents[item.key]={id:crypto.randomUUID(),key:item.key,kind:item.kind,title:item.title,detail:item.detail||'',status:'open',openedAt:now,lastObservedAt:now,waitingForSamples:false,...(item.diagnosticContext?{diagnosticContext:item.diagnosticContext}:{})};
     changed.push({...state.incidents[item.key],kind:'opened'});
-   }else Object.assign(incident,{title:item.title,detail:item.detail||'',lastObservedAt:now,waitingForSamples:false});
+   }else Object.assign(incident,{title:item.title,detail:item.detail||'',lastObservedAt:now,waitingForSamples:false,...(item.diagnosticContext?{diagnosticContext:item.diagnosticContext}:{})});
   }else if(!item.bad&&incident?.status==='open'&&previous.good>=item.confirm){incident.status='resolved';incident.resolvedAt=now;incident.lastObservedAt=now;incident.waitingForSamples=false;changed.push({...incident,kind:'resolved',title:({startup:'Inicio de contenido',canary:'Prueba automática de reproducción',playback:'Reproducción',provider:'Disponibilidad del proveedor',monitor:'Comprobación del sistema',backup:'Comprobación de copias'}[incident.kind])||'Comprobación del servicio',detail:item.detail||'Comprobación correcta.'})}
  }
  for(const [key,incident]of Object.entries(state.incidents)){
@@ -82,7 +87,7 @@ export function applyObservations(state,snapshot,now){
  // A small durable outbox, stable notification IDs and a provider idempotency
  // key handle lost acknowledgements and retries without another email.
  if(changed.length){
-  const event={id:crypto.randomUUID(),createdAt:now,changes:changed.map(({kind,id,title,detail})=>({kind,id,title,detail})),delivery:state.config.channel==='email'?'pending':'panel'};
+  const event={id:crypto.randomUUID(),createdAt:now,changes:changed.map(({kind,id,title,detail,diagnosticContext})=>({kind,id,title,detail,...(diagnosticContext?{diagnosticContext}:{})})),delivery:state.config.channel==='email'?'pending':'panel'};
   state.history.unshift(event);state.history=state.history.slice(0,50);
   if(state.config.channel==='email'&&state.outbox.length<20)state.outbox.push({...event,attempts:0,nextAt:now,version:state.config.version});
   else if(state.config.channel==='email')event.delivery='queue_full';
@@ -96,7 +101,7 @@ export function applyObservations(state,snapshot,now){
 }
 
 function publicStatus(state,env){return {settings:settings(state.config),createdAt:state.createdAt,lastCheckedAt:state.lastCheckedAt,intervalMinutes:5,monitorStale:!state.lastCheckedAt||Date.now()-state.lastCheckedAt>15*60000,incidents:Object.values(state.incidents).sort((a,b)=>b.openedAt-a.openedAt),history:state.history,delivery:state.delivery,pendingEmails:state.outbox.length,canary:canaryStatus(state,env),thresholds:{failedStarts:5,errors:5,minStarts:5,stallPercent:2,startupMs:10000,backupHours:36,playbackWindowMinutes:15}}}
-function mail(event,config){return {from:config.from,to:[config.to],subject:'SNAPTVNOW · '+(event.changes.every(c=>c.kind!=='opened')?'Recuperación / comprobación':'Aviso del sistema'),text:'SNAPTVNOW\n'+new Date(event.createdAt).toISOString()+'\n\n'+event.changes.map(c=>({opened:'INCIDENCIA',resolved:'RECUPERADO',removed:'CONEXIÓN RETIRADA',test:'PRUEBA'}[c.kind])+': '+c.title+(c.detail?'\n'+c.detail:'')).join('\n\n')+'\n\nRevisa el panel: https://app.snaptvnow.com/admin.html'} }
+function mail(event,config){return {from:config.from,to:[config.to],subject:'SNAPTVNOW · '+(event.changes.every(c=>c.kind!=='opened')?'Recuperación / comprobación':'Aviso del sistema'),text:'SNAPTVNOW\n'+new Date(event.createdAt).toISOString()+'\n\n'+event.changes.map(c=>({opened:'INCIDENCIA',resolved:'RECUPERADO',removed:'CONEXIÓN RETIRADA',test:'PRUEBA'}[c.kind])+': '+c.title+(c.detail?'\n'+c.detail:'')+(c.diagnosticContext?'\n\n'+(c.kind==='resolved'?'Referencia del fallo anterior; esta recuperación agrupada no confirma la reparación de cada contenido:':'Contenidos con fallos observados del mismo tipo; no atribuye toda la alerta a estos contenidos:')+'\n'+c.diagnosticContext:'')).join('\n\n')+'\n\nRevisa el panel: https://app.snaptvnow.com/admin.html'} }
 
 export class OperationsMonitor{
  constructor(state,env){this.state=state;this.env=env;this.running=null}
@@ -144,7 +149,13 @@ export class OperationsMonitor{
    directory(this.env,'/backup-status').then(read)
   ]);
   const snapshot=Object.fromEntries(['providers','playback','backups'].map((key,i)=>[key,responses[i].status==='fulfilled'?responses[i].value:null]));
-  snapshot.canary=await this.runCanary();return snapshot;
+  snapshot.canary=await this.runCanary();
+  // Read retained metadata only when an existing observation is failing. This
+  // adds no playback probes and cannot prevent ordinary alerts on read failure.
+  if(observations(snapshot,Date.now(),Date.now()).some(item=>item.bad&&['startup','playback'].includes(item.kind))){
+   try{const data=await read(await binding.get(binding.idFromName('__smn_provider_refresh_v1')).fetch('https://private/monitor-media-failures',{...request('/monitor-media-failures'),signal:AbortSignal.timeout(2000)}));snapshot.mediaFailures=Array.isArray(data.items)?data.items:[]}catch{snapshot.mediaFailures=[]}
+  }
+  return snapshot;
  }
  async runCanary(manual=false){
   if(this.env.ENVIRONMENT==='staging')return {enabled:false,status:'disabled',results:[]};
