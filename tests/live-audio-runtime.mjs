@@ -56,10 +56,16 @@ try{
   const page=await browser.newPage();
   await page.goto(base);await page.addScriptTag({path:hlsPath});await page.addScriptTag({path:transportPath.pathname});await page.addScriptTag({path:new URL('../live-watchdog.js',import.meta.url).pathname});
   await page.evaluate(async({base,codec,config})=>{
-   window.errors=[];window.tracks={};window.first=null;
+   window.errors=[];window.tracks={};window.first=null;window.playbackEvents=[];
+   const startedAt=performance.now();
    const v=document.getElementById('v');window.engine=new Hls(config);
+   const snapshot=()=>({atMs:performance.now()-startedAt,position:v.currentTime,firstPosition:window.first,ready:v.readyState,paused:v.paused,seeking:v.seeking,buffered:Array.from({length:v.buffered.length},(_,i)=>[v.buffered.start(i),v.buffered.end(i)])});
+   const recordEvent=event=>{playbackEvents.push({event,...snapshot()});if(playbackEvents.length>100)playbackEvents.shift()};
+   const recordError=d=>{errors.push({detail:d.details,fatal:d.fatal,...snapshot(),buffer:d.buffer,bufferInfo:d.bufferInfo,stallAgeMs:d.stalled?.start==null?null:performance.now()-d.stalled.start});if(errors.length>30)errors.shift()};
+   for(const event of ['playing','waiting','stalled','seeking','seeked','pause','ended'])v.addEventListener(event,()=>recordEvent(event));
    engine.on(Hls.Events.BUFFER_CREATED,(_,d)=>window.tracks=d.tracks);
-   engine.on(Hls.Events.ERROR,(_,d)=>{errors.push({detail:d.details,fatal:d.fatal});if(errors.length>30)errors.shift()});
+   engine.on(Hls.Events.ERROR,(_,d)=>recordError(d));
+   engine.on(Hls.Events.STALL_RESOLVED,()=>recordEvent('hlsStallResolved'));
    v.addEventListener('playing',()=>{if(first===null)first=v.currentTime});
    if(config.progressive){engine.loadSource(base+'/'+codec+'/index.m3u8');engine.attachMedia(v);v.play().catch(()=>{});}
    else{
@@ -68,7 +74,8 @@ try{
     window.transport=SMNPlaybackTransport.create({moviePlayer:unused,hlsPlayer:v,assertAttempt(){},
      onDiagnostics:current=>{
       window.engine=current;current.on(Hls.Events.BUFFER_CREATED,(_,d)=>window.tracks=d.tracks);
-      current.on(Hls.Events.ERROR,(_,d)=>errors.push({detail:d.details,fatal:d.fatal}));
+      current.on(Hls.Events.ERROR,(_,d)=>recordError(d));
+      current.on(Hls.Events.STALL_RESOLVED,()=>recordEvent('hlsStallResolved'));
      }
     });
     await transport.start({url:base+'/'+codec+'/index.m3u8',external:true,type:'live',attempt});
@@ -79,7 +86,7 @@ try{
    const v=document.getElementById('v');
    function ranges(b){return Array.from({length:b?.length||0},(_,i)=>[b.start(i),b.end(i)])}
    const q=v.getVideoPlaybackQuality();
-   return {position:v.currentTime,firstPosition:first,ready:v.readyState,seeking:v.seeking,decoded:q.totalVideoFrames,dropped:q.droppedVideoFrames,audio:ranges(tracks.audio?.buffer?.buffered),video:ranges(tracks.video?.buffer?.buffered),audioContainer:tracks.audio?.container,errors};
+   return {position:v.currentTime,firstPosition:first,ready:v.readyState,seeking:v.seeking,decoded:q.totalVideoFrames,dropped:q.droppedVideoFrames,audio:ranges(tracks.audio?.buffer?.buffered),video:ranges(tracks.video?.buffer?.buffered),audioContainer:tracks.audio?.container,errors,playbackEvents};
   });
   await page.close();return {codec,progressive,...result};
  })));
