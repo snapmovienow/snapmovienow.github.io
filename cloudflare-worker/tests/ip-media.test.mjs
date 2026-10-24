@@ -75,3 +75,9 @@ try{
  await fetchApprovedMediaIP(allowed,new Headers(),wire.connect,undefined,CCF_MEDIA_ORIGIN,13000,12000);assert.ok(headerTimers.every(ms=>ms===3000),'later socket hops cannot create another twelve seconds');
 }finally{globalThis.setTimeout=realSetTimeout;Date.now=realNow;}
 console.log('PASS: live/VOD socket header deadlines and shared remaining redirect budget.');
+let zeroClosed=false,zeroSent=false,zeroTimer;
+const zeroReader={read:async()=>{assert.equal(zeroSent,false);zeroSent=true;return{done:false,value:new TextEncoder().encode('HTTP/1.0 302 Found\r\nLocation: /video\r\nContent-Length: 0\r\n\r\n')}},cancel:()=>new Promise(()=>{})};
+try{
+ const response=await Promise.race([fetchApprovedMediaIP(allowed,new Headers(),()=>({opened:Promise.resolve(),closed:Promise.resolve(),close:async()=>{zeroClosed=true},readable:{getReader:()=>zeroReader},writable:new WritableStream()}),nativeFactory),new Promise((_,reject)=>{zeroTimer=setTimeout(()=>reject(Error('zero_body_waited_for_cancel')),40)})]);
+ assert.equal(response.status,302);assert.equal(zeroClosed,true,'an empty redirect closes its socket without waiting for an uncooperative reader cancellation');
+}finally{clearTimeout(zeroTimer)}

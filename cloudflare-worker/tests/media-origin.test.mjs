@@ -88,3 +88,8 @@ try{
  }
 }finally{Date.now=realNow;}
 console.log('PASS: trusted provider rotation at 0/12/24 hours, HLS segments/keys, Range provenance, all-hop private IP rejection, forged provenance rejection and redirect cleanup.');
+let cleanupTimer,cancelRequested=false;
+try{
+ const ready=await Promise.race([fetchValidatedMedia(start,new Headers(),'live',CCF_MEDIA_ORIGIN,{fetchHost:async()=>new Response(new ReadableStream({cancel(){cancelRequested=true;return new Promise(()=>{})}}),{status:302,headers:{location:'http://89.44.33.22/video'}}),fetchIP:async()=>new Response('ready')}),new Promise((_,reject)=>{cleanupTimer=setTimeout(()=>reject(Error('redirect_waited_for_cancel')),40)})]);
+ assert.equal(await ready.response.text(),'ready');assert.ok(cancelRequested,'redirect cleanup is initiated before proceeding without holding startup hostage');
+}finally{clearTimeout(cleanupTimer)}

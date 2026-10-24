@@ -27,7 +27,7 @@ export async function fetchValidatedMedia(start,headers,type,sourceOrigin,{fetch
    await fetchIP(next,headers,undefined,undefined,sourceOrigin,deadline,startupBudget):
    await fetchHost(next,{headers,redirect:'manual'},deadline===null?(type==='live'?12000:25000):startupTimeout(deadline,startupBudget));
   if(![301,302,303,307,308].includes(response.status))return {response,url:next};
-  const location=response.headers.get('location');await response.body?.cancel();
+  const location=response.headers.get('location');void response.body?.cancel().catch(()=>{});
   if(!location||redirects===5)throw Error('invalid_redirect');
   next=new URL(location,next).href;
  }

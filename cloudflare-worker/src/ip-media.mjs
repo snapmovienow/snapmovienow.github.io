@@ -56,7 +56,7 @@ export async function fetchApprovedMediaIP(value,headers,connectSocket,nativeStr
   const range=responseHeaders.get('content-range')?.match(/^bytes (\d+)-(\d+)\/(\d+)$/);
   const length=remaining??(range?Number(range[2])-Number(range[1])+1:null);
   if(length!==null&&(!Number.isSafeInteger(length)||length<0||buffer.length>length))throw Error('invalid_http_response');
-  if([204,205,304].includes(status)||length===0){await reader.cancel();socket.close().catch(()=>{});return new Response(length===0&&![204,205,304].includes(status)?'':null,{status,headers:responseHeaders})}
+  if([204,205,304].includes(status)||length===0){void reader.cancel().catch(()=>{});void socket.close().catch(()=>{});return new Response(length===0&&![204,205,304].includes(status)?'':null,{status,headers:responseHeaders})}
   const stream=factory(length),prefix=buffer;reader.releaseLock();
   // Read native byte streams in larger blocks, but finish finite HTTP bodies
   // at Content-Length. Waiting for socket EOF can hang a complete playlist or
