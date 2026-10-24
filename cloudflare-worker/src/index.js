@@ -42,6 +42,7 @@ export {BackupRecovery} from './backup-recovery.mjs';
 import {matchesXtream} from './xtream.mjs';
 import {contentPermissions,createAdultPolicy,isAdult} from './content-permissions.mjs';
 import {createProviderCatalog} from './provider-catalog.mjs';
+import {cachedFailureNames} from './media-failure-names.mjs';
 import {diagnoseSeries} from './series-diagnostic.mjs';
 import {createXtreamBridge,guardXtreamResponse} from './xtream-bridge.mjs';
 import {recoverMedia} from './media-fetch.mjs';
@@ -162,7 +163,7 @@ async function adminRequest(req,env,ctx){
  }
  const security={"admin-password":"/admin-password","mfa-replace-begin":"/mfa-replace-begin","security-status":"/security-status","mfa-begin":"/mfa-begin","mfa-confirm":"/mfa-confirm","mfa-disable":"/mfa-disable","mfa-recovery-renew":"/mfa-recovery-renew","audit":"/audit","backup-list":"/backup-list","backup-status":"/backup-status","backup-verify":"/backup-verify","backup-create":"/backup-create","backup-drill":"/backup-drill","backup-download":"/backup-download","backup-export":"/backup-export","backup-preview":"/backup-preview","backup-restore":"/backup-restore"};
  if(security[action]){const r=await directory(env,security[action],{...b,actor:s.username});return json(await r.json(),r.status)}
- if(action==='playback-diagnostics'){const [providers,timings]=await Promise.all([directory(env,'/provider-health').then(r=>r.json()),env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_operations_v1')).fetch('https://private/operations/timing-read',{method:'POST',body:'{}'}).then(r=>r.json())]);return json({providers,timings})}
+ if(action==='playback-diagnostics'){const [providers,timings]=await Promise.all([directory(env,'/provider-health').then(r=>r.json()),env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_operations_v1')).fetch('https://private/operations/timing-read',{method:'POST',body:'{}'}).then(r=>r.json())]);providers.recentMediaFailures=await cachedFailureNames(createProviderCatalog(catalogDeps,env,ctx,{timeoutMs:1500,cacheReadMs:300}),providers.recentMediaFailures);return json({providers,timings})}
  if(['playback-canary-status','playback-canary-settings','playback-canary-run'].includes(action)){const path=action==='playback-canary-settings'?'/canary/settings':action==='playback-canary-run'?'/canary/run':'/status';const result=await monitorCall(env,path,action==='playback-canary-settings'?{enabled:b.enabled,...(b.types?{types:b.types}:{})}:{});if(result.ok&&action!=='playback-canary-status')await directory(env,'/audit-write',{actor:s.username,action});return json(await result.json(),result.status)}
  if(action==='playback-health'){const r=await env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_operations_v1')).fetch('https://private/operations/read',{method:'POST',body:'{}'});return json(await r.json(),r.status)}
  if(['alerts-status','alerts-settings','alerts-check','alerts-test'].includes(action)){

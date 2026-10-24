@@ -51,7 +51,7 @@ export function mountAdminAlerts({api,container,notice}){
    if(!$('diagnosticTimings').childNodes.length)$('diagnosticTimings').textContent='Todavía no hay muestras de tiempos recientes. Esto no confirma que la reproducción esté funcionando.';
    $('diagnosticFailures').replaceChildren();
    for(const row of (data.providers?.recentMediaFailures||[]).slice(0,30)){
-    const p=document.createElement('p');p.textContent=reliabilityType(row.type)+' · ID '+row.id+' · Servidor '+row.server+' · '+row.ext+' · HTTP '+(row.httpStatuses||[]).join(', ')+' · Último fallo observado: '+date(row.lastObservedAt);$('diagnosticFailures').append(p);
+    const p=document.createElement('p');p.textContent=reliabilityType(row.type)+' · '+(row.title||'Nombre no disponible en el catálogo guardado')+' · ID '+row.id+' · Servidor '+row.server+' · '+row.ext+' · HTTP '+(row.httpStatuses||[]).join(', ')+' · Último fallo observado: '+date(row.lastObservedAt);$('diagnosticFailures').append(p);
    }
    if(!$('diagnosticFailures').childNodes.length)$('diagnosticFailures').textContent='Sin fallos identificables en esta muestra. No confirma recuperación de incidencias anteriores.';
   }catch(error){if(generation===epoch)notice(error.message)}finally{if(generation===epoch)button.disabled=false}
