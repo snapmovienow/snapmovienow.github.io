@@ -57,3 +57,19 @@ t=transport('HTTP/1.0 200 OK\r\nContent-Length: 5\r\n\r\nhello');let destination
 r=await fetchApprovedMediaIP('http://89.44.33.22:8080/signed/live.m3u8',new Headers(),(target,options)=>{destination=target;assert.equal(options.secureTransport,'off');return t.connect()},undefined,CCF_MEDIA_ORIGIN);
 assert.equal(await r.text(),'hello');assert.deepEqual(destination,{hostname:'89.44.33.22',port:8080});assert.ok(t.state().written.includes('Host: 89.44.33.22:8080\r\n'));
 console.log('PASS: public IPv4 rotation requires trusted CCF provenance, reserved networks remain blocked, and the provider HTTP port is preserved.');
+// Exercise the actual socket header timer without a nine-second wall-clock
+// sleep. The timer must use the declared content budget, then the shared
+// remaining deadline, while the body retains its independent idle timeout.
+const realSetTimeout=globalThis.setTimeout,realNow=Date.now;let timerClock=1000,headerTimers=[];
+globalThis.setTimeout=(fn,delay,...args)=>{headerTimers.push(delay);return realSetTimeout(fn,delay,...args)};Date.now=()=>timerClock;
+try{
+ for(const budget of [8000,12000]){
+  headerTimers=[];timerClock=1000;const wire=transport('HTTP/1.0 200 OK\r\nContent-Length: 5\r\n\r\nhello',7);
+  const response=await fetchApprovedMediaIP(allowed,new Headers(),wire.connect,undefined,CCF_MEDIA_ORIGIN,1000+budget,budget);
+  const beforeBody=[...headerTimers];assert.ok(beforeBody.length>2);assert.ok(beforeBody.every(ms=>ms===budget),'the socket, write and header reads share the content-specific deadline');
+  assert.equal(await response.text(),'hello');
+ }
+ headerTimers=[];timerClock=10000;const wire=transport('HTTP/1.0 200 OK\r\nContent-Length: 0\r\n\r\n');
+ await fetchApprovedMediaIP(allowed,new Headers(),wire.connect,undefined,CCF_MEDIA_ORIGIN,13000,12000);assert.ok(headerTimers.every(ms=>ms===3000),'later socket hops cannot create another twelve seconds');
+}finally{globalThis.setTimeout=realSetTimeout;Date.now=realNow;}
+console.log('PASS: live/VOD socket header deadlines and shared remaining redirect budget.');

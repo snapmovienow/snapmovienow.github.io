@@ -20,6 +20,12 @@ assert.equal(startupTimingObservations([{...report.groups[0],stages:{total:{p95U
 assert.match(startupTimingObservations([{...report.groups[0],stages:{total:{p95UpperMs:20000},origin:{p95UpperMs:15000}}}])[0].detail,/respuesta del origen/);
 assert.equal(startupTimingObservations([{...report.groups[0],requests:1}]).length,0,'one sparse sample cannot declare an outage or recovery');
 assert.equal(startupTimingObservations([{...report.groups[0],failures:0}])[0].bad,false);
+for(const [type,requests,failures,stage] of [['series',9,1,'catalog'],['movie',21,2,'origin']]){
+ const observation=startupTimingObservations([{type,platform:'other',requests,failures,stages:{total:{p95UpperMs:20000},[stage]:{p95UpperMs:20000}}}])[0];
+ assert.equal(observation.bad,true);assert.equal(observation.title,'Demoras al iniciar contenido');assert.match(observation.detail,/Alerta por demora: P95 hasta 20 s \(límite 12 s\)/);assert.match(observation.detail,/Reproductor sin identificar/);assert.ok(!observation.detail.includes('Alerta por respuestas con error'),'a latency alert cannot misrepresent a below-threshold error count as repeated failures');
+ assert.equal(startupTimingObservations([{type,platform:'other',requests,failures,stages:{total:{p95UpperMs:12000}}}]).length,0,'existing error and startup thresholds remain unchanged');
+}
+const failedStarts=startupTimingObservations([{type:'series',platform:'web',requests:9,failures:3,stages:{total:{p95UpperMs:8000}}}])[0];assert.equal(failedStarts.title,'Fallos repetidos al iniciar contenido');assert.match(failedStarts.detail,/Alerta por respuestas con error/);assert.ok(!failedStarts.detail.includes('Alerta por demora'));
 let clock=0,resolveA,resolveB;const parallel=new PlaybackTimings(()=>clock).identify('movie','web');
 const one=parallel.run('catalog',()=>new Promise(r=>{resolveA=r}));clock=10;
 const two=parallel.run('catalog',()=>new Promise(r=>{resolveB=r}));clock=30;resolveA();await one;

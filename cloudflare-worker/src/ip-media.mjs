@@ -1,4 +1,4 @@
-import {LIVE_STARTUP_MS,startupTimeout} from './live-startup.mjs';
+import {LIVE_STARTUP_MS,VOD_STARTUP_MS,startupTimeout} from './live-startup.mjs';
 export const CCF_MEDIA_ORIGIN='http://ccf.center:8444';
 
 // Only globally routable IPv4 destinations can be handed out by the configured
@@ -21,12 +21,13 @@ export function isApprovedMediaIP(u,sourceOrigin){
  if(['192.101.68.144','23.153.217.88','194.147.150.141'].includes(u.hostname)&&(!u.port||u.port==='80'))return true;
  return sourceOrigin===CCF_MEDIA_ORIGIN&&u.port!=='25'&&isPublicMediaIPv4(u.hostname);
 }
-export async function fetchApprovedMediaIP(value,headers,connectSocket,nativeStreamFactory,sourceOrigin,deadline=null){
+export async function fetchApprovedMediaIP(value,headers,connectSocket,nativeStreamFactory,sourceOrigin,deadline=null,startupBudget=LIVE_STARTUP_MS){
  const url=new URL(value);if(!isApprovedMediaIP(url,sourceOrigin))throw Error('invalid_media_origin');
  const connect=connectSocket||(await import('cloudflare:sockets')).connect;
  const socket=connect({hostname:url.hostname,port:Number(url.port||80)},{secureTransport:'off'});
  socket.closed.catch(()=>{});
- const timed=async promise=>{let timer;try{return await Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('media_timeout')),headersComplete?20000:startupTimeout(deadline,deadline===null?20000:LIVE_STARTUP_MS))})])}finally{clearTimeout(timer)}};
+ const maximum=startupBudget===VOD_STARTUP_MS?VOD_STARTUP_MS:LIVE_STARTUP_MS;
+ const timed=async promise=>{let timer;try{return await Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('media_timeout')),headersComplete?20000:startupTimeout(deadline,deadline===null?20000:maximum))})])}finally{clearTimeout(timer)}};
  let reader,headersComplete=false;
  try{
  await timed(socket.opened);

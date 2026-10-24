@@ -73,5 +73,13 @@ try{
  });
  assert.equal(await slow.response.text(),'healthy media');assert.equal(deadlineSeen,9000);
  startupNow=9001;await assert.rejects(fetchValidatedMedia(start,new Headers(),'live',CCF_MEDIA_ORIGIN,{deadline:9000,fetchHost:async()=>{throw Error('expired_budget_was_ignored')}}),/live_startup_timeout/);
+ for(const type of ['movie','series']){
+  startupNow=1000;const initial='http://ccf.center:8444/'+type+'/fixture/fixture/1.mp4';
+  const vod=await fetchValidatedMedia(initial,new Headers({range:'bytes=0-65535'}),type,CCF_MEDIA_ORIGIN,{deadline:13000,
+   async fetchHost(url,options,timeout){assert.equal(timeout,12000,'VOD headers must not inherit the live eight-second cap');if(timeout<9000)throw Error('premature_vod_timeout');startupNow+=9000;return redirect('http://89.44.33.22/video.mp4');},
+   async fetchIP(url,h,c,s,origin,deadline,budget){assert.equal(budget,12000);assert.equal(deadline-startupNow,3000,'redirects spend the existing VOD deadline instead of restarting it');assert.equal(h.get('range'),'bytes=0-65535');return new Response('healthy VOD');}
+  });assert.equal(await vod.response.text(),'healthy VOD');
+  startupNow=13001;await assert.rejects(fetchValidatedMedia(initial,new Headers(),type,CCF_MEDIA_ORIGIN,{deadline:13000,fetchHost:async()=>{throw Error('expired_vod_budget_was_ignored')}}),/live_startup_timeout/);
+ }
 }finally{Date.now=realNow;}
 console.log('PASS: trusted provider rotation at 0/12/24 hours, HLS segments/keys, Range provenance, all-hop private IP rejection, forged provenance rejection and redirect cleanup.');

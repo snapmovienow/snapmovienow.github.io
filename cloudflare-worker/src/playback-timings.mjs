@@ -26,11 +26,13 @@ export function startupTimingObservations(groups){
   if(!types.has(group.type)||!['android','web','other','canary'].includes(group.platform)||!Number.isInteger(group.requests)||group.requests<5)continue;
   const total=group.stages?.total?.p95UpperMs,budget=group.type==='live'?8000:12000;
   if(!Number.isFinite(total)||total<0||!Number.isInteger(group.failures)||group.failures<0||group.failures>group.requests)continue;
-  const bad=group.failures>=Math.max(3,Math.ceil(group.requests*.2))||total>budget;
+  const repeatedFailures=group.failures>=Math.max(3,Math.ceil(group.requests*.2)),slowStarts=total>budget,bad=repeatedFailures||slowStarts;
   const good=!group.failures&&total<=budget;if(!bad&&!good)continue;
   const labels={auth:'acceso',catalog:'catálogo',allocation:'asignación',validation:'validación del origen',origin:'respuesta del origen',first_byte:'llegada de vídeo'};
   const slow=Object.entries(group.stages||{}).filter(([name,v])=>stages.has(name)&&Number.isFinite(v.p95UpperMs)).sort((a,b)=>b[1].p95UpperMs-a[1].p95UpperMs)[0];
-  result.push({key:'startup:'+group.type+':'+group.platform,kind:'startup',title:'Demoras o fallos repetidos al iniciar contenido',detail:({live:'TV',movie:'Películas',series:'Series'}[group.type])+' · '+group.platform+' · '+group.failures+' fallos de '+group.requests+' solicitudes'+(slow?' · Mayor espera: '+labels[slow[0]]:''),bad,confirm:1});
+  const title=repeatedFailures&&slowStarts?'Demoras y fallos repetidos al iniciar contenido':repeatedFailures?'Fallos repetidos al iniciar contenido':slowStarts?'Demoras al iniciar contenido':'Inicio de contenido dentro del tiempo esperado';
+  const trigger=[...(repeatedFailures?['Alerta por respuestas con error']:[]),...(slowStarts?['Alerta por demora: P95 hasta '+(total/1000)+' s (límite '+(budget/1000)+' s)']:[])].join(' · ');
+  result.push({key:'startup:'+group.type+':'+group.platform,kind:'startup',title,detail:({live:'TV',movie:'Películas',series:'Series'}[group.type])+' · '+({other:'Reproductor sin identificar',canary:'Prueba automática',web:'Web',android:'Android'}[group.platform])+' · '+group.failures+' respuestas con error de '+group.requests+' solicitudes'+(trigger?' · '+trigger:'')+(slow?' · Etapa con mayor P95: '+labels[slow[0]]:''),bad,confirm:1});
  }
  return result;
 }
