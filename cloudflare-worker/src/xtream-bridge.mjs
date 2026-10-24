@@ -63,7 +63,7 @@ export function createXtreamBridge(deps) {
       try{
         const prepared=startup?startup.prepare(request):new Request(request);
         const response=await deps.serverStream(prepared,env,target,ctx,trace);
-        if(!response.ok){lastFailure=response.status;if(startup&&response.status!==410)await reportLiveResult(deps.directory,env,mediaSession,allocation,false,Date.now()-signalAt);await privateCall('/release',{sid:session.sid,lease_id,request_id,reason:'upstream_failed'});await response.body?.cancel();if(retryableSourceStatus(response.status)&&allocation.provider_id&&attempt<2){excluded.push(allocation.provider_id);continue}return deps.json({error:'upstream_unavailable'},response.status)}
+        if(!response.ok){lastFailure=response.status;if(startup&&response.status!==410)await reportLiveResult(deps.directory,env,mediaSession,allocation,false,Date.now()-signalAt);await privateCall('/release',{sid:session.sid,lease_id,request_id,reason:'upstream_failed'});await response.body?.cancel();const code=response.headers.get('X-SMN-Error-Code');if(response.status===410&&['playback_superseded','playback_expired','session_expired'].includes(code))return deps.json({error:code},410);if(retryableSourceStatus(response.status)&&allocation.provider_id&&attempt<2){excluded.push(allocation.provider_id);continue}return deps.json({error:'upstream_unavailable'},response.status)}
         if(startup){const elapsed=Date.now()-signalAt;deferPlaybackReport(ctx,()=>reportLiveResult(deps.directory,env,mediaSession,allocation,true,elapsed));}
         attachPlaybackActivity(activityTask,{env,ctx,directory:deps.directory,session:mediaSession,lease_id,mediaKey:mediaSession.mediaKey});
         // Native clients load this master once, then refresh the signed media
@@ -74,12 +74,12 @@ export function createXtreamBridge(deps) {
           return monitored(new Response('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=8000000\n'+target.href+'\n',{headers:{'content-type':'application/vnd.apple.mpegurl','cache-control':'no-store'}}));
         }
         return monitored(response);
-      }catch(error){lastFailure=502;if(startup&&!request.signal.aborted&&!['media_origin_unapproved','playback_superseded'].includes(error.message))await reportLiveResult(deps.directory,env,mediaSession,allocation,false,Date.now()-signalAt);await privateCall('/release',{sid:session.sid,lease_id,request_id,reason:'upstream_failed'});if(!['media_origin_unapproved','playback_superseded'].includes(error.message)&&allocation.provider_id&&attempt<2){excluded.push(allocation.provider_id);continue}throw error}
+      }catch(error){lastFailure=502;const cancelled=request.signal.aborted||['playback_superseded','playback_expired'].includes(error.message);if(startup&&!cancelled&&error.message!=='media_origin_unapproved')await reportLiveResult(deps.directory,env,mediaSession,allocation,false,Date.now()-signalAt);await privateCall('/release',{sid:session.sid,lease_id,request_id,reason:'upstream_failed'});if(cancelled)throw Error('playback_superseded');if(error.message!=='media_origin_unapproved'&&allocation.provider_id&&attempt<2){excluded.push(allocation.provider_id);continue}throw error}
       }
       return deps.json({error:'live_signal_unavailable'},lastFailure||504);
     };
     try { const special=deps.exclusives?await deps.exclusives.xtream(req,env,ctx,authenticate):null;return special||await handleXtream(req,{authenticate,catalog,register,resolve,play,adultPolicy:createAdultPolicy(catalog,rawCatalog.inspect),json:deps.json}); }
-    catch(error) { if(error.status)return deps.json({error:error.message},error.status);return deps.json({error:['media_origin_unapproved','provider_unavailable','provider_inactive','panel_unavailable'].includes(error.message)?error.message:'xtream_unavailable'},502); }
+    catch(error) { if(req.signal.aborted||['playback_superseded','playback_expired'].includes(error.message))return deps.json({error:'playback_superseded'},410);if(error.status)return deps.json({error:error.message},error.status);return deps.json({error:['media_origin_unapproved','provider_unavailable','provider_inactive','panel_unavailable'].includes(error.message)?error.message:'xtream_unavailable'},502); }
   };
 }
 

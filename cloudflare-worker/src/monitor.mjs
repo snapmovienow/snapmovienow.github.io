@@ -72,7 +72,7 @@ export function applyObservations(state,snapshot,now){
     state.incidents[item.key]={id:crypto.randomUUID(),key:item.key,kind:item.kind,title:item.title,detail:item.detail||'',status:'open',openedAt:now,lastObservedAt:now,waitingForSamples:false};
     changed.push({...state.incidents[item.key],kind:'opened'});
    }else Object.assign(incident,{title:item.title,detail:item.detail||'',lastObservedAt:now,waitingForSamples:false});
-  }else if(!item.bad&&incident?.status==='open'&&previous.good>=item.confirm){incident.status='resolved';incident.resolvedAt=now;incident.lastObservedAt=now;incident.waitingForSamples=false;changed.push({...incident,kind:'resolved'})}
+  }else if(!item.bad&&incident?.status==='open'&&previous.good>=item.confirm){incident.status='resolved';incident.resolvedAt=now;incident.lastObservedAt=now;incident.waitingForSamples=false;changed.push({...incident,kind:'resolved',title:({startup:'Inicio de contenido',canary:'Prueba automática de reproducción',playback:'Reproducción',provider:'Disponibilidad del proveedor',monitor:'Comprobación del sistema',backup:'Comprobación de copias'}[incident.kind])||'Comprobación del servicio',detail:item.detail||'Comprobación correcta.'})}
  }
  for(const [key,incident]of Object.entries(state.incidents)){
   if(incident.status!=='open'||seen.has(key))continue;

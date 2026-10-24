@@ -1,4 +1,5 @@
 import {PlaybackTimings} from './playback-timings.mjs';
+import {playbackErrorCode} from './playback-outcomes.mjs';
 export const SERVICE_VERSION = '43';
 
 const rayId = value => /^[a-f0-9]{8,32}-[a-z]{3}$/i.test(value || '') ? value : null;
@@ -18,6 +19,7 @@ export async function traceRequest(req, handler, {logger = console.error, now = 
     headers: allowedOrigin ? {'Access-Control-Allow-Origin': allowedOrigin, 'Cache-Control': 'no-store'} : {}}); }
   const headers = new Headers(response.headers);
   const elapsedMs=Math.max(0,now()-started);
+  const errorCode=playbackErrorCode(headers.get('X-SMN-Error-Code'));
   const upstreamTiming=(headers.get('Server-Timing')||'').split(',').filter(x=>x.trim()&&!/^smn_(auth|catalog|allocation|validation|origin|first_byte);/.test(x.trim())).join(',');if(upstreamTiming)headers.set('Server-Timing',upstreamTiming);else headers.delete('Server-Timing');
   headers.append('Server-Timing','smn;dur='+elapsedMs);
   const stageHeader=trace.header();if(stageHeader)headers.append('Server-Timing',stageHeader);
@@ -32,10 +34,10 @@ export async function traceRequest(req, handler, {logger = console.error, now = 
         request_id: requestId, ray_id: rayId(req.headers.get('CF-Ray')),
         route: routeGroup(new URL(req.url).pathname),
         method: ['GET', 'HEAD', 'POST', 'OPTIONS'].includes(req.method) ? req.method : 'other',
-        status: response.status, elapsed_ms: elapsedMs, version: SERVICE_VERSION,...(trace.type?{playback:trace.snapshot(response.status)}:{})});
+        status: response.status, elapsed_ms: elapsedMs, version: SERVICE_VERSION,...(trace.type?{playback:trace.snapshot(response.status,errorCode)}:{})});
     } catch { /* Diagnostics cannot interrupt a response. */ }
   }
-  if(trace.type&&onTiming)try{onTiming(trace.snapshot(response.status))}catch{} // Optional, off the playback path.
+  if(trace.type&&onTiming)try{onTiming(trace.snapshot(response.status,errorCode))}catch{} // Optional, off the playback path.
   // Preserve the original stream and its cancellation propagation; do not read
   // or clone media bodies for logging.
   return new Response(response.body, {status: response.status, statusText: response.statusText, headers});

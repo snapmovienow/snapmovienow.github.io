@@ -25,6 +25,7 @@ import {probeProviders} from './provider-monitor.mjs';
 export {OperationsMonitor} from './monitor.mjs';
 import {allowedOrigins,canUseCookie,cookieToken,withSessionCookie,browserResponse} from './browser-sessions.mjs';
 import {traceRequest, SERVICE_VERSION} from './request-diagnostics.mjs';
+import {playbackErrorHeaders} from './playback-outcomes.mjs';
 import {PlaybackTimings,timed,playbackTimingsRoute} from './playback-timings.mjs';
 import {runPlaybackCanary} from './playback-canary.mjs';
 import {compareOwnPlayback,comparisonError} from './playback-comparison.mjs';
@@ -52,7 +53,7 @@ const ORIGIN=CCF_MEDIA_ORIGIN;
 const SITE="https://snapmovienow.github.io";
 const actions={live:"get_live_streams",live_epg:"get_short_epg",live_categories:"get_live_categories",vod_categories:"get_vod_categories",vod:"get_vod_streams",series_categories:"get_series_categories",series:"get_series",series_info:"get_series_info",vod_info:"get_vod_info"};
 const cors={"Access-Control-Allow-Origin":SITE,"Access-Control-Allow-Methods":"GET, HEAD, POST, OPTIONS","Access-Control-Allow-Headers":"content-type, range, if-range","Access-Control-Expose-Headers":"Content-Length, Content-Range, Accept-Ranges, ETag, Last-Modified","Cache-Control":"no-store"};
-const json=(x,s=200)=>new Response(JSON.stringify(x),{status:s,headers:{...cors,"content-type":"application/json",...(s===503&&Number(x?.retry_after_ms)>0?{"Retry-After":String(Math.ceil(Math.min(300000,x.retry_after_ms)/1000))}:{})}});
+const json=(x,s=200)=>new Response(JSON.stringify(x),{status:s,headers:{...cors,"content-type":"application/json",...playbackErrorHeaders(x,s),...(s===503&&Number(x?.retry_after_ms)>0?{"Retry-After":String(Math.ceil(Math.min(300000,x.retry_after_ms)/1000))}:{})}});
 const cleanExt=x=>String(x||"mp4").replace(/[^a-zA-Z0-9]/g,"")||"mp4";
 const aesKeys=new Map();
 async function aesKey(secret){if(!aesKeys.has(secret)){if(aesKeys.size>=2)aesKeys.delete(aesKeys.keys().next().value);aesKeys.set(secret,crypto.subtle.digest("SHA-256",new TextEncoder().encode(secret)).then(digest=>crypto.subtle.importKey("raw",digest,{name:"AES-GCM"},false,["encrypt","decrypt"])))}return aesKeys.get(secret)}
