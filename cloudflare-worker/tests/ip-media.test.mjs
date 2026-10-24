@@ -8,6 +8,8 @@ t=transport('HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5;extension=ye
 t=transport('HTTP/1.1 302 Found\r\nLocation: /other.m3u8\r\nContent-Length: 0\r\n\r\n');r=await fetchApprovedMediaIP(allowed,new Headers(),t.connect);assert.equal(r.status,302);await r.body.cancel();assert.ok(t.state().closed);
 t=transport('HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nshort');r=await fetchApprovedMediaIP(allowed,new Headers(),t.connect);await assert.rejects(r.text(),/truncated/);
 await assert.rejects(fetchApprovedMediaIP('http://127.0.0.1/',new Headers(),t.connect),/invalid_media_origin/);
+await assert.rejects(fetchApprovedMediaIP(CCF_MEDIA_ORIGIN+'/live/fixture/fixture/1.ts',new Headers(),()=>{throw Error('untrusted CCF origin must not connect')},undefined,'https://other.example'),/invalid_media_origin/);
+await assert.rejects(fetchApprovedMediaIP('http://user:password@ccf.center:8444/live/fixture/fixture/1.ts',new Headers(),()=>{throw Error('userinfo must not connect')},undefined,CCF_MEDIA_ORIGIN),/invalid_media_origin/);
 console.log('PASS: allowlisted destination, fragmented headers, range forwarding, content length, chunked response, cancellation, truncated body rejection.');
 
 

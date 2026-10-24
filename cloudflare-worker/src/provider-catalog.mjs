@@ -1,6 +1,7 @@
 import {encodeCatalog,decodeCatalog} from './catalog-cache.mjs';
 import {countSeriesEpisodes} from './xtream-series.mjs';
 import {selectCatalogDetail} from './catalog-detail-race.mjs';
+import {readProviderJSON} from './provider-request.mjs';
 const catalogs = new WeakMap();
 const MAX_CACHE_BYTES = 16 * 1024 * 1024;
 export const CATALOG_FETCH_MS=8000;
@@ -91,9 +92,7 @@ export function createProviderCatalog(deps, env, ctx,{timeoutMs=CATALOG_FETCH_MS
               url.searchParams.set('username',account.username);url.searchParams.set('password',account.password);url.searchParams.set('action',action);
               for(const [name,value]of Object.entries(params))url.searchParams.set(name,String(value));
               const requestSignal=AbortSignal.any([signal,AbortSignal.timeout(Math.max(1,Math.min(6000,timeoutMs*.75,deadline-Date.now())))]);
-              const response=await fetch(url,{headers:{'User-Agent':'SnapMovieNow/1.0'},signal:requestSignal});
-              if(!response.ok){void response.body?.cancel();return null}
-              const raw=await response.json();
+              const raw=await readProviderJSON(url,{signal:requestSignal,timeoutMs:Math.max(1,Math.min(6000,timeoutMs*.75,deadline-Date.now())),directCcfEntry:env.CCF_ENTRY_TRANSPORT==='tcp',maxBytes:MAX_CACHE_BYTES});
               if(list&&!Array.isArray(raw)||!validProviderReply(action,raw))return null;
               const data=publicMetadata(raw,account),scoped=Array.isArray(data)?data.map(item=>({...item,_server:id})):data;
               return {data:scoped,empty:Array.isArray(scoped)?!scoped.length:action==='get_series_info'&&!countSeriesEpisodes(scoped)};

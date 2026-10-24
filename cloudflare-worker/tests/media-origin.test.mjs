@@ -61,8 +61,13 @@ assert.equal(intermediateClosed,1);
 let loops=0;
 await assert.rejects(fetchValidatedMedia(start,new Headers(),'live',CCF_MEDIA_ORIGIN,{fetchHost:async()=>{loops++;return redirect(start)}}),/invalid_redirect/);
 assert.equal(loops,6);
-assert.equal(validatedMediaTarget('http://194.76.0.119:8080/stream',CCF_MEDIA_ORIGIN).hostname,'media.snaptvnow.com');
+assert.equal(validatedMediaTarget('http://194.76.0.119:8080/stream',CCF_MEDIA_ORIGIN).hostname,'194.76.0.119','an authorized media node must not detour through a legacy DNS alias');
 assert.throws(()=>validatedMediaTarget('http://194.76.0.119:8080/stream','https://other.example'),/media_origin_unapproved/);
+const socketHops=[];let hostnameCalls=0;
+const directEntry=await fetchValidatedMedia(CCF_MEDIA_ORIGIN+'/series/fixture/fixture/7.mp4',new Headers({range:'bytes=10-29'}),'series',CCF_MEDIA_ORIGIN,{directCcfEntry:true,deadline:Date.now()+12000,
+ fetchHost:async()=>{hostnameCalls++;throw Error('configured CCF entry must use its selected transport')},
+ fetchIP:async(url,headers,c,s,origin,deadline,budget)=>{socketHops.push(new URL(url).origin);assert.equal(origin,CCF_MEDIA_ORIGIN);assert.equal(headers.get('range'),'bytes=10-29');assert.equal(budget,12000);return socketHops.length===1?redirect('http://194.76.0.119:8080/video.mp4'):new Response('native video');}
+});assert.equal(await directEntry.response.text(),'native video');assert.deepEqual(socketHops,[CCF_MEDIA_ORIGIN,'http://194.76.0.119:8080']);assert.equal(hostnameCalls,0,'neither entry nor redirected media may detour through hostname fetch or our old alias');
 // A responding source may need more than four seconds while still fitting in
 // the one eight-second startup budget. Redirects spend the same remaining time.
 const realNow=Date.now;let startupNow=1000,deadlineSeen;Date.now=()=>startupNow;

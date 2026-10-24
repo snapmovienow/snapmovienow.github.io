@@ -1,5 +1,8 @@
 import {LIVE_STARTUP_MS,VOD_STARTUP_MS,startupTimeout} from './live-startup.mjs';
 export const CCF_MEDIA_ORIGIN='http://ccf.center:8444';
+// The configured CCF entry is a single explicit hostname/port, not a grant to
+// connect to arbitrary DNS names or to caller-supplied destinations.
+export const isCcfMediaEntry=(url,sourceOrigin)=>sourceOrigin===CCF_MEDIA_ORIGIN&&url.origin===CCF_MEDIA_ORIGIN&&!url.username&&!url.password;
 
 // Only globally routable IPv4 destinations can be handed out by the configured
 // CCF origin. Reject private, loopback, metadata, shared, documentation,
@@ -22,7 +25,7 @@ export function isApprovedMediaIP(u,sourceOrigin){
  return sourceOrigin===CCF_MEDIA_ORIGIN&&u.port!=='25'&&isPublicMediaIPv4(u.hostname);
 }
 export async function fetchApprovedMediaIP(value,headers,connectSocket,nativeStreamFactory,sourceOrigin,deadline=null,startupBudget=LIVE_STARTUP_MS){
- const url=new URL(value);if(!isApprovedMediaIP(url,sourceOrigin))throw Error('invalid_media_origin');
+ const url=new URL(value);if(!isApprovedMediaIP(url,sourceOrigin)&&!isCcfMediaEntry(url,sourceOrigin))throw Error('invalid_media_origin');
  const connect=connectSocket||(await import('cloudflare:sockets')).connect;
  const socket=connect({hostname:url.hostname,port:Number(url.port||80)},{secureTransport:'off'});
  socket.closed.catch(()=>{});
