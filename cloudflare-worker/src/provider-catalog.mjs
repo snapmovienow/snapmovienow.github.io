@@ -38,15 +38,34 @@ export function validProviderReply(action,raw){
   return true;
 }
 
-export function createProviderCatalog(deps, env, ctx,{timeoutMs=CATALOG_FETCH_MS,hedgeMs=750}={}) {
-  // One factory belongs to one incoming request. Sequential policy/detail
-  // lookups share a budget; cache hits do not start or consume that budget.
+export function createProviderCatalog(deps, env, ctx,{timeoutMs=CATALOG_FETCH_MS,hedgeMs=750,cacheReadMs=500}={}) {
+  // One deadline covers configuration, optional snapshots and source reads.
+  // A cached hit may still be returned after that budget; it starts no traffic.
+  const budget=Math.min(CATALOG_FETCH_MS,Math.max(1,timeoutMs)),cacheBudget=Math.max(1,Math.min(cacheReadMs,budget/4));
   let deadline,configuration;
-  const scopeForRequest=()=>configuration??=(async()=>{
-    const providers=await (await deps.directory(env,'/providers')).json();
-    if(!providers.length)throw Error('provider_not_configured');
+  const start=()=>deadline??=Date.now()+budget;
+  const readResponse=async(operation,consume,cap=budget)=>{
+    start();const remaining=Math.min(cap,deadline-Date.now());if(remaining<=0)throw Error('catalog_timeout');
+    const controller=new AbortController();let timer;
+    const work=Promise.resolve().then(operation).then(response=>{
+      if(controller.signal.aborted){void response.body?.cancel().catch(()=>{});throw Error('catalog_timeout')}
+      // Aborting the consumer also cancels a stalled cache body/decompression.
+      const body=response.body?.pipeThrough(new TransformStream(),{signal:controller.signal});
+      return consume(new Response(body,{status:response.status,headers:response.headers}));
+    });
+    try{return await Promise.race([work,new Promise((_,reject)=>{timer=setTimeout(()=>{controller.abort();reject(Error('catalog_timeout'))},remaining)})])}
+    finally{clearTimeout(timer);controller.abort()}
+  };
+  const scopeForRequest=()=>configuration??=readResponse(()=>deps.directory(env,'/providers'),async response=>{
+    if(!response.ok)throw Error('provider_unavailable');
+    const providers=await response.json();if(!providers.length)throw Error('provider_not_configured');
     return fingerprint(env.TICKET_SECRET,JSON.stringify(providers.map(p=>[p.source,p.origin,p.url,p.encrypted])));
-  })();
+  });
+  const readSaved=(key,detail=false)=>readResponse(()=>deps.registry(env,'/xtream-cache-get',{key,...(detail?{kind:'detail'}:{})}),async response=>{
+    if(!response.ok)return null;
+    const savedAt=Number(response.headers.get('x-catalog-saved-at')),data=await decodeCatalog(response);
+    return {data,savedAt,until:savedAt+(detail?30000:12*3600000)};
+  },cacheBudget);
   const catalog=async (action, server, params={}, options={}) => {
       const within=async promise=>{let timer;try{return await Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('catalog_timeout')),Math.max(1,deadline-Date.now()))})])}finally{clearTimeout(timer)}};
       // Read current authorized configuration once per incoming request, shared
@@ -71,11 +90,11 @@ export function createProviderCatalog(deps, env, ctx,{timeoutMs=CATALOG_FETCH_MS
         const allKey=await fingerprint(env.TICKET_SECRET,JSON.stringify([scope,action,'',params]));
         let all=cache.entries.get(allKey);
         if(all?.until<=Date.now())all=null;
-        if(!all&&!options.memoryOnly)try{const response=await deps.registry(env,'/xtream-cache-get',{key:allKey});if(response.ok){const savedAt=Number(response.headers.get('x-catalog-saved-at'));all={data:await decodeCatalog(response),savedAt,until:savedAt+12*3600000}}}catch{}
+        if(!all&&!options.memoryOnly)try{all=await readSaved(allKey)}catch{}
         if(all&&all.until>Date.now()&&Array.isArray(all.data)){const data=all.data.filter(row=>String(row._server||'ccf')===String(server));remember(data,all.savedAt);saved={data,savedAt:all.savedAt,until:all.until}}
       }
       if(!saved&&persist&&!options.memoryOnly){
-        try{const response=await deps.registry(env,'/xtream-cache-get',{key,...(detail?{kind:'detail'}:{})});if(response.ok){const savedAt=Number(response.headers.get('x-catalog-saved-at'));const data=await decodeCatalog(response);remember(data,savedAt);saved={data,savedAt,until:savedAt+(detail?30000:12*3600000)}}}catch{}
+        try{const retained=await readSaved(key,detail);if(retained){remember(retained.data,retained.savedAt);saved=retained}}catch{}
       }
       const freshFor=list?300000:30000;
       if(detail&&saved&&saved.savedAt<=Date.now()-freshFor)saved=null;
@@ -107,10 +126,10 @@ export function createProviderCatalog(deps, env, ctx,{timeoutMs=CATALOG_FETCH_MS
         const good=replies.filter(x=>x!==null);if(!good.length||!fresh)throw Error('upstream_unavailable');
         const data=good.every(Array.isArray)?good.flat():good[0];
         const savedAt=fresh===groups.size?Date.now():saved?.savedAt||Date.now();remember(data,savedAt);
-        if(persist&&fresh===groups.size){const save=async()=>{try{const bytes=await encodeCatalog(data);let content='';for(let i=0;i<bytes.length;i+=24000)content+=String.fromCharCode(...bytes.slice(i,i+24000));await deps.registry(env,'/xtream-cache-put',{key,content:btoa(content),...(detail?{kind:'detail',savedAt}:{})})}catch{}};if(ctx?.waitUntil)ctx.waitUntil(save());else await save()}
+        if(persist&&fresh===groups.size){const save=async()=>{try{const bytes=await encodeCatalog(data);let content='';for(let i=0;i<bytes.length;i+=24000)content+=String.fromCharCode(...bytes.slice(i,i+24000));await deps.registry(env,'/xtream-cache-put',{key,content:btoa(content),...(detail?{kind:'detail',savedAt}:{})})}catch{}};if(ctx?.waitUntil)ctx.waitUntil(save());else await within(save()).catch(()=>{})}
         return data;
       };
-      const run=()=>{deadline??=Date.now()+Math.min(CATALOG_FETCH_MS,Math.max(1,timeoutMs));if(deadline<=Date.now())return Promise.reject(Error('catalog_timeout'));if(!cache.pending.has(key)){const work=refresh().finally(()=>cache.pending.delete(key));cache.pending.set(key,work);return work}return within(cache.pending.get(key))};
+      const run=()=>{start();if(deadline<=Date.now())return Promise.reject(Error('catalog_timeout'));if(!cache.pending.has(key)){const work=refresh().finally(()=>cache.pending.delete(key));cache.pending.set(key,work);return work}return within(cache.pending.get(key))};
       // Old-but-valid snapshots are immediate while refresh runs in the
       // background. Local user permissions were already checked by handleXtream.
       if(!options.fresh&&saved&&list&&ctx?.waitUntil){ctx.waitUntil(run().catch(()=>{}));return saved.data}
@@ -122,9 +141,7 @@ export function createProviderCatalog(deps, env, ctx,{timeoutMs=CATALOG_FETCH_MS
     const scope=await scopeForRequest();
     const keys=action=>Promise.all([String(server||'ccf'),''].map(s=>fingerprint(env.TICKET_SECRET,JSON.stringify([scope,action,s,{}]))));
     const [rowKeys,categoryKeys]=await Promise.all([keys(spec[0]),keys(spec[1])]);
-    const response=await deps.registry(env,'/xtream-cache-inspect',{rowKeys,categoryKeys,idField:spec[2],server:String(server||'ccf'),id:String(id)});
-    if(!response?.ok)return undefined;
-    const decision=await response.json();return decision.found?{_adult:decision.adult===true}:null;
+    try{return await readResponse(()=>deps.registry(env,'/xtream-cache-inspect',{rowKeys,categoryKeys,idField:spec[2],server:String(server||'ccf'),id:String(id)}),async response=>{if(!response.ok)return undefined;const decision=await response.json();return decision.found?{_adult:decision.adult===true}:null},cacheBudget)}catch{return undefined}
   };
   return catalog;
 }
