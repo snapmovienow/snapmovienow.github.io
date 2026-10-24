@@ -17,7 +17,7 @@ export async function readProviderJSON(value,{timeoutMs=2500,signal,directCcfEnt
   Promise.resolve(request).then(r=>{if(controller.signal.aborted)void r?.body?.cancel().catch(()=>{})},()=>{});
   response=await within(request);if(!response.ok)throw failure('http_error');
   reader=response.body?.getReader();if(!reader)throw failure('invalid_reply');
-  const maximum=Number.isSafeInteger(maxBytes)&&maxBytes>0?Math.min(16777216,maxBytes):65536,decoder=new TextDecoder();let size=0,text='';
+  const maximum=maxBytes===Infinity?Infinity:Number.isSafeInteger(maxBytes)&&maxBytes>0?Math.min(16777216,maxBytes):65536,decoder=new TextDecoder();let size=0,text='';
   for(;;){const next=await within(reader.read());if(next.done)break;size+=next.value.byteLength;if(size>maximum)throw failure('invalid_reply');text+=decoder.decode(next.value,{stream:true})}
   text+=decoder.decode();try{return JSON.parse(text)}catch{throw failure('invalid_reply')}
  }finally{

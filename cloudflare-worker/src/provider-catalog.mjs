@@ -92,7 +92,10 @@ export function createProviderCatalog(deps, env, ctx,{timeoutMs=CATALOG_FETCH_MS
               url.searchParams.set('username',account.username);url.searchParams.set('password',account.password);url.searchParams.set('action',action);
               for(const [name,value]of Object.entries(params))url.searchParams.set(name,String(value));
               const requestSignal=AbortSignal.any([signal,AbortSignal.timeout(Math.max(1,Math.min(6000,timeoutMs*.75,deadline-Date.now())))]);
-              const raw=await readProviderJSON(url,{signal:requestSignal,timeoutMs:Math.max(1,Math.min(6000,timeoutMs*.75,deadline-Date.now())),directCcfEntry:env.CCF_ENTRY_TRANSPORT==='tcp',maxBytes:MAX_CACHE_BYTES});
+              // The existing cache limit is a retention limit, not a provider
+              // reply limit. Preserve large catalogs while bounding their
+              // whole read by the existing catalog request deadline.
+              const raw=await readProviderJSON(url,{signal:requestSignal,timeoutMs:Math.max(1,Math.min(6000,timeoutMs*.75,deadline-Date.now())),directCcfEntry:env.CCF_ENTRY_TRANSPORT==='tcp',maxBytes:Infinity});
               if(list&&!Array.isArray(raw)||!validProviderReply(action,raw))return null;
               const data=publicMetadata(raw,account),scoped=Array.isArray(data)?data.map(item=>({...item,_server:id})):data;
               return {data:scoped,empty:Array.isArray(scoped)?!scoped.length:action==='get_series_info'&&!countSeriesEpisodes(scoped)};

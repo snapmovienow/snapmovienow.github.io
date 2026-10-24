@@ -18,4 +18,5 @@ for(const [response,code] of [[new Response('private fixture failure',{status:50
 const bytes=new TextEncoder().encode('{"name":"niño"}');let offset=0;
 assert.deepEqual(await readProviderJSON(target,{fetchHost:async()=>new Response(new ReadableStream({pull(c){if(offset===bytes.length)c.close();else c.enqueue(bytes.slice(offset,++offset))}}))}),{name:'niño'});
 const aborted=new AbortController();aborted.abort();await assert.rejects(readProviderJSON(target,{signal:aborted.signal,fetchHost:async()=>{throw Error('cancelled requests must not reach a provider')}}),/playback_superseded/);
+const large='x'.repeat(16777217);assert.equal((await readProviderJSON(target,{maxBytes:Infinity,fetchHost:async()=>Response.json({catalog:large})})).catalog.length,large.length,'the transport change must not confuse the catalog cache retention limit with the accepted provider reply size');
 console.log('PASS: explicit CCF TCP account requests, foreign-origin isolation, bounded fragmented JSON, whole-request deadlines, late response cleanup and cancellation.');
