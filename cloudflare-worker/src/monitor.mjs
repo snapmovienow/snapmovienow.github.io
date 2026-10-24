@@ -1,6 +1,7 @@
 import {seal,unseal} from './security.mjs';
 import {cleanCanarySettings,defaultCanarySettings,cleanCanaryResult} from './playback-canary.mjs';
 import {startupTimingObservations} from './playback-timings.mjs';
+import {canaryIncident} from './playback-diagnostics.mjs';
 
 export const MONITOR_CRON='*/5 * * * *';
 const interval=300000,freshness=36*3600000;
@@ -46,7 +47,7 @@ export function observations(snapshot,now,createdAt){
  }
  if(snapshot.canary?.enabled)for(const result of snapshot.canary.results||[]){
   if(!['live','movie','series'].includes(result.type)||!['healthy','failed'].includes(result.status)||result.at<now-15*60000)continue;
-  out.push({key:'canary:'+result.type,kind:'canary',title:'La prueba automática no recibe vídeo',detail:({live:'TV',movie:'Películas',series:'Series'}[result.type])+' · '+(result.status==='healthy'?'Vídeo recibido':result.reason),bad:result.status!=='healthy',confirm:2,sampleAt:result.at});
+  out.push({key:'canary:'+result.type,kind:'canary',...canaryIncident(result),bad:result.status!=='healthy',confirm:2,sampleAt:result.at});
  }
  if(snapshot.backups){const b=snapshot.backups;
   const stale=now-(b.lastAutomaticAt||createdAt)>freshness;

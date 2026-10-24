@@ -1,4 +1,5 @@
 import {isAdult} from './content-permissions.mjs';
+import {playbackRequestDiagnostic} from './playback-diagnostics.mjs';
 const ORIGIN='https://api.snaptvnow.com';
 const numeric=value=>/^\d{1,16}$/.test(String(value));
 const failure=status=>Object.assign(Error('canary_request_failed'),{status});
@@ -13,7 +14,7 @@ export function ownPlaybackCanaryAdapter({env,storage,directory,ownSession,ticke
  const allowed=String(env.PLAYBACK_CANARY_USERNAME||'').toLowerCase();
  const send=async(session,op,body,signal)=>{
   const r=await request(new Request(ORIGIN+'/',{method:'POST',headers:{'Content-Type':'application/json','User-Agent':'SNAPTVNOW-Own-Canary/1'},body:JSON.stringify({op,access_token:session.token,...body}),signal}));
-  try{if(!r.ok)throw failure(r.status);return await r.json()}finally{void r.body?.cancel().catch(()=>{})}
+  try{if(!r.ok){let body;try{body=await r.json()}catch{}throw Object.assign(failure(r.status),playbackRequestDiagnostic({operation:op,serviceError:body?.error}))}return await r.json()}finally{void r.body?.cancel().catch(()=>{})}
  };
  return {
   async authenticate(config,{signal}){

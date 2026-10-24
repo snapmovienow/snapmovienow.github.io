@@ -1,5 +1,6 @@
 import {playbackStartup,reportLiveResult,deferPlaybackReport} from './live-startup.mjs';
 import {startPlaybackActivity,attachPlaybackActivity} from './playback-activity.mjs';
+import {preparationFailure} from './playback-diagnostics.mjs';
 // One client request owns every attempt. Release a failed allocation before
 // choosing another authorised account; a cancelled request cannot restart.
 export async function prepareWebPlayback(body,session,requestUrl,env,ctx,deps){
@@ -16,7 +17,7 @@ export async function prepareWebPlayback(body,session,requestUrl,env,ctx,deps){
   let credentials=session,lease_id,provider_id,allocation;
   if(session.managed){
    try{allocation=await deps.managedPlayback(env,{...session,request_id,client:deps.client,mediaKey:type+'|'+server+'|'+body.id+'|'+ext},server,ctx,excluded,startup)}
-   catch(error){return deps.json({error:error.message.startsWith('panel_')?error.message:'provider_not_configured'},503)}
+   catch(error){const failed=preparationFailure(error);return deps.json({error:failed.error},failed.status)}
    if(!allocation.r.ok)return deps.json(await allocation.r.json(),allocation.r.status);
    credentials=allocation.credentials;provider_id=allocation.provider_id;lease_id=(await allocation.r.json()).lease_id;allocation.lease_id=lease_id;
   }
