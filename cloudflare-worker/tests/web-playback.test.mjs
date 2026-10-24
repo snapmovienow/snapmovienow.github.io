@@ -17,5 +17,14 @@ assert.equal(test.events.filter(e=>e.path==='/playback-begin').length,1);assert.
 test=setup([502,502,502]);response=await prepareWebPlayback(request,session,'https://example.com',{},ctx,test.deps);assert.equal(response.status,502);assert.equal(test.leases.size,0);
 test=setup([410,200]);response=await prepareWebPlayback(request,session,'https://example.com',{},ctx,test.deps);assert.equal(response.status,410);assert.equal(test.leases.size,0);
 test=setup([Error('media_origin_unapproved'),200]);response=await prepareWebPlayback(request,session,'https://example.com',{},ctx,test.deps);assert.equal(response.status,502);assert.equal((await response.json()).error,'media_origin_unapproved');assert.equal(test.leases.size,0);
+for(const status of [404,502]){
+ test=setup([status,status,status]);response=await prepareWebPlayback(request,session,'https://example.com',{},ctx,test.deps);
+ assert.equal(response.status,502);assert.equal(test.leases.size,0);
+ const failures=test.events.filter(e=>e.path==='/provider-result'&&!e.ok);
+ assert.equal(failures.length,3);assert.deepEqual(failures.map(e=>e.httpStatus),[status,status,status],'retain original source status for every bounded HLS attempt');
+ assert.equal(test.events.filter(e=>e.path==='/release').length,3);
+}
+test=setup([410]);await prepareWebPlayback(request,session,'https://example.com',{},ctx,test.deps);assert.equal(test.events.filter(e=>e.path==='/provider-result').length,0,'supersession is not a source failure');
+test=setup([Error('network_error'),200]);await prepareWebPlayback(request,session,'https://example.com',{},ctx,test.deps);assert.equal(test.events.find(e=>e.path==='/provider-result'&&!e.ok).httpStatus,undefined,'do not invent a source HTTP status for transport errors');
 test=setup([200]);test.deps.activity=async()=>{throw Error('missing-catalog')};response=await prepareWebPlayback(request,session,'https://example.com',{},ctx,test.deps);assert.equal(response.status,200,'missing optional activity metadata never blocks a healthy stream');
 console.log('PASS: live account fallback, shared request ownership, release before retry, bounded attempts, cancelled requests and blocked destinations never retried.');

@@ -24,14 +24,14 @@ export async function prepareWebPlayback(body,session,requestUrl,env,ctx,deps){
   const data={sid:session.sid,username:credentials.username,password:credentials.password,origin:credentials.origin||deps.origin,lease_id,provider_id,request_id,type,id:String(body.id),ext,exp:session.exp,...(session.canary?{canary:true,...(session.comparison?{comparison:true}:{})}:{})};
   const url=new URL(requestUrl).origin+'/stream?t='+await deps.ticket(env,data);
   if(type==='live'&&ext==='m3u8'){
-   const signalAt=Date.now(),mediaSession={...session,request_id};
+   const signalAt=Date.now(),mediaSession={...session,request_id};let sourceHttpStatus;
    try{
     const checked=await deps.serverStream(startup?startup.prepare(new Request(url)):new Request(url,{headers:{'X-SMN-Prepare':'1'}}),env,new URL(url),ctx,deps.trace);
-    if(!checked.ok){await checked.body?.cancel();throw Error(checked.status===410?'playback_superseded':'live_signal_unavailable')}
+    if(!checked.ok){sourceHttpStatus=checked.status;await checked.body?.cancel();throw Error(checked.status===410?'playback_superseded':'live_signal_unavailable')}
     if(!(await checked.text()).startsWith('#EXTM3U'))throw Error('live_signal_unavailable');
     if(startup){const elapsed=Date.now()-signalAt;deferPlaybackReport(ctx,()=>reportLiveResult(deps.directory,env,mediaSession,allocation,true,elapsed));}
    }catch(error){
-    if(startup&&!['media_origin_unapproved','playback_superseded'].includes(error.message))await reportLiveResult(deps.directory,env,mediaSession,allocation,false,Date.now()-signalAt);
+    if(startup&&!['media_origin_unapproved','playback_superseded'].includes(error.message))await reportLiveResult(deps.directory,env,mediaSession,allocation,false,Date.now()-signalAt,'signal',{httpStatus:sourceHttpStatus});
     if(lease_id)await deps.directory(env,'/release',{sid:session.sid,lease_id,request_id,reason:'upstream_failed'});
     if(error.message==='playback_superseded')return deps.json({error:'playback_superseded'},410);
     if(error.message==='media_origin_unapproved')return deps.json({error:error.message},502);
