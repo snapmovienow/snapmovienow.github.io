@@ -1,5 +1,6 @@
 import {isAdult} from './content-permissions.mjs';
 import {playbackRequestDiagnostic,safeValidationFailure} from './playback-diagnostics.mjs';
+import {targetedCase,targetedSession,targetedWindow,CASE_EXPIRES_AT} from './targeted-case-policy.mjs';
 const ORIGIN='https://api.snaptvnow.com';
 const numeric=value=>/^\d{1,16}$/.test(String(value));
 const failure=status=>Object.assign(Error('canary_request_failed'),{status});
@@ -19,17 +20,26 @@ export function ownPlaybackCanaryAdapter({env,storage,directory,ownSession,ticke
  return {
   async authenticate(config,{signal}){
    if(!allowed||String(config.username||'').toLowerCase()!==allowed||env.ENVIRONMENT==='staging')throw failure(403);
+   if(config.targetedCase!==undefined&&(!targetedWindow(env)||!targetedCase(config.targetedCase)||config.diagnostic!==true))throw failure(403);
    const r=await directory(env,'/canary-identity',{username:allowed});if(!r.ok)throw failure(r.status);const user=await r.json();
    if(signal.aborted)throw Error('canary_timeout');
    const session=await ownSession(env,{...user,expiresAt:Math.min(user.expiresAt||Infinity,Date.now()+60000)});
    session.canary=true; // Only this private adapter can mint this signed claim.
    if(config.diagnostic===true)session.comparison=true;
+   if(config.targetedCase){session.targetedCase=config.targetedCase;session.caseDeadline=Math.min(Number(config.targetedDeadline)||Date.now()+30000,Date.now()+30000,CASE_EXPIRES_AT);session.exp=Math.min(session.exp,session.caseDeadline)}
    // Set the owned object before any additional await so late aborts can clean
    // it even when a session-info request stalls.
    try{session.token=await ticket(env,session);await send(session,'session_info',{},signal);return session}
    catch(error){await Promise.allSettled([directory(env,'/release-session',{sid:session.sid}),sessionCall(env,session.sid,'/logout')]);throw error}
   },
   async select(session,config,{signal}){
+   if(session.targetedCase){
+    const item=targetedSession(session,env);if(!item||config.targetedCase!==item.key||signal.aborted)throw failure(410);
+    const ext=item.ext;if(!ext)throw failure(422); // No guessed extension or metadata scan.
+    const prepared=await send(session,'stream_token',{type:item.type,id:item.id,server:item.server,ext,request_id:crypto.randomUUID(),revision:1},signal);
+    if(signal.aborted||!targetedSession(session,env))throw failure(410);
+    return {...prepared,type:item.type,ext,caseKey:item.key};
+   }
    const prefix=session.comparison?'comparison':'canary',key=prefix+'-sample:'+config.type,cursorKey=prefix+'-sample-cursor:'+config.type,queue=[],seen=new Set();
    // A recently successful real playback is a better sample than the first
    // catalog row. This is an advisory target only: normal stream_token still
@@ -67,6 +77,7 @@ export function ownPlaybackCanaryAdapter({env,storage,directory,ownSession,ticke
    throw lastError;
   },
   async open(session,target,{signal}){
+   if(session.targetedCase&&(!targetedSession(session,env)||target.caseKey!==session.targetedCase||signal.aborted))throw failure(410);
    const url=new URL(target.url,ORIGIN);if(url.origin!==ORIGIN||url.pathname!=='/stream'||!url.searchParams.get('t'))throw failure(403);
    return request(new Request(url,{headers:{'User-Agent':'SNAPTVNOW-Own-Canary/1',...(target.type==='live'?{}:{Range:'bytes=0-65535'})},signal}));
   },

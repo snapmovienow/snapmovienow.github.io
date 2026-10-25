@@ -31,11 +31,14 @@ import {runPlaybackCanary} from './playback-canary.mjs';
 import {compareOwnPlayback,comparisonError} from './playback-comparison.mjs';
 import {auditLive404} from './playback-404-audit.mjs';
 import {runTargetedComparison,targetedComparisonStatus} from './targeted-playback-comparison.mjs';
+import {targetedCasesStatus,runTargetedCase} from './targeted-case-runner.mjs';
+import {compareTargetedCase,attachCaseObservation,CASE_OBSERVATION_HEADER} from './targeted-case-observation.mjs';
+import {targetedSession,targetedTicket} from './targeted-case-policy.mjs';
 import {fetchControlMedia} from './playback-control-ip.mjs';
 import {readProviderJSON} from './provider-request.mjs';
 import {sharedProviderValidation,PROVIDER_VALIDATION_MS} from './provider-validation.mjs';
 import {ownPlaybackCanaryAdapter} from './own-playback-canary.mjs';
-import {CCF_MEDIA_ORIGIN} from './ip-media.mjs';
+import {CCF_MEDIA_ORIGIN,isApprovedMediaIP} from './ip-media.mjs';
 import {fetchValidatedMedia,validatedMediaTarget} from './media-origin.mjs';
 import {readPanel,readPanelRecord,validateServerUrl} from "./reseller.mjs";
 import {accountsFetch} from "./accounts.mjs";
@@ -75,6 +78,13 @@ export class PlaybackSession {
  if(path==='/stream'&&['GET','HEAD'].includes(req.method)){const trace=new PlaybackTimings();try{return trace.response(await observedWebStream(this,req,{waitUntil:promise=>this.state.waitUntil?.(promise)},trace))}catch(error){const owned=await unticket(this.env,new URL(req.url).searchParams.get('t')||'');if(error.message==='media_origin_unapproved'&&!owned?.canary)throw error;const response=json({error:['media_origin_unapproved','live_startup_timeout','media_empty'].includes(error.message)?error.message:'stream_unavailable'},error.message==='live_startup_timeout'?504:502);if(owned?.canary)response.headers.set('X-SMN-Canary-Failure',comparisonError(error));return trace.response(response)}}
  if(path==='/refresh-pool'){const force=req.method==='POST'&&(await req.json()).force===true;if(!this.refreshing)this.refreshing=refreshProviderPool(this.env,force).finally(()=>{this.refreshing=null});try{const lines=await this.refreshing;return Response.json({ok:true,single:lines===null})}catch(e){return Response.json({error:e.message},{status:503})}}
  if(path==='/canary-comparison-status')return Response.json({...await this.state.storage.get('owner-comparison-20261024-tcp-relay-v1')||{state:'waiting'},failure404:await this.state.storage.get('owner-live404-audit-v1')||null,targetedCase:await targetedComparisonStatus(this.state.storage)});
+ if(path==='/targeted-cases/status')return Response.json(await targetedCasesStatus(this.state.storage,this.env));
+ if(path==='/targeted-cases/run'){
+  const body=await req.json(),result=await runTargetedCase(this.state.storage,this.env,body.caseKey,(item,options)=>{
+   const ctx={waitUntil:p=>this.state.waitUntil?.(p)},adapter=ownPlaybackCanaryAdapter({env:this.env,storage:{async get(){},async put(){},async delete(){}},directory,ownSession,ticket,sessionCall,request:request=>traceRequest(request,trace=>handleRequest(request,this.env,ctx,trace))});
+   return compareTargetedCase(adapter,(session,target,controlOptions)=>ownPlaybackControl(this.env,session,target,controlOptions),item,options);
+  },{signal:req.signal});return Response.json(result.data||{error:result.error},{status:result.status});
+ }
  if(path==='/canary-run'){const config=await req.json();if(!envCanaryAllowed(this.env,config))return Response.json({error:'canary_account_not_allowed'},{status:403});const accountKey='owner-comparison-account-20261023-v1',previousAccount=await this.state.storage.get(accountKey),priorComparison=await this.state.storage.get('owner-comparison-20261024-tcp-relay-v1');let selectedAccount,observedSample,observed404;const ctx={waitUntil:p=>this.state.waitUntil?.(p)},adapter=ownPlaybackCanaryAdapter({env:this.env,storage:this.state.storage,directory,ownSession,ticket,sessionCall,onSample:sample=>{observedSample=sample},onObserved404:sample=>{observed404=sample},diagnosticExclude:priorComparison?.results?.[0]?.origin?.ok===false&&previousAccount?[previousAccount]:[],onDiagnosticTarget:async(session,target)=>{const d=await unticket(this.env,new URL(target.url).searchParams.get('t')||'');if(d?.comparison&&d.sid===session.sid&&d.lease_id===target.lease_id)selectedAccount=d.provider_id},request:request=>traceRequest(request,trace=>handleRequest(request,this.env,ctx,trace))});const result=await runPlaybackCanary(config,adapter),failedSample=observedSample;if(!result.ok&&result.status!=='busy')await this.state.storage.delete('canary-sample:'+config.type);
   const key='owner-comparison-20261024-tcp-relay-v1',prior=await this.state.storage.get(key)||{attempts:0,results:[]};
   const covered=new Set(prior.results.filter(r=>r.origin&&r.relay).map(r=>r.type)),pending=prior.results[0]?.origin?.ok===false?prior.results[0].type:!covered.has('live')?'live':!covered.has('series')?'series':null;
@@ -163,6 +173,9 @@ async function adminRequest(req,env,ctx){
  if(action==="logout"){await sessionCall(env,s.sid,"/logout");return withSessionCookie(json({ok:true}),req,env,"admin","",0)}
  if(action==='xtream-settings'||action==='xtream-save'){const r=await directory(env,action==='xtream-save'?'/xtream-save':'/xtream-config',b);if(r.ok&&action==='xtream-save')await directory(env,'/audit-write',{actor:s.username,action:'xtream_changed'});return json({...await r.json(),url:new URL(req.url).origin,host:new URL(req.url).hostname,port:new URL(req.url).port||'443'},r.status)}
  if(action==='xtream-check'){const target=new URL('/player_api.php',req.url);const response=await xtreamRequest(new Request(target,{headers:{'User-Agent':'SnapMovieNow/1.0'}}),env);const body=await response.json();const config=await (await directory(env,'/xtream-config')).json();return json({compatible:response.status===401&&body.error==='credentials_required',enabled:config.enabled,url:new URL(req.url).origin,version:SERVICE_VERSION})}
+ if(['targeted-cases-status','targeted-cases-run'].includes(action)){
+  const r=await env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_canary_v1')).fetch('https://private/targeted-cases/'+(action==='targeted-cases-run'?'run':'status'),{method:'POST',body:JSON.stringify({caseKey:b.caseKey}),signal:req.signal});return json(await r.json(),r.status);
+ }
  if(action==='xtream-series-check'){
   const config=await (await directory(env,'/xtream-config')).json();if(!config.enabled)return json({error:'xtream_disabled'},403);
   return diagnoseSeries({json,users:await (await directory(env,'/users')).json(),catalog:createProviderCatalog(catalogDeps,env,ctx),
@@ -241,31 +254,36 @@ async function serverStream(req,env,u,ctx,trace){
 }
 async function ownPlaybackControl(env,session,target,{signal,deadline}){
  const url=new URL(target.url),d=await unticket(env,url.searchParams.get('t')||'');
- if(url.origin!=='https://api.snaptvnow.com'||url.pathname!=='/stream'||!session.canary||!session.comparison||session.username!==env.PLAYBACK_CANARY_USERNAME||!d?.canary||!d.comparison||d.sid!==session.sid||d.lease_id!==target.lease_id||d.request_id!==target.request_id||!['live','series'].includes(d.type)||!['ts','mp4','mkv','webm','avi','mov','m4v'].includes(d.ext)||d.resource||!/^\d{1,16}$/.test(String(d.id)))throw Error('media_origin_unapproved');
+ const diagnostic=targetedSession(session,env),allowedType=diagnostic?targetedTicket(d,env)?.key===diagnostic.key:['live','series'].includes(d?.type);
+ if(url.origin!=='https://api.snaptvnow.com'||url.pathname!=='/stream'||!session.canary||!session.comparison||session.username!==env.PLAYBACK_CANARY_USERNAME||!d?.canary||!d.comparison||d.sid!==session.sid||d.lease_id!==target.lease_id||d.request_id!==target.request_id||!allowedType||session.targetedCase&&!diagnostic||!['ts','mp4','mkv','webm','avi','mov','m4v'].includes(d.ext)||d.resource||!/^\d{1,16}$/.test(String(d.id)))throw Error('media_origin_unapproved');
  if(!(await sessionCall(env,session.sid,'/check')).ok||!(await directory(env,'/lease-check',{sid:d.sid,lease_id:d.lease_id,request_id:d.request_id})).ok)throw Object.assign(Error('playback_superseded'),{status:410});
  if(signal.aborted)throw Error('comparison_timeout');
- const source=d.origin||ORIGIN,start=source+'/'+(d.type==='series'?'series':'live')+'/'+encodeURIComponent(d.username)+'/'+encodeURIComponent(d.password)+'/'+d.id+'.'+d.ext;
- const headers=new Headers({'User-Agent':'SnapMovieNow/1.0','Accept-Encoding':'identity'});if(d.type==='series')headers.set('Range','bytes=0-65535');
- const response=await fetchControlMedia(start,headers,source,{deadline,directCcfEntry:env.PLAYBACK_CONTROL_CCF_SOCKET==='true'});
+ const source=d.origin||ORIGIN,start=source+'/'+(d.type==='series'?'series':d.type==='movie'?'movie':'live')+'/'+encodeURIComponent(d.username)+'/'+encodeURIComponent(d.password)+'/'+d.id+'.'+d.ext;
+ if(diagnostic&&source!==CCF_MEDIA_ORIGIN)throw Error('media_origin_unapproved');
+ const headers=new Headers({'User-Agent':'SnapMovieNow/1.0','Accept-Encoding':'identity'});if(d.type!=='live')headers.set('Range','bytes=0-65535');
+ const response=await fetchControlMedia(start,headers,source,{deadline,signal,directCcfEntry:diagnostic?true:env.PLAYBACK_CONTROL_CCF_SOCKET==='true',...(diagnostic?{onResponse:(response,sourceURL)=>attachCaseObservation(response,{caseKey:diagnostic.key,incomingRange:headers.get('range'),outgoingRange:headers.get('range'),transport:'tcp',sourceURL,secret:env.TICKET_SECRET})}:{})});
  if(signal.aborted){void response.body?.cancel().catch(()=>{});throw Error('comparison_timeout')}
  return response;
 }
 async function serverStreamDirect(req,env,u,ctx,trace){
  const d=await unticket(env,u.searchParams.get('t')||'');if(!d||!['movie','series','live'].includes(d.type)||!/^\d+$/.test(String(d.id)))return new Response('Expired',{status:410,headers:cors});
+ const diagnostic=targetedTicket(d,env);if(d.targetedCase&&!diagnostic)return new Response('Expired',{status:410,headers:cors});
  const [access,lease]=await timed(trace,'auth',()=>Promise.all([sessionCall(env,d.sid,'/check'),d.lease_id?directory(env,d.xtream?'/heartbeat':'/lease-check',{lease_id:d.lease_id,sid:d.sid,request_id:d.request_id}):Promise.resolve({ok:true})]));
  if(!access.ok)return new Response('Expired',{status:410,headers:cors});if(!lease.ok)return json({error:'playback_expired'},410);
  const warm=liveStarts.get(u.href);if(warm){liveStarts.delete(u.href);if(warm.until>Date.now()&&req.method==='GET')return new Response(warm.body,{headers:{...cors,'content-type':'application/vnd.apple.mpegurl',[INITIAL_EVIDENCE_HEADER]:'manifest'}})}
  const folder=d.type==='series'?'series':d.type==='live'?'live':'movie',start=d.resource||(d.origin||ORIGIN)+'/'+folder+'/'+encodeURIComponent(d.username)+'/'+encodeURIComponent(d.password)+'/'+d.id+'.'+cleanExt(d.ext);
  const sourceOrigin=d.origin||ORIGIN;
- const headers=new Headers({'User-Agent':'SnapMovieNow/1.0','Accept-Encoding':'identity'});for(const n of ['range','if-range'])if(req.headers.has(n))headers.set(n,req.headers.get(n));if(req.method==='HEAD')headers.set('range','bytes=0-0');const maximum=d.type==='live'?8000:VOD_STARTUP_MS,deadline=!d.resource?(startupDeadline(req,Date.now(),maximum)??Date.now()+maximum):null;const fetched=await timed(trace,'origin',()=>fetchValidatedMedia(start,headers,d.type,sourceOrigin,{deadline,directCcfEntry:env.CCF_ENTRY_TRANSPORT==='tcp'}));let response=fetched.response;const next=fetched.url;
+ const headers=new Headers({'User-Agent':'SnapMovieNow/1.0','Accept-Encoding':'identity'});for(const n of ['range','if-range'])if(req.headers.has(n))headers.set(n,req.headers.get(n));if(req.method==='HEAD')headers.set('range','bytes=0-0');const maximum=diagnostic?8000:d.type==='live'?8000:VOD_STARTUP_MS,deadline=diagnostic?Math.min(d.caseDeadline||d.exp,Date.now()+maximum):!d.resource?(startupDeadline(req,Date.now(),maximum)??Date.now()+maximum):null;const fetched=await timed(trace,'origin',()=>fetchValidatedMedia(start,headers,d.type,sourceOrigin,{deadline,directCcfEntry:env.CCF_ENTRY_TRANSPORT==='tcp'}));let response=fetched.response;const next=fetched.url;
  if(d.lease_id&&!(await directory(env,"/lease-check",{sid:d.sid,lease_id:d.lease_id,request_id:d.request_id})).ok){await response.body?.cancel().catch(()=>{});return json({error:"playback_expired"},410)}
+ if(diagnostic)response=await attachCaseObservation(response,{caseKey:diagnostic.key,method:req.method,incomingRange:req.headers.get('range'),outgoingRange:headers.get('range'),ifRangePresent:headers.has('if-range'),transport:isApprovedMediaIP(new URL(next),sourceOrigin)||env.CCF_ENTRY_TRANSPORT==='tcp'?'tcp':'hostname',sourceURL:next,secret:env.TICKET_SECRET});
  const playlist=response.ok&&(/mpegurl/i.test(response.headers.get('content-type')||'')||new URL(next).pathname.endsWith('.m3u8'));
  if(response.ok&&!playlist&&deadline!==null)response=await timed(trace,'first_byte',()=>readInitialMedia(response,deadline));
  if(response.ok&&d.type==='live'&&d.ext==='m3u8'&&!d.resource&&!playlist){await response.body?.cancel();throw Error('invalid_playlist')}
  // Signed HLS endpoints often have no filename extension. Recover every finite
  // binary playlist resource by its declared byte range, including redirects.
- if(!playlist&&(d.resource||d.type!=='live'))response=recoverMedia(response,async(range,validator)=>{const h=new Headers(headers);h.set('range',range);if(validator)h.set('if-range',validator);return (await fetchValidatedMedia(start,h,d.type,sourceOrigin,{directCcfEntry:env.CCF_ENTRY_TRANSPORT==='tcp'})).response},async()=>(await sessionCall(env,d.sid,'/check')).ok&&(!d.lease_id||(await directory(env,d.xtream?'/heartbeat':'/lease-check',{sid:d.sid,lease_id:d.lease_id,request_id:d.request_id})).ok));
+ if(!diagnostic&&!playlist&&(d.resource||d.type!=='live'))response=recoverMedia(response,async(range,validator)=>{const h=new Headers(headers);h.set('range',range);if(validator)h.set('if-range',validator);return (await fetchValidatedMedia(start,h,d.type,sourceOrigin,{directCcfEntry:env.CCF_ENTRY_TRANSPORT==='tcp'})).response},async()=>(await sessionCall(env,d.sid,'/check')).ok&&(!d.lease_id||(await directory(env,d.xtream?'/heartbeat':'/lease-check',{sid:d.sid,lease_id:d.lease_id,request_id:d.request_id})).ok));
  const out=new Headers(cors);for(const n of ['content-type','content-length','content-range','accept-ranges','etag','last-modified'])if(response.headers.has(n))out.set(n,response.headers.get(n));
+ if(diagnostic)for(const name of [CASE_OBSERVATION_HEADER,'X-SMN-Case-Source','X-SMN-Case-Validator'])if(response.headers.has(name))out.set(name,response.headers.get(name));
  if(response.ok&&!d.resource&&!playlist&&deadline!==null&&req.method==='GET')out.set(INITIAL_EVIDENCE_HEADER,'bytes');
  if(req.method==='HEAD'){
   if(response.status===416){

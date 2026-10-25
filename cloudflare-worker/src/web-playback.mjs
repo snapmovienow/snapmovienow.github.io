@@ -1,18 +1,22 @@
 import {playbackStartup,reportLiveResult,deferPlaybackReport} from './live-startup.mjs';
 import {startPlaybackActivity,attachPlaybackActivity} from './playback-activity.mjs';
 import {preparationFailure} from './playback-diagnostics.mjs';
+import {targetedSession,targetExtension} from './targeted-case-policy.mjs';
 // One client request owns every attempt. Release a failed allocation before
 // choosing another authorised account; a cancelled request cannot restart.
 export async function prepareWebPlayback(body,session,requestUrl,env,ctx,deps){
  const type=String(body.type||'movie'),ext=deps.cleanExt(body.ext),server=String(body.server||'ccf');
+ const diagnostic=targetedSession(session,env);
+ if(session.targetedCase&&(!diagnostic||!diagnostic.ext||diagnostic.type!==type||diagnostic.id!==String(body.id)||diagnostic.server!==server||!targetExtension(ext)||diagnostic.ext!==ext))return deps.json({error:'playback_expired'},410);
  const request_id=String(body.request_id||crypto.randomUUID());
- const activityTask=session.managed?startPlaybackActivity(deps.activity&&(()=>deps.activity({type,server,id:body.id,parentId:body.series_id})),ctx):null;
+ const activityTask=session.managed&&!diagnostic?startPlaybackActivity(deps.activity&&(()=>deps.activity({type,server,id:body.id,parentId:body.series_id})),ctx):null;
  if(session.managed){
   const begun=await deps.directory(env,'/playback-begin',{sid:session.sid,request_id,revision:body.revision});
   if(!begun.ok)return deps.json(await begun.json(),begun.status);
  }
  const startup=session.managed?playbackStartup(type):null;if(startup)startup.trace=deps.trace;
- const excluded=session.canary&&session.comparison&&Array.isArray(body.diagnosticExclude)?[...new Set(body.diagnosticExclude.filter(x=>typeof x==='string'&&x.length<=160))].slice(0,4):[],attempts=type==='live'&&session.managed?3:1;
+ if(diagnostic&&startup)startup.attempts=2; // One remaining allocation/validation claim, never fallback.
+ const excluded=!diagnostic&&session.canary&&session.comparison&&Array.isArray(body.diagnosticExclude)?[...new Set(body.diagnosticExclude.filter(x=>typeof x==='string'&&x.length<=160))].slice(0,4):[],attempts=!diagnostic&&type==='live'&&session.managed?3:1;
  for(let attempt=0;attempt<attempts&&(attempt===0||!startup||startup.available);attempt++){
   let credentials=session,lease_id,provider_id,allocation;
   if(session.managed){
@@ -21,7 +25,7 @@ export async function prepareWebPlayback(body,session,requestUrl,env,ctx,deps){
    if(!allocation.r.ok)return deps.json(await allocation.r.json(),allocation.r.status);
    credentials=allocation.credentials;provider_id=allocation.provider_id;lease_id=(await allocation.r.json()).lease_id;allocation.lease_id=lease_id;
   }
-  const data={sid:session.sid,username:credentials.username,password:credentials.password,origin:credentials.origin||deps.origin,lease_id,provider_id,request_id,type,id:String(body.id),ext,exp:session.exp,...(session.canary?{canary:true,...(session.comparison?{comparison:true}:{})}:{})};
+  const data={sid:session.sid,username:credentials.username,password:credentials.password,origin:credentials.origin||deps.origin,lease_id,provider_id,request_id,type,id:String(body.id),ext,exp:session.exp,...(session.canary?{canary:true,...(session.comparison?{comparison:true}:{})}:{}) ,...(diagnostic?{targetedCase:diagnostic.key,caseDeadline:session.caseDeadline}:{})};
   const url=new URL(requestUrl).origin+'/stream?t='+await deps.ticket(env,data);
   if(type==='live'&&ext==='m3u8'){
    const signalAt=Date.now(),mediaSession={...session,request_id};let sourceHttpStatus;
