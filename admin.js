@@ -1,5 +1,5 @@
 import {mountAdminBoxPanel} from './admin-boxpanel.js?v=2';
-import {mountAdminExclusive} from './admin-exclusive.js?v=exclusive-1';
+import {mountAdminExclusive} from './admin-exclusive.js?v=exclusive-pelisflix-1';
 import {mountAdminSeries} from './admin-series.js?v=43.10';
 import {mountAdminSecurity} from './admin-security.js?v=43.5';
 import {mountAdminOperations} from './admin-operations.js?v=43.4';

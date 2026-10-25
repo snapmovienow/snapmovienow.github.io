@@ -1,6 +1,9 @@
 // Resolve a saved episode page at playback time: CDN signatures are temporary.
+import {isPelisflixPage,pelisflixEmbeds} from './pelisflix-source.mjs';
 export const GNULA_PAGE_HOSTS=new Set(['www2.gnula.one','gnula.one','www.gnula.one','ww3.gnulahd.nu']);
-const VOE_HOSTS=new Set(['voe.sx','teresapoliticallearn.com','megankiddifference.com']);
+// The legacy API mode remains "gnula" so installed APKs need no protocol change.
+export const supportedSourcePage=u=>GNULA_PAGE_HOSTS.has(u.hostname)||isPelisflixPage(u);
+const VOE_HOSTS=new Set(['voe.sx','teresapoliticallearn.com','megankiddifference.com','jamespatterncamera.com']);
 const embedPattern=/^https:\/\/(?:voe\.sx\/e\/[a-z0-9]+|uqload\.(?:com|vc)\/embed-[a-z0-9]+\.html)$/;
 export function allowedGnula(u){return u.protocol==='https:'&&/^(?:strm\d+\.uqload\.vc|ugc-cdn-caching-[a-z0-9]+\.cloudwindow-route\.com)$/.test(u.hostname)&&!u.port&&!u.username&&!u.password;}
 const cleanURL=(value,allowed)=>{const u=new URL(value);if(u.protocol!=='https:'||u.port||u.username||u.password||!allowed(u))throw Error('source_not_allowed');return u;};
@@ -31,6 +34,7 @@ function decodeVoe(text){
  }throw Error('unsupported_config');
 }
 async function episodeEmbeds(page,html,options){
+ if(isPelisflixPage(page))return pelisflixEmbeds(html);
  if(page.hostname!=='ww3.gnulahd.nu'){
   for(const m of html.matchAll(/data-iframe="([^"]+)"/g))try{html+=' '+atob(m[1]);}catch{}
   return html.match(/https:\/\/(?:voe\.sx\/e\/[a-z0-9]+|uqload\.(?:com|vc)\/embed-[a-z0-9]+\.html)/g)||[];
@@ -47,13 +51,13 @@ async function episodeEmbeds(page,html,options){
  return (language?.servers||[]).map(x=>x.src).filter(x=>typeof x==='string'&&embedPattern.test(x));
 }
 export async function resolveGnula(pageUrl='https://www2.gnula.one/movie/batman-vs-superman-el-origen-de-la-justicia/',preferredEmbed=null,{signal,fetcher=fetch}={}){
- const options={signal,fetcher},page=cleanURL(pageUrl,u=>GNULA_PAGE_HOSTS.has(u.hostname));
- const html=await sourceText(page.href,u=>GNULA_PAGE_HOSTS.has(u.hostname),options);
- const embeds=[...new Set([...(preferredEmbed&&embedPattern.test(preferredEmbed)?[preferredEmbed]:[]),...await episodeEmbeds(page,html,options)])];
+ const options={signal,fetcher},page=cleanURL(pageUrl,supportedSourcePage);
+ const html=await sourceText(page.href,u=>isPelisflixPage(page)?u.origin===page.origin&&isPelisflixPage(u):GNULA_PAGE_HOSTS.has(u.hostname),options);
+ const embeds=[...new Set([...(!isPelisflixPage(page)&&preferredEmbed&&embedPattern.test(preferredEmbed)?[preferredEmbed]:[]),...await episodeEmbeds(page,html,options)])];
  for(const embed of embeds){
   if(signal?.aborted)throw signal.reason;
   try{
-   const voe=new URL(embed).hostname==='voe.sx',allowed=u=>voe?VOE_HOSTS.has(u.hostname)&&/^\/e\/[a-z0-9]+$/.test(u.pathname):['uqload.com','uqload.vc'].includes(u.hostname)&&/^\/embed-[a-z0-9]+\.html$/.test(u.pathname);
+   const voe=new URL(embed).hostname==='voe.sx',allowed=u=>voe?VOE_HOSTS.has(u.hostname)&&u.pathname===new URL(embed).pathname&&!u.search&&!u.hash:['uqload.com','uqload.vc'].includes(u.hostname)&&/^\/embed-[a-z0-9]+\.html$/.test(u.pathname);
    let text=await sourceText(embed,allowed,options),source;
    if(voe){
     const redirect=text.match(/window\.location\.href\s*=\s*['"](https:\/\/[^'"]+)['"]/)?.[1];

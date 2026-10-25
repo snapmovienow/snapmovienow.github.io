@@ -72,5 +72,35 @@ try{
  const backup=await exportExclusives(store);assert.ok(validExclusiveBackup(backup));const restored=new Store();await restoreExclusives(restored,backup);assert.equal((await(await exclusiveCatalogRoute(restored,'/exclusive-read',{})).json()).items.length,21);assert.deepEqual(await exportExclusives(restored),backup);assert.equal(validExclusiveBackup({...backup,covers:[['exclusive:cover:bad',{type:'image/svg+xml',data:'bad'}]]}),false);
  assert.equal((await admin('save',{username:customer.username,status:'active',permissions:{movies:false,series:true,tv:true,adults:false}})).status,200);
  const restricted=await(await api('get_exclusive_catalog')).json();assert.equal(restricted.items.length,1);assert.equal(restricted.items[0].type,'series');assert.equal((await play(movie.id,'mp4')).status,404);
+ // The installed APK's existing native routes work with the new page provider.
+ const stable={...series,mode:'gnula',source:'PELISFLIX',page:'https://pelisflix200.city/serie/yaga/',episodes:series.episodes.map(ep=>({...ep,page:'https://pelisflix200.city/episodio/yaga-1x'+ep.episode_num+'/'}))};
+ const updated=await admin('exclusive-save',{item:stable,revision:2});assert.equal(updated.status,200);assert.equal(updated.data.item.id,series.id);assert.deepEqual(updated.data.item.episodes.map(ep=>ep.id),['custom-ep-one','custom-ep-two']);
+ const rot13=s=>s.replace(/[a-zA-Z]/g,c=>String.fromCharCode(c.charCodeAt(0)+(c.toLowerCase()<='m'?13:-13)));
+ const stubFetch=globalThis.fetch,resolved=[];
+ globalThis.fetch=async(url,opts={})=>{
+  const u=new URL(url);assert.equal(new Headers(opts.headers).get('authorization'),null);
+  if(u.hostname==='pelisflix200.city'){
+   const number=u.pathname.match(/1x(\d+)/)[1];resolved.push(number);
+   return new Response('<div data-url="'+btoa('https://nupload.my/iframe/?url='+encodeURIComponent('https://voe.sx/e/episode'+number))+'"><span>CASTELLANO HD</span></div>');
+  }
+  if(u.hostname==='voe.sx')return new Response('window.location.href="https://jamespatterncamera.com'+u.pathname+'"');
+  if(u.hostname==='jamespatterncamera.com'){
+   const source='https://ugc-cdn-caching-test.cloudwindow-route.com/'+u.pathname.split('/').at(-1)+'/master.m3u8';
+   return new Response('<script type="application/json">'+JSON.stringify([rot13(btoa(Array.from(btoa(JSON.stringify({source}))).reverse().map(c=>String.fromCharCode(c.charCodeAt(0)+3)).join('')))])+'</script>');
+  }
+  if(u.hostname==='ugc-cdn-caching-test.cloudwindow-route.com')return stubFetch('https://media.snapcdn.net'+u.pathname,opts);
+  return stubFetch(url,opts);
+ };
+ try{
+  const nativeInfo=await(await api('get_exclusive_series_info',{series_id:series.id})).json();assert.equal(nativeInfo.episodes['1'][0].container_extension,'m3u8');assert.ok(!JSON.stringify(nativeInfo).includes('pelisflix200.city'));
+  for(const id of ['custom-ep-one','custom-ep-two']){
+   response=await play(id);assert.equal(response.status,200);const text=await response.text();assert.ok(text.startsWith('#EXTM3U'));assert.ok(!text.includes('cloudwindow-route'));
+   const resource=text.split('\n').find(line=>line.startsWith('https://')),key=text.match(/URI="([^"]+)"/)[1];
+   const part=await worker.fetch(new Request(resource),env);assert.deepEqual([...new Uint8Array(await part.arrayBuffer())],[0x47,1,2,3]);
+   const keyResponse=await worker.fetch(new Request(key),env);assert.equal((await keyResponse.arrayBuffer()).byteLength,16);
+  }
+  assert.deepEqual(resolved,['1','2'],'native episode selection stays exact');
+  assert.ok(validExclusiveBackup(await exportExclusives(store)),'new stable provider pages survive backup validation');
+ }finally{globalThis.fetch=stubFetch;}
  console.log('PASS: exclusive admin ownership, seeded catalog, revisions, source privacy, SSRF rejection, movie ranges, signed HLS/key resources, three-device limits, hide revocation, series episodes, media checks, cover upload/backup and content permissions.');
 }finally{globalThis.fetch=originalFetch;}

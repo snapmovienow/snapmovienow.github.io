@@ -30,6 +30,29 @@ scripts enabled. See the engineering guide for the remaining Pages/branch settin
 
 Use Cloudflare's Deploy to Cloudflare flow for this directory. Set TICKET_SECRET to a long random value when prompted.
 
+## Compatible exclusive pages: Pelisflix / VOE (2026-10-25)
+
+The existing APK protocol and `gnula` page mode also accept reviewed HTTPS pages
+on `pelisflix200.city` under `/serie/`, `/episodio/` and `/pelicula/`. The editor
+labels this option **Página compatible · Gnula / Pelisflix**. Store the stable
+episode page, set the source label to PELISFLIX, and keep existing series and
+episode IDs when repairing a title. Each playback resolves a fresh media URL;
+signed CDN addresses must never be saved in catalog data or this repository.
+
+The adapter reads advertised player choices without executing page JavaScript,
+prefers Latino, then Castellano, then subtitles among supported VOE choices,
+and parses the reviewed `nupload.my/iframe/` wrapper without fetching it.
+VOE's reviewed `jamespatterncamera.com` redirect must preserve the exact episode
+path. Unknown providers/redirects, nonpublic destinations and 403 responses fail
+closed. Existing Gnula/Uqload handling and the narrower maintenance-feed Gnula
+allowlist are unchanged. No new APK, secrets or catalog migrations are required.
+
+`pelisflix-voe-v1` in `/health` identifies the deployed integration. Automated
+regressions cover page validation, wrapper handling, language selection, fresh
+signatures, redirects, backup validation and the existing native authenticated
+episode route through signed HLS segments and AES keys. These tests do not
+establish playback on a physical Android/Fire TV device or a provider uptime SLA.
+
 ## Rotating live media destinations (2026-10-11)
 
 Authenticated production probes found ESPN 720 delivering H.264/AAC while
