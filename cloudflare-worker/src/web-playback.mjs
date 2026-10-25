@@ -29,7 +29,7 @@ export async function prepareWebPlayback(body,session,requestUrl,env,ctx,deps){
     const checked=await deps.serverStream(startup?startup.prepare(new Request(url)):new Request(url,{headers:{'X-SMN-Prepare':'1'}}),env,new URL(url),ctx,deps.trace);
     if(!checked.ok){sourceHttpStatus=checked.status;await checked.body?.cancel();throw Error(checked.status===410?'playback_superseded':'live_signal_unavailable')}
     if(!(await checked.text()).startsWith('#EXTM3U'))throw Error('live_signal_unavailable');
-    if(startup){const elapsed=Date.now()-signalAt;deferPlaybackReport(ctx,()=>reportLiveResult(deps.directory,env,mediaSession,allocation,true,elapsed));}
+    if(startup){const elapsed=Date.now()-signalAt;deferPlaybackReport(ctx,()=>reportLiveResult(deps.directory,env,mediaSession,allocation,true,elapsed,'signal',{evidence:'manifest'}));}
    }catch(error){
     if(startup&&!['media_origin_unapproved','playback_superseded'].includes(error.message))await reportLiveResult(deps.directory,env,mediaSession,allocation,false,Date.now()-signalAt,'signal',{httpStatus:sourceHttpStatus});
     if(lease_id)await deps.directory(env,'/release',{sid:session.sid,lease_id,request_id,reason:'upstream_failed'});

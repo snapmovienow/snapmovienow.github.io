@@ -44,6 +44,8 @@ import {matchesXtream} from './xtream.mjs';
 import {contentPermissions,createAdultPolicy,isAdult} from './content-permissions.mjs';
 import {createProviderCatalog} from './provider-catalog.mjs';
 import {cachedFailureNames} from './media-failure-names.mjs';
+import {cachedChannelCatalog,summarizeChannelObservations,loadChannelObservations} from './provider-channel-observations.mjs';
+import {INITIAL_EVIDENCE_HEADER,initialMediaEvidence,consumeInitialEvidence} from './initial-media-evidence.mjs';
 import {diagnoseSeries} from './series-diagnostic.mjs';
 import {createXtreamBridge,guardXtreamResponse} from './xtream-bridge.mjs';
 import {recoverMedia} from './media-fetch.mjs';
@@ -170,7 +172,12 @@ async function adminRequest(req,env,ctx){
  }
  const security={"admin-password":"/admin-password","mfa-replace-begin":"/mfa-replace-begin","security-status":"/security-status","mfa-begin":"/mfa-begin","mfa-confirm":"/mfa-confirm","mfa-disable":"/mfa-disable","mfa-recovery-renew":"/mfa-recovery-renew","audit":"/audit","backup-list":"/backup-list","backup-status":"/backup-status","backup-verify":"/backup-verify","backup-create":"/backup-create","backup-drill":"/backup-drill","backup-download":"/backup-download","backup-export":"/backup-export","backup-preview":"/backup-preview","backup-restore":"/backup-restore"};
  if(security[action]){const r=await directory(env,security[action],{...b,actor:s.username});return json(await r.json(),r.status)}
- if(action==='playback-diagnostics'){const [providers,timings]=await Promise.all([directory(env,'/provider-health').then(r=>r.json()),env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_operations_v1')).fetch('https://private/operations/timing-read',{method:'POST',body:'{}'}).then(r=>r.json())]);providers.recentMediaFailures=await cachedFailureNames(createProviderCatalog(catalogDeps,env,ctx,{timeoutMs:1500,cacheReadMs:300}),providers.recentMediaFailures);return json({providers,timings})}
+ if(action==='playback-diagnostics'){
+  const catalog=createProviderCatalog(catalogDeps,env,ctx,{timeoutMs:1500,cacheReadMs:300});
+  const [providers,timings,observations,snapshot]=await Promise.all([directory(env,'/provider-health').then(r=>r.json()),env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_operations_v1')).fetch('https://private/operations/timing-read',{method:'POST',body:'{}'}).then(r=>r.json()),loadChannelObservations(()=>directory(env,'/provider-channel-observations')),cachedChannelCatalog(catalog)]);
+  providers.recentMediaFailures=await cachedFailureNames(catalog,providers.recentMediaFailures);
+  return json({providers,timings,channels:summarizeChannelObservations(observations,snapshot)});
+ }
  if(['playback-canary-status','playback-canary-settings','playback-canary-run'].includes(action)){const path=action==='playback-canary-settings'?'/canary/settings':action==='playback-canary-run'?'/canary/run':'/status';const result=await monitorCall(env,path,action==='playback-canary-settings'?{enabled:b.enabled,...(b.types?{types:b.types}:{})}:{});if(result.ok&&action!=='playback-canary-status')await directory(env,'/audit-write',{actor:s.username,action});return json(await result.json(),result.status)}
  if(action==='playback-health'){const r=await env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_operations_v1')).fetch('https://private/operations/read',{method:'POST',body:'{}'});return json(await r.json(),r.status)}
  if(['alerts-status','alerts-settings','alerts-check','alerts-test'].includes(action)){
@@ -221,8 +228,8 @@ async function observedWebStream(object,req,ctx,trace){
  const key=d?.lease_id+':'+d?.request_id,now=Date.now();object.signalReports??=new Map();
  for(const [id,at]of object.signalReports)if(at<now-300000)object.signalReports.delete(id);
  const fresh=observe&&!object.signalReports.has(key);if(fresh){if(object.signalReports.size>=128)object.signalReports.delete(object.signalReports.keys().next().value);object.signalReports.set(key,now)}
- const report=async(ok,httpStatus)=>{if(!fresh)return;await reportLiveResult(directory,env,{sid:d.sid,request_id:d.request_id},{lease_id:d.lease_id,provider_id:d.provider_id},ok,Date.now()-now,'signal',{httpStatus});if(!ok)await directory(env,'/release',{sid:d.sid,lease_id:d.lease_id,request_id:d.request_id,reason:'upstream_failed'});};
- try{const response=await serverStreamDirect(req,env,u,ctx,trace);if([410,416].includes(response.status)||req.signal.aborted){if(fresh)object.signalReports.delete(key)}else if(response.ok)deferPlaybackReport(ctx,()=>report(true));else await report(false,response.status);return response}
+ const report=async(ok,httpStatus,evidence)=>{if(!fresh)return;await reportLiveResult(directory,env,{sid:d.sid,request_id:d.request_id},{lease_id:d.lease_id,provider_id:d.provider_id},ok,Date.now()-now,'signal',{httpStatus,evidence});if(!ok)await directory(env,'/release',{sid:d.sid,lease_id:d.lease_id,request_id:d.request_id,reason:'upstream_failed'});};
+ try{const response=await serverStreamDirect(req,env,u,ctx,trace);if([410,416].includes(response.status)||req.signal.aborted){if(fresh)object.signalReports.delete(key)}else if(response.ok)deferPlaybackReport(ctx,()=>report(true,undefined,initialMediaEvidence(response)));else await report(false,response.status);return response}
  catch(error){if(!req.signal.aborted&&!['playback_superseded','media_origin_unapproved'].includes(error.message))await report(false);throw error}
 }
 async function serverStream(req,env,u,ctx,trace){
@@ -230,7 +237,7 @@ async function serverStream(req,env,u,ctx,trace){
  // Keep video parsing, byte-range recovery and stream callbacks out of the
  // front-door request's small CPU budget. One relay per session avoids a shared
  // bottleneck; control-plane revocation and provider capacity remain separate.
- if(!d.resource)trace?.identify(d.type);const response=await env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_media_v1:'+d.sid)).fetch(new Request(u.href,req));if(trace)trace.merge(response);return response;
+ if(!d.resource)trace?.identify(d.type);const response=await env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_media_v1:'+d.sid)).fetch(new Request(u.href,req));if(trace)trace.merge(response);return consumeInitialEvidence(response);
 }
 async function ownPlaybackControl(env,session,target,{signal,deadline}){
  const url=new URL(target.url),d=await unticket(env,url.searchParams.get('t')||'');
@@ -247,7 +254,7 @@ async function serverStreamDirect(req,env,u,ctx,trace){
  const d=await unticket(env,u.searchParams.get('t')||'');if(!d||!['movie','series','live'].includes(d.type)||!/^\d+$/.test(String(d.id)))return new Response('Expired',{status:410,headers:cors});
  const [access,lease]=await timed(trace,'auth',()=>Promise.all([sessionCall(env,d.sid,'/check'),d.lease_id?directory(env,d.xtream?'/heartbeat':'/lease-check',{lease_id:d.lease_id,sid:d.sid,request_id:d.request_id}):Promise.resolve({ok:true})]));
  if(!access.ok)return new Response('Expired',{status:410,headers:cors});if(!lease.ok)return json({error:'playback_expired'},410);
- const warm=liveStarts.get(u.href);if(warm){liveStarts.delete(u.href);if(warm.until>Date.now()&&req.method==='GET')return new Response(warm.body,{headers:{...cors,'content-type':'application/vnd.apple.mpegurl'}})}
+ const warm=liveStarts.get(u.href);if(warm){liveStarts.delete(u.href);if(warm.until>Date.now()&&req.method==='GET')return new Response(warm.body,{headers:{...cors,'content-type':'application/vnd.apple.mpegurl',[INITIAL_EVIDENCE_HEADER]:'manifest'}})}
  const folder=d.type==='series'?'series':d.type==='live'?'live':'movie',start=d.resource||(d.origin||ORIGIN)+'/'+folder+'/'+encodeURIComponent(d.username)+'/'+encodeURIComponent(d.password)+'/'+d.id+'.'+cleanExt(d.ext);
  const sourceOrigin=d.origin||ORIGIN;
  const headers=new Headers({'User-Agent':'SnapMovieNow/1.0','Accept-Encoding':'identity'});for(const n of ['range','if-range'])if(req.headers.has(n))headers.set(n,req.headers.get(n));if(req.method==='HEAD')headers.set('range','bytes=0-0');const maximum=d.type==='live'?8000:VOD_STARTUP_MS,deadline=!d.resource?(startupDeadline(req,Date.now(),maximum)??Date.now()+maximum):null;const fetched=await timed(trace,'origin',()=>fetchValidatedMedia(start,headers,d.type,sourceOrigin,{deadline,directCcfEntry:env.CCF_ENTRY_TRANSPORT==='tcp'}));let response=fetched.response;const next=fetched.url;
@@ -259,9 +266,10 @@ async function serverStreamDirect(req,env,u,ctx,trace){
  // binary playlist resource by its declared byte range, including redirects.
  if(!playlist&&(d.resource||d.type!=='live'))response=recoverMedia(response,async(range,validator)=>{const h=new Headers(headers);h.set('range',range);if(validator)h.set('if-range',validator);return (await fetchValidatedMedia(start,h,d.type,sourceOrigin,{directCcfEntry:env.CCF_ENTRY_TRANSPORT==='tcp'})).response},async()=>(await sessionCall(env,d.sid,'/check')).ok&&(!d.lease_id||(await directory(env,d.xtream?'/heartbeat':'/lease-check',{sid:d.sid,lease_id:d.lease_id,request_id:d.request_id})).ok));
  const out=new Headers(cors);for(const n of ['content-type','content-length','content-range','accept-ranges','etag','last-modified'])if(response.headers.has(n))out.set(n,response.headers.get(n));
+ if(response.ok&&!d.resource&&!playlist&&deadline!==null&&req.method==='GET')out.set(INITIAL_EVIDENCE_HEADER,'bytes');
  if(req.method==='HEAD'){const total=response.headers.get('content-range')?.match(/\/(\d+)$/)?.[1];if(total)out.set('content-length',total);out.delete('content-range');await response.body?.cancel();return new Response(null,{status:response.status===206?200:response.status,headers:out})}
  if(playlist){const text=await timed(trace,'first_byte',()=>readLivePlaylist(response,deadline));if(!text.startsWith('#EXTM3U'))throw Error('invalid_playlist');const proxy=async value=>{const target=validatedMediaTarget(new URL(value,next),sourceOrigin);return u.origin+'/stream?t='+await ticket(env,{...d,resource:target.href})};
- const lines=await Promise.all(text.split(/\r?\n/).map(async line=>{if(!line.trim())return line;if(!line.startsWith('#'))return proxy(line.trim());const matches=[...line.matchAll(/URI="([^"]+)"/g)];for(const m of matches)line=line.replace(m[0],'URI="'+await proxy(m[1])+'"');return line}));const body=lines.join('\n');if(req.headers.get('X-SMN-Prepare')==='1'&&!d.resource)rememberLiveStart(u.href,body);out.delete('content-length');out.set('content-type','application/vnd.apple.mpegurl');return new Response(body,{headers:out})}
+ const lines=await Promise.all(text.split(/\r?\n/).map(async line=>{if(!line.trim())return line;if(!line.startsWith('#'))return proxy(line.trim());const matches=[...line.matchAll(/URI="([^"]+)"/g)];for(const m of matches)line=line.replace(m[0],'URI="'+await proxy(m[1])+'"');return line}));const body=lines.join('\n');if(req.headers.get('X-SMN-Prepare')==='1'&&!d.resource)rememberLiveStart(u.href,body);out.delete('content-length');out.set('content-type','application/vnd.apple.mpegurl');if(!d.resource)out.set(INITIAL_EVIDENCE_HEADER,'manifest');return new Response(body,{headers:out})}
  const result=new Response(response.body,{status:response.status,headers:out});
  if(d.xtream&&!d.resource&&d.ext!=='m3u8')return guardXtreamResponse(result,async()=>(await sessionCall(env,d.sid,'/check')).ok&&(await directory(env,'/heartbeat',{sid:d.sid,lease_id:d.lease_id,request_id:d.request_id})).ok,()=>directory(env,'/release',{sid:d.sid,lease_id:d.lease_id,request_id:d.request_id}),ctx,req.signal,d.exp);
  return guardPlaybackExpiry(result,d.exp,req.signal,()=>directory(env,"/release-session",{sid:d.sid}),ctx);

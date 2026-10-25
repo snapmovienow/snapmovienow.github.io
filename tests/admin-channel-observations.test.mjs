@@ -1,0 +1,7 @@
+import assert from 'node:assert/strict';
+import {channelAccessPresentation} from '../admin-channel-observations.js';
+assert.equal(channelAccessPresentation(null).rows.length,0);
+const data={measurement:'initial_access',collectionStartedAt:1,incomplete:false,catalog:{status:'available',total:4,savedAt:2},groups:[{cohort:'customer',observed:2,successOnly:1,failureOnly:0,mixed:1,unobserved:2,bytesSuccess:2,manifestSuccess:1,coveragePercent:50,successOnlyPercent:50},{cohort:'owner_test',observed:1,successOnly:1,failureOnly:0,mixed:0,unobserved:3,bytesSuccess:1,manifestSuccess:0,coveragePercent:25,successOnlyPercent:100}]};
+let view=channelAccessPresentation(data,()=> 'fecha');assert.match(view.summary,/Canales únicos CCF/);assert.match(view.summary,/no verifica audio/i);assert.match(view.summary,/Eventos sin verificar/);assert.match(view.rows[0],/2 observados \/ 4/);assert.match(view.rows[0],/Mixtos: 1/);assert.match(view.rows[1],/Pruebas de la cuenta propia/);assert.ok(!view.rows.join('').includes('canales funcionan'));
+view=channelAccessPresentation({...data,incomplete:true,catalog:{status:'unavailable'},groups:[{...data.groups[0],coveragePercent:null,successOnlyPercent:null,unobserved:null}]});assert.match(view.summary,/Medición incompleta/);assert.match(view.rows[0],/No observados: sin determinar/);assert.ok(!view.rows[0].includes('%'));
+console.log('PASS: initial-access admin labels, cohort separation, coverage limits and no full-playback claim.');

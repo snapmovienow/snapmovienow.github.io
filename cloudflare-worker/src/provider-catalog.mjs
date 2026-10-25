@@ -99,7 +99,7 @@ export function createProviderCatalog(deps, env, ctx,{timeoutMs=CATALOG_FETCH_MS
       const freshFor=list?300000:30000;
       if(detail&&saved&&saved.savedAt<=Date.now()-freshFor)saved=null;
       // Activity labels must not trigger provider traffic or delay a stream.
-      if(options.cachedOnly)return saved?.data||null;
+      if(options.cachedOnly)return options.withMetadata?(saved?{data:saved.data,savedAt:saved.savedAt}:null):saved?.data||null;
       if(!options.fresh&&saved&&saved.savedAt>Date.now()-freshFor)return saved.data;
       const refresh=async()=>{
         const credentials=await within(deps.catalogCredentials(env,server,ctx));

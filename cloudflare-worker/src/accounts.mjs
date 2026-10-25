@@ -1,4 +1,5 @@
 import {recordProviderHealth,rankProviderCandidates,providerCircuitState,claimProviderTrial,providerHealthSummary,failedLive404Sample} from './provider-health.mjs';
+import {recordChannelObservation,readChannelObservations} from './provider-channel-observations.mjs';
 import {affinityGroup,providerAffinity,rememberProvider,forgetProvider,recentlyValidated,pruneAffinities} from './provider-affinity.mjs';
 import {assignmentKey,usableProvider,assignedProvider,saveAssignment,mediaRecentlyFailed,recentAccountProof} from './provider-assignment.mjs';
 import {exclusiveCatalogRoute,exclusiveSnapshot,selectExclusive,visibleExclusive} from './exclusive-catalog.mjs';
@@ -197,6 +198,7 @@ export async function accountsFetch(state,env,req){
   const id=crypto.randomUUID();await local.put(id,{sid:b.sid,uid:b.uid,username:user.username,version:user.version,request_id:b.request_id,exclusiveId:b.exclusiveId,exclusiveParentId:found.row.id,playbackRevision:b.playbackRevision,mediaKey,activity:{title:found.media===found.row?found.row.name:found.row.name+' · '+found.media.title},client:cleanConnectionClient(b.client),startedAt:Date.now(),until:Date.now()+90000,...(b.xtream?{xtream:true}:{})});await recordCustomerActivity(tx,user.id,Date.now(),b.client);return answer({lease_id:id});
  });
  if(p==='/provider-health')return answer(providerHealthSummary(await store.get('provider-health')));
+ if(p==='/provider-channel-observations')return answer(await store.transaction(tx=>readChannelObservations(tx,Date.now(),{prune:true})));
  if(p==='/provider-result')return store.transaction(async tx=>{
   const local=leases.in(tx),lease=await local.get(b.lease_id);
   if(!lease||lease.sid!==b.sid||lease.request_id!==b.request_id||lease.provider_id!==b.provider_id||!/^(live|movie|series)\|/.test(String(lease.mediaKey||''))||!['signal','validation'].includes(b.stage)||typeof b.ok!=='boolean')return answer({error:'health_scope'},403);
@@ -216,7 +218,7 @@ export async function accountsFetch(state,env,req){
    const pool=await tx.get('pool'),provider=pool?.lines?.find(p=>p.id===lease.provider_id&&p.credentialKey===lease.providerCredentialKey&&usableProvider(p));
    if(provider){const key='canary-'+assignmentKey(lease.uid);await tx.put(key,saveAssignment(await tx.get(key),affinityGroup(lease),lease.uid,provider));}
   }
-  await tx.put('provider-health',health);return answer({ok:true});
+  await tx.put('provider-health',health);await recordChannelObservation(tx,lease,b,env);return answer({ok:true});
  });
  if(p==='/acquire')return store.transaction(async tx=>{
   const playbackKey='playback:'+b.sid,playback=await tx.get(playbackKey)||{revision:0,cancelled:{}};
