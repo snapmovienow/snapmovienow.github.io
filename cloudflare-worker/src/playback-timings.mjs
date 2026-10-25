@@ -1,5 +1,6 @@
 // Request-local timing only. Never retain media URLs, accounts or credentials.
 import {playbackErrorCode,expectedPlaybackOutcome} from './playback-outcomes.mjs';
+import {CatalogCost,addCatalogCost,mergeCatalogCost,catalogCostSummary} from './catalog-cost.mjs';
 export const PLAYBACK_STAGES=['auth','catalog','allocation','validation','origin','first_byte'];
 const stages=new Set(PLAYBACK_STAGES),types=new Set(['live','movie','series']);
 const limits=[100,250,500,1000,2000,4000,8000,12000,20000,60000,300000];
@@ -7,6 +8,7 @@ const clock=()=>performance.now();
 export class PlaybackTimings {
  constructor(now=clock){this.now=now;this.started=now();this.values={};this.active={};this.type=null;this.platform='other';}
  identify(type,platform){if(types.has(type))this.type=type;if(['android','web','other','canary'].includes(platform))this.platform=platform;return this;}
+ movieCatalog(operation){return this.catalogCost??=new CatalogCost(operation,this.now);}
  add(stage,ms,count=1){if(!stages.has(stage)||!Number.isFinite(ms)||ms<0)return;const value=this.values[stage]||{ms:0,count:0};value.ms=Math.min(300000,value.ms+ms);value.count=Math.min(100,value.count+count);this.values[stage]=value;}
  async run(stage,operation){
   if(!stages.has(stage))return operation();
@@ -16,7 +18,7 @@ export class PlaybackTimings {
  measured(){const values=structuredClone(this.values);for(const [stage,span]of Object.entries(this.active)){const old=values[stage]||{ms:0,count:0};values[stage]={ms:Math.min(300000,old.ms+Math.max(0,this.now()-span.started)),count:Math.min(100,old.count+span.count)}}return values;}
  merge(response){for(const part of (response.headers.get('Server-Timing')||'').split(',')){const m=part.trim().match(/^smn_(auth|catalog|allocation|validation|origin|first_byte);dur=(\d+(?:\.\d+)?)$/);if(m)this.add(m[1],Number(m[2]));}return response;}
  header(){return Object.entries(this.measured()).map(([stage,v])=>'smn_'+stage+';dur='+Math.round(v.ms)).join(',');}
- snapshot(status=200,errorCode){return {type:this.type,platform:this.platform,status,...(playbackErrorCode(errorCode)?{errorCode}:{}),totalMs:Math.min(300000,Math.max(0,Math.round(this.now()-this.started))),stages:Object.fromEntries(Object.entries(this.measured()).map(([stage,v])=>[stage,{ms:Math.round(v.ms),count:v.count}]))};}
+ snapshot(status=200,errorCode){const catalogCost=this.type==='movie'?this.catalogCost?.snapshot():null;return {type:this.type,platform:this.platform,status,...(playbackErrorCode(errorCode)?{errorCode}:{}),totalMs:Math.min(300000,Math.max(0,Math.round(this.now()-this.started))),stages:Object.fromEntries(Object.entries(this.measured()).map(([stage,v])=>[stage,{ms:Math.round(v.ms),count:v.count}])),...(catalogCost?{catalogCost}:{})};}
  response(response){const h=new Headers(response.headers),value=this.header();if(value)h.append('Server-Timing',value);return new Response(response.body,{status:response.status,statusText:response.statusText,headers:h});}
 }
 export const timed=(trace,stage,operation)=>trace?trace.run(stage,operation):operation();
@@ -57,6 +59,7 @@ export async function playbackTimingsRoute(store,req){
    if(m.errorCode)row.errorCounts[m.errorCode]=(row.errorCounts[m.errorCode]||0)+1;
    if(outcome)row[outcome]++;else{
     row.measuredRequests++;if(m.status>=400)row.failures++;
+    if(m.type==='movie'&&m.catalogCost)row.catalogCost=addCatalogCost(row.catalogCost||{},m.catalogCost);
     for(const [name,ms]of [['total',m.totalMs],...Object.entries(m.stages).map(([name,v])=>[name,v.ms])]){const v=row.stages[name]||{samples:0,sum:0,histogram:Array(limits.length).fill(0)};v.samples++;v.sum+=ms;v.histogram[limits.findIndex(n=>ms<=n)]++;row.stages[name]=v;}
    }
    await tx.put(key,row);
@@ -70,8 +73,9 @@ export async function playbackTimingsRoute(store,req){
   if(row.bucket<bucket-2)continue;const key=row.type+':'+row.platform;
   const group=groups.get(key)||{type:row.type,platform:row.platform,requests:0,measuredRequests:0,failures:0,rawErrors:0,legacyFailures:0,accessRejected:0,cancelled:0,clientCapacity:0,statusCounts:{},errorCounts:{},stages:{}};group.requests+=row.requests;group.failures+=row.failures;group.measuredRequests+=row.measuredRequests??row.requests;group.rawErrors+=row.rawErrors??row.failures;group.legacyFailures+=row.legacyFailures??row.failures;
   for(const name of ['accessRejected','cancelled','clientCapacity'])group[name]+=row[name]||0;
+  if(row.type==='movie'&&row.catalogCost)group.catalogCost=mergeCatalogCost(group.catalogCost||{},row.catalogCost);
   for(const name of ['statusCounts','errorCounts'])for(const [code,count]of Object.entries(row[name]||{}))group[name][code]=(group[name][code]||0)+count;
   for(const [name,v]of Object.entries(row.stages)){const t=group.stages[name]||{samples:0,sum:0,histogram:Array(limits.length).fill(0)};t.samples+=v.samples;t.sum+=v.sum;v.histogram.forEach((n,i)=>t.histogram[i]+=n);group.stages[name]=t;}groups.set(key,group);
  }
- return Response.json({windowMinutes:15,groups:[...groups.values()].map(g=>({...g,stages:Object.fromEntries(Object.entries(g.stages).map(([name,v])=>{let sum=0;const index=v.histogram.findIndex(n=>(sum+=n)>=Math.ceil(v.samples*.95));return [name,{samples:v.samples,avgMs:Math.round(v.sum/v.samples),p95UpperMs:limits[index]}]}))}))});
+ return Response.json({windowMinutes:15,groups:[...groups.values()].map(g=>({...g,...(g.catalogCost?{catalogCost:catalogCostSummary(g.catalogCost)}:{}),stages:Object.fromEntries(Object.entries(g.stages).map(([name,v])=>{let sum=0;const index=v.histogram.findIndex(n=>(sum+=n)>=Math.ceil(v.samples*.95));return [name,{samples:v.samples,avgMs:Math.round(v.sum/v.samples),p95UpperMs:limits[index]}]}))}))});
 }

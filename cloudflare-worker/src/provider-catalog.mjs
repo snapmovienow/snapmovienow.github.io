@@ -38,7 +38,7 @@ export function validProviderReply(action,raw){
   return true;
 }
 
-export function createProviderCatalog(deps, env, ctx,{timeoutMs=CATALOG_FETCH_MS,hedgeMs=750,cacheReadMs=500}={}) {
+export function createProviderCatalog(deps, env, ctx,{timeoutMs=CATALOG_FETCH_MS,hedgeMs=750,cacheReadMs=500,catalogCost}={}) {
   // One deadline covers configuration, optional snapshots and source reads.
   // A cached hit may still be returned after that budget; it starts no traffic.
   const budget=Math.min(CATALOG_FETCH_MS,Math.max(1,timeoutMs)),cacheBudget=Math.max(1,Math.min(cacheReadMs,budget/4));
@@ -67,6 +67,8 @@ export function createProviderCatalog(deps, env, ctx,{timeoutMs=CATALOG_FETCH_MS
     return {data,savedAt,until:savedAt+(detail?30000:12*3600000)};
   },cacheBudget);
   const catalog=async (action, server, params={}, options={}) => {
+      const sample=!options.cachedOnly?catalogCost?.begin(action):null,stopLocal=sample?.phase('localCache');
+      try{
       const within=async promise=>{let timer;try{return await Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('catalog_timeout')),Math.max(1,deadline-Date.now()))})])}finally{clearTimeout(timer)}};
       // Read current authorized configuration once per incoming request, shared
       // by parallel category/title checks; never across user requests.
@@ -82,7 +84,7 @@ export function createProviderCatalog(deps, env, ctx,{timeoutMs=CATALOG_FETCH_MS
         while(cache.entries.size&&(cache.entries.size>=64||cache.bytes+bytes>MAX_CACHE_BYTES)){const k=cache.entries.keys().next().value;cache.bytes-=cache.entries.get(k).bytes;cache.entries.delete(k)}
         cache.entries.set(key,{data,bytes,savedAt,until:savedAt+(detail?30000:12*3600000)});cache.bytes+=bytes;
       };
-      let saved=cache.entries.get(key);
+      let saved=cache.entries.get(key),cacheSource='memory';
       if(saved?.until<=Date.now()){cache.entries.delete(key);cache.bytes-=saved.bytes;saved=null}
       // A server-specific permission check can reuse an already verified full
       // snapshot. It must never wait for unrelated providers or fetch it again.
@@ -90,19 +92,21 @@ export function createProviderCatalog(deps, env, ctx,{timeoutMs=CATALOG_FETCH_MS
         const allKey=await fingerprint(env.TICKET_SECRET,JSON.stringify([scope,action,'',params]));
         let all=cache.entries.get(allKey);
         if(all?.until<=Date.now())all=null;
-        if(!all&&!options.memoryOnly)try{all=await readSaved(allKey)}catch{}
+        if(!all&&!options.memoryOnly)try{all=await readSaved(allKey);if(all)cacheSource='durable'}catch{}
         if(all&&all.until>Date.now()&&Array.isArray(all.data)){const data=all.data.filter(row=>String(row._server||'ccf')===String(server));remember(data,all.savedAt);saved={data,savedAt:all.savedAt,until:all.until}}
       }
       if(!saved&&persist&&!options.memoryOnly){
-        try{const retained=await readSaved(key,detail);if(retained){remember(retained.data,retained.savedAt);saved=retained}}catch{}
+        try{const retained=await readSaved(key,detail);if(retained){remember(retained.data,retained.savedAt);saved=retained;cacheSource='durable'}}catch{}
       }
       const freshFor=list?300000:30000;
       if(detail&&saved&&saved.savedAt<=Date.now()-freshFor)saved=null;
       // Activity labels must not trigger provider traffic or delay a stream.
       if(options.cachedOnly)return options.withMetadata?(saved?{data:saved.data,savedAt:saved.savedAt}:null):saved?.data||null;
-      if(!options.fresh&&saved&&saved.savedAt>Date.now()-freshFor)return saved.data;
-      const refresh=async()=>{
-        const credentials=await within(deps.catalogCredentials(env,server,ctx));
+      if(!options.fresh&&saved&&saved.savedAt>Date.now()-freshFor){sample?.cache(cacheSource);return saved.data;}
+      stopLocal?.();sample?.cache('miss');
+      const refresh=async(observation)=>{
+        let credentials;const stopSetup=observation?.phase('unattributed');
+        try{credentials=await within(deps.catalogCredentials(env,server,ctx));}finally{stopSetup?.();}
         if(!credentials.length)throw Error('server_unavailable');
         const groups=new Map();for(const account of credentials){if(!groups.has(account.server))groups.set(account.server,[]);groups.get(account.server).push(account)}
         let fresh=0;const replies=await Promise.all([...groups].map(async([id,accounts])=>{
@@ -114,7 +118,8 @@ export function createProviderCatalog(deps, env, ctx,{timeoutMs=CATALOG_FETCH_MS
               // The existing cache limit is a retention limit, not a provider
               // reply limit. Preserve large catalogs while bounding their
               // whole read by the existing catalog request deadline.
-              const raw=await readProviderJSON(url,{signal:requestSignal,timeoutMs:Math.max(1,Math.min(6000,timeoutMs*.75,deadline-Date.now())),directCcfEntry:env.CCF_ENTRY_TRANSPORT==='tcp',maxBytes:Infinity});
+              let raw;const stopProvider=observation?.phase('provider');
+              try{raw=await readProviderJSON(url,{signal:requestSignal,timeoutMs:Math.max(1,Math.min(6000,timeoutMs*.75,deadline-Date.now())),directCcfEntry:env.CCF_ENTRY_TRANSPORT==='tcp',maxBytes:Infinity});}finally{stopProvider?.();}
               if(list&&!Array.isArray(raw)||!validProviderReply(action,raw))return null;
               const data=publicMetadata(raw,account),scoped=Array.isArray(data)?data.map(item=>({...item,_server:id})):data;
               return {data:scoped,empty:Array.isArray(scoped)?!scoped.length:action==='get_series_info'&&!countSeriesEpisodes(scoped)};
@@ -129,11 +134,12 @@ export function createProviderCatalog(deps, env, ctx,{timeoutMs=CATALOG_FETCH_MS
         if(persist&&fresh===groups.size){const save=async()=>{try{const bytes=await encodeCatalog(data);let content='';for(let i=0;i<bytes.length;i+=24000)content+=String.fromCharCode(...bytes.slice(i,i+24000));await deps.registry(env,'/xtream-cache-put',{key,content:btoa(content),...(detail?{kind:'detail',savedAt}:{})})}catch{}};if(ctx?.waitUntil)ctx.waitUntil(save());else await within(save()).catch(()=>{})}
         return data;
       };
-      const run=()=>{start();if(deadline<=Date.now())return Promise.reject(Error('catalog_timeout'));if(!cache.pending.has(key)){const work=refresh().finally(()=>cache.pending.delete(key));cache.pending.set(key,work);return work}return within(cache.pending.get(key))};
+      const run=async(background=false)=>{start();if(deadline<=Date.now())throw Error('catalog_timeout');if(!cache.pending.has(key)){const work=refresh(background?null:sample).finally(()=>cache.pending.delete(key));cache.pending.set(key,work);return work}const stopShared=!background?sample?.phase('unattributed'):null;try{return await within(cache.pending.get(key))}finally{stopShared?.()}};
       // Old-but-valid snapshots are immediate while refresh runs in the
       // background. Local user permissions were already checked by handleXtream.
-      if(!options.fresh&&saved&&list&&ctx?.waitUntil){ctx.waitUntil(run().catch(()=>{}));return saved.data}
-      try{return await run()}catch(error){if(saved&&list)return saved.data;throw error}
+      if(!options.fresh&&saved&&list&&ctx?.waitUntil){sample?.cache(cacheSource);ctx.waitUntil(run(true).catch(()=>{}));return saved.data}
+      try{return await run()}catch(error){if(saved&&list){sample?.cache(cacheSource);return saved.data}throw error}
+      }finally{stopLocal?.();sample?.finish();}
     };
   catalog.inspect=async(kind,server,id)=>{
     const spec={live:['get_live_streams','get_live_categories','stream_id'],movie:['get_vod_streams','get_vod_categories','stream_id'],series_list:['get_series','get_series_categories','series_id']}[kind];

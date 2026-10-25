@@ -34,7 +34,8 @@ export function createXtreamBridge(deps) {
       const count = needsCount?await (await privateCall('/xtream-count',{uid:user.id})).json():{connections:0};
       return {user,session,username:user.username,connections:count.connections};
     });
-    const rawCatalog = createProviderCatalog(deps, env, ctx),catalog=(...args)=>{if(args[0]==='get_series_info')trace?.identify('series',playbackMonitorClient(req)?'android':'other');if(args[0]==='get_vod_info')trace?.identify('movie',playbackMonitorClient(req)?'android':'other');return timed(trace,'catalog',()=>rawCatalog(...args))};
+    const catalogCost=new URL(req.url).searchParams.get('action')==='get_vod_info'?trace?.movieCatalog('vod_info'):null;
+    const rawCatalog = createProviderCatalog(deps, env, ctx,{catalogCost}),catalog=(...args)=>{if(args[0]==='get_series_info')trace?.identify('series',playbackMonitorClient(req)?'android':'other');if(args[0]==='get_vod_info')trace?.identify('movie',playbackMonitorClient(req)?'android':'other');return timed(trace,'catalog',()=>rawCatalog(...args))};
     const register = async entries => {
       const ids=[];
       for(let offset=0;offset<entries.length;offset+=5000){
