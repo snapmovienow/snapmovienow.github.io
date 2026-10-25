@@ -8,7 +8,7 @@ const live={style:{},pause(){calls.push('live-pause');throw Error('player failur
 const runtime=vm.createContext({AbortController,setTimeout,clearTimeout,watchLivePlayback(){return()=>calls.push('watchdog')},recoverLivePlayback(){}});
 vm.runInContext(readFileSync(new URL('../playback-transport.js',import.meta.url),'utf8'),runtime);
 const create=runtime.SMNPlaybackTransport.create;
-const Events={FRAG_LOADED:'fragment',ERROR:'error',MANIFEST_PARSED:'ready',AUDIO_TRACKS_UPDATED:'audio',SUBTITLE_TRACKS_UPDATED:'subtitle'};
+const Events={FRAG_LOADED:'fragment',FRAG_BUFFERED:'buffered',ERROR:'error',MANIFEST_PARSED:'ready',AUDIO_TRACKS_UPDATED:'audio',SUBTITLE_TRACKS_UPDATED:'subtitle'};
 let latest;
 class Engine {
  static Events=Events;static ErrorTypes={NETWORK_ERROR:'network',MEDIA_ERROR:'media'};static isSupported(){return true}
@@ -17,7 +17,7 @@ class Engine {
  off(event,fn){this.listeners.set(event,(this.listeners.get(event)||[]).filter(x=>x!==fn))}
  emit(event,data={}){for(const fn of [...this.listeners.get(event)||[]])fn(event,data)}
  loadSource(url){this.url=url}
- attachMedia(){this.emit(Events.MANIFEST_PARSED)}
+ attachMedia(){this.emit(Events.MANIFEST_PARSED);this.hasEnoughToStart=true;this.emit(Events.FRAG_BUFFERED)}
  destroy(){calls.push('destroy');throw Error('engine failure')}
 }
 const transport=create({moviePlayer:movie,hlsPlayer:live,assertAttempt(){},loadHls:async()=>Engine});

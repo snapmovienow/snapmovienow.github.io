@@ -24,16 +24,28 @@
     timeoutRetry:{maxNumRetry:2,retryDelayMs:1000,maxRetryDelayMs:4000},
     errorRetry:{maxNumRetry:3,retryDelayMs:1000,maxRetryDelayMs:8000}}}};
  }
- async function playWithTimeout(video,signal){
-  let timer,onAbort;
+ async function playWithTimeout(video,signal,startup){
+  let timer,onAbort,onBuffered;
   try{
    if(signal?.aborted)throw Error('playback_superseded');
-   await Promise.race([video.play(),new Promise((_,reject)=>{
+   const playing=new Promise((resolve,reject)=>{
+    const play=()=>{try{if(signal?.aborted)throw Error('playback_superseded');resolve(video.play())}catch(error){reject(error)}};
+    if(startup&&!startup.engine.hasEnoughToStart){
+     // A live manifest is not playable media. Let HLS finish the first
+     // fragment and its initial seek before playing an unbuffered time zero.
+     onBuffered=()=>{
+      if(!startup.engine.hasEnoughToStart)return;
+      startup.engine.off(startup.event,onBuffered);onBuffered=null;play();
+     };
+     startup.engine.on(startup.event,onBuffered);
+    }else play();
+   });
+   await Promise.race([playing,new Promise((_,reject)=>{
     timer=setTimeout(()=>reject(Error('load_timeout')),20000);
     onAbort=()=>reject(Error('playback_superseded'));
     signal?.addEventListener('abort',onAbort,{once:true});
    })]);
-  }finally{clearTimeout(timer);signal?.removeEventListener('abort',onAbort)}
+  }finally{clearTimeout(timer);signal?.removeEventListener('abort',onAbort);if(onBuffered)startup.engine.off(startup.event,onBuffered)}
  }
  function create(options){
   const {moviePlayer,hlsPlayer,assertAttempt}=options;
@@ -98,7 +110,7 @@
      currentEngine.on(events.AUDIO_TRACKS_UPDATED,()=>{if(active())options.onTracks?.()});
      currentEngine.on(events.SUBTITLE_TRACKS_UPDATED,()=>{if(active())options.onTracks?.()});
      if(resumeAt>5)video.currentTime=resumeAt;
-     await playWithTimeout(video,signal);
+     await playWithTimeout(video,signal,type==='live'?{engine:currentEngine,event:events.FRAG_BUFFERED}:null);
     }
    }else{
     await (options.loadMoviePlayer||root.ensureMoviePlayer)();
