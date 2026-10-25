@@ -10,6 +10,7 @@ import {nativeResellerImport} from './native-reseller-import.mjs';
 import {resellerIntegrity} from './reseller-integrity.mjs';
 import {readClientHistory,recordClientAccess,safelyRecord,touchPlayback,labelPlayback} from './client-history.mjs';
 import {catalogMaintenanceRoute,runCatalogMaintenance} from './catalog-maintenance.mjs';
+import {runYagaImport,yagaImportStatus} from './yaga-import.mjs';
 import {readServiceMonitor,sampleServiceMonitor} from './service-monitor.mjs';
 import {TRUSTED_RESELLERS} from './reseller-trust.mjs';
 // Private Durable Object routes. This module is never served as an HTTP endpoint.
@@ -40,8 +41,10 @@ export async function accountsFetch(state,env,req){
  if(p==='/reseller-service-monitor')return store.transaction(tx=>readServiceMonitor(tx,leases.in(tx),b));
  if(p==='/service-monitor-sample'){await store.transaction(tx=>sampleServiceMonitor(tx,leases.in(tx),TRUSTED_RESELLERS.map(r=>r.accountId)));return answer({ok:true});}
  if(p==='/catalog-maintenance-tick'){
+  await runYagaImport(store,leases,env);
   await runCatalogMaintenance(env,{directory:(env,path,body={})=>env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_accounts_v1')).fetch('https://private/accounts'+path,{method:'POST',body:JSON.stringify(body)})});return answer({ok:true});
  }
+ if(p==='/catalog-maintenance-status'){const response=await catalogMaintenanceRoute(store,leases,p,b);return answer({...await response.json(),exclusiveImport:await yagaImportStatus(store)});}
  if(['/catalog-maintenance-status','/catalog-maintenance-start','/catalog-maintenance-probe','/catalog-maintenance-observe'].includes(p))return await catalogMaintenanceRoute(store,leases,p,b);
  if(['/exclusive-read','/exclusive-item-read','/exclusive-save','/exclusive-cover-save','/exclusive-cover-read'].includes(p))return store.transaction(async tx=>{
   const response=await exclusiveCatalogRoute(tx,p,b);

@@ -32,6 +32,19 @@ Use Cloudflare's Deploy to Cloudflare flow for this directory. Set TICKET_SECRET
 
 ## Compatible exclusive pages: Pelisflix / VOE (2026-10-25)
 
+Owner publication request (2026-10-25): `yaga-import.mjs` performs one narrowly
+scoped import through the existing private catalog-maintenance tick. It checks
+both YAGA (2026) episodes before saving anything through normal exclusive-catalog
+validation and auditing. It has no public write route, credentials, browser
+dependency, new schedule, or permission changes. Existing matching identities,
+covers, metadata and healthy sources are preserved; concurrent manual changes
+and duplicate identities stop publication. Three failed source checks end the
+attempt, and a completed import never republishes a later manually hidden title.
+The sanitized result is `catalog_maintenance.exclusiveImport` in `/health`, with
+request ID `yaga-2026-owner-publish-20261025-v1`. Only `state: completed` confirms
+publication. The data seed is limited to season 1 episodes 1 and 2; it does not
+discover future episodes or reactivate the cancelled Beerus task.
+
 The existing APK protocol and `gnula` page mode also accept reviewed HTTPS pages
 on `pelisflix200.city` under `/serie/`, `/episodio/` and `/pelicula/`. The editor
 labels this option **Página compatible · Gnula / Pelisflix**. Store the stable
