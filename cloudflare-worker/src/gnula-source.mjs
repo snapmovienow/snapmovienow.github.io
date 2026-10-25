@@ -3,7 +3,7 @@ import {isPelisflixPage,pelisflixEmbeds} from './pelisflix-source.mjs';
 export const GNULA_PAGE_HOSTS=new Set(['www2.gnula.one','gnula.one','www.gnula.one','ww3.gnulahd.nu']);
 // The legacy API mode remains "gnula" so installed APKs need no protocol change.
 export const supportedSourcePage=u=>GNULA_PAGE_HOSTS.has(u.hostname)||isPelisflixPage(u);
-const VOE_HOSTS=new Set(['voe.sx','teresapoliticallearn.com','megankiddifference.com','jamespatterncamera.com']);
+const VOE_HOSTS=new Set(['voe.sx','teresapoliticallearn.com','megankiddifference.com','jamespatterncamera.com','ashleyhardat.com']);
 const embedPattern=/^https:\/\/(?:voe\.sx\/e\/[a-z0-9]+|uqload\.(?:com|vc)\/embed-[a-z0-9]+\.html)$/;
 export function allowedGnula(u){return u.protocol==='https:'&&/^(?:strm\d+\.uqload\.vc|ugc-cdn-caching-[a-z0-9]+\.cloudwindow-route\.com)$/.test(u.hostname)&&!u.port&&!u.username&&!u.password;}
 const cleanURL=(value,allowed)=>{const u=new URL(value);if(u.protocol!=='https:'||u.port||u.username||u.password||!allowed(u))throw Error('source_not_allowed');return u;};

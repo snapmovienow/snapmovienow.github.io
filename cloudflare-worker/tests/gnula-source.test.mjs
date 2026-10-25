@@ -16,7 +16,7 @@ const fetcher=async(value,options={})=>{
   assert.equal(options.headers['X-Requested-With'],'gnrd');assert.equal(options.headers.Referer,page);return Response.json({p:encoded});
  }
  if(u.href===embed)return new Response('window.location.href = "'+(redirectOverride||'https://megankiddifference.com/e/episode123')+'";');
- if(u.href==='https://megankiddifference.com/e/episode123')return new Response(player(sourceOverride||cdn+'?signed='+generation));
+ if(['https://megankiddifference.com/e/episode123','https://ashleyhardat.com/e/episode123'].includes(u.href))return new Response(player(sourceOverride||cdn+'?signed='+generation));
  if(u.origin===new URL(cdn).origin){if(cdnRedirect)return new Response(null,{status:302,headers:{location:cdnRedirect}});return new Response('#EXTM3U\nvideo/index.m3u8\n');}
  throw Error('Unexpected network request: '+u.origin+u.pathname);
 };
@@ -26,7 +26,10 @@ const moviePage='https://ww3.gnulahd.nu/ver/test-film/';
 assert.equal(await resolveGnula(moviePage,null,{fetcher:async(url,options)=>url===moviePage?new Response(html.replace('};',',firstEp:0,lastEp:0};')):fetcher(url,{...options,headers:{...options.headers,Referer:page}})}),cdn+'?signed=2','movie player configuration with firstEp/lastEp uses the same validated resolver');
 assert.ok(!calls.some(url=>url.includes('wrongdub')||url.includes('127.0.0.1')||url.includes('vidaraa.cc')),'unsupported hosts and other dubs are never fetched');
 assert.ok(calls.some(url=>url.startsWith('https://megankiddifference.com/')),'the current verified VOE redirect is supported');
-for(const destination of ['https://127.0.0.1/private','https://untrusted.invalid/e/episode123','https://user:pass@megankiddifference.com/e/episode123','https://megankiddifference.com/e/differentepisode']){
+redirectOverride='https://ashleyhardat.com/e/episode123';
+assert.equal(await resolveGnula(page,null,{fetcher}),cdn+'?signed='+generation,'the reviewed VOE destination observed on both YAGA episodes resolves fresh media');
+assert.ok(calls.includes(redirectOverride));
+for(const destination of ['https://127.0.0.1/private','https://untrusted.invalid/e/episode123','https://user:pass@megankiddifference.com/e/episode123','https://megankiddifference.com/e/differentepisode','http://ashleyhardat.com/e/episode123','https://ashleyhardat.com:8443/e/episode123','https://ashleyhardat.com/e/differentepisode','https://ashleyhardat.com/e/episode123?redirect=1','https://ashleyhardat.com.evil.invalid/e/episode123']){
  redirectOverride=destination;const before=calls.length;await assert.rejects(resolveGnula(page,null,{fetcher}),/media_missing/);assert.ok(!calls.slice(before).includes(destination));
 }redirectOverride=null;
 for(const destination of ['https://127.0.0.1/private.m3u8','https://untrusted.invalid/private.m3u8','http://ugc-cdn-caching-test.cloudwindow-route.com/private.m3u8']){
