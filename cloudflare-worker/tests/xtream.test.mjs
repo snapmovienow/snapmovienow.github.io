@@ -33,6 +33,7 @@ const origin = 'https://snapmovienow-edge.juancanta89.workers.dev';
 const providerOrigins = ['http://ccf.center:8444', 'https://beta.example.test'];
 const providerCalls = [], cancellations = [];
 let failProvider = false, failMedia = false, failMediaStatus = 503, failValidation = false, renewEpisode = false, signedEpisodes = 0, offset = 0, invalidLive=false;
+let rangeErrorHeaders=null,rangeErrorCancellations=0;
 const now = Date.now; Date.now = () => now() + offset;
 globalThis.fetch = async (url, opts = {}) => {
   const u = new URL(url), provider = providerOrigins.indexOf(u.origin);
@@ -70,6 +71,7 @@ globalThis.fetch = async (url, opts = {}) => {
   }
   if (/^\/(live|movie|series)\//.test(u.pathname)) {
     assert.ok(u.pathname.includes('/'+username+'/'+password+'/'));
+    if(rangeErrorHeaders)return new Response(new ReadableStream({start(c){c.enqueue(new TextEncoder().encode('private-provider-error'))},cancel(){rangeErrorCancellations++}}),{status:416,headers:rangeErrorHeaders});
     if (renewEpisode && u.pathname.startsWith('/series/')) return new Response(null,{status:302,headers:{location:'/episode-signed-'+(++signedEpisodes)+'.mkv'}});
     if (failMedia && username === 'upstream-0') return new Response('provider-private-error', {status:failMediaStatus});
     if (invalidLive&&u.pathname.endsWith('.m3u8'))return new Response(null,{status:302,headers:{location:'/not-a-playlist'}});
@@ -218,6 +220,32 @@ assert.equal(movie.status,206); assert.equal(movie.headers.get('content-range'),
 assert.equal((await leases()).length,0, 'completed media releases its reservation');
 const head = await media('movie',movies[0].stream_id,'mp4',1,{method:'HEAD'});
 assert.equal(head.status,200); assert.equal(head.headers.get('content-length'),'1000');
+// Unsatisfied seeks must retain only safe range metadata, not provider errors.
+const rangeLeaseOwners=async()=>(await leases()).map(l=>l.sid+'|'+l.request_id).sort(),leasesBeforeRangeErrors=await rangeLeaseOwners();
+for(const [index,test] of [
+ {kind:'movie',id:movies[0].stream_id,ext:'mp4',method:'GET',range:'bytes */1000',accept:'bytes'},
+ {kind:'series',id:episodes[0].id,ext:'mkv',method:'GET',range:'bytes */0',accept:'none'},
+ {kind:'movie',id:movies[0].stream_id,ext:'mp4',method:'HEAD',range:'bytes */1000',accept:'bytes'},
+ {kind:'movie',id:movies[0].stream_id,ext:'mp4',method:'GET',range:'bytes */'+'9'.repeat(20),accept:'bytes'},
+ {kind:'movie',id:movies[0].stream_id,ext:'mp4',method:'GET',range:'bytes */private-token',accept:'private-token',invalid:true},
+ {kind:'movie',id:movies[0].stream_id,ext:'mp4',method:'GET',range:'bytes */'+'9'.repeat(21),accept:'bytes',invalid:true},
+ {kind:'movie',id:movies[0].stream_id,ext:'mp4',method:'GET',range:null,accept:null}
+].entries()){
+ await objects.get('__smn_accounts_v1').state.storage.delete('provider-health');
+ rangeErrorHeaders={'content-length':'22','x-provider-secret':'private-token','set-cookie':'private-token','location':'https://private.invalid/secret','etag':'"private-token"',...(test.range?{'content-range':test.range}:{}),...(test.accept?{'accept-ranges':test.accept}:{})};
+ const before=providerCalls.length,canceled=rangeErrorCancellations;
+ const rejected=await media(test.kind,test.id,test.ext,50+index,{method:test.method,headers:{Range:'bytes=9999-'}});
+ assert.equal(rejected.status,416);assert.equal(rejected.headers.get('content-range'),test.invalid?null:test.range);
+ assert.equal(rejected.headers.get('accept-ranges'),['bytes','none'].includes(test.accept)?test.accept:null);
+ assert.equal(rejected.headers.get('access-control-allow-origin'),'https://snapmovienow.github.io');assert.match(rejected.headers.get('access-control-expose-headers'),/Content-Range/);
+ assert.equal(rejected.headers.get('content-length'),null,'the upstream error body length is not the JSON error length');
+ for(const name of ['x-provider-secret','set-cookie','location','etag'])assert.equal(rejected.headers.get(name),null);
+ const body=await rejected.text();if(test.method==='HEAD')assert.equal(body,'');else assert.deepEqual(JSON.parse(body),{error:'upstream_unavailable'});
+ assert.ok(!JSON.stringify([...rejected.headers]).includes('private-token'));assert.ok(!body.includes('private-provider-error'));
+ assert.equal(providerCalls.slice(before).filter(c=>/^\/(movie|series)\//.test(c.path)).length,1,'416 does not retry or switch content');
+ assert.equal(rangeErrorCancellations,canceled+1,'the failed upstream body is canceled');assert.deepEqual(await rangeLeaseOwners(),leasesBeforeRangeErrors,'failed range releases only its own reservation');
+}
+rangeErrorHeaders=null;await objects.get('__smn_accounts_v1').state.storage.delete('provider-health');
 const episodeResponse = await media('series',episodes[1].id,'mkv');
 assert.equal(episodeResponse.status,200); assert.equal(await episodeResponse.text(),'data');
 assert.ok(providerCalls.some(c => c.origin===providerOrigins[1] && /\/series\/.+\/88\.mkv$/.test(c.path)), 'episodes use their original provider and ID');

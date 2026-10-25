@@ -267,7 +267,15 @@ async function serverStreamDirect(req,env,u,ctx,trace){
  if(!playlist&&(d.resource||d.type!=='live'))response=recoverMedia(response,async(range,validator)=>{const h=new Headers(headers);h.set('range',range);if(validator)h.set('if-range',validator);return (await fetchValidatedMedia(start,h,d.type,sourceOrigin,{directCcfEntry:env.CCF_ENTRY_TRANSPORT==='tcp'})).response},async()=>(await sessionCall(env,d.sid,'/check')).ok&&(!d.lease_id||(await directory(env,d.xtream?'/heartbeat':'/lease-check',{sid:d.sid,lease_id:d.lease_id,request_id:d.request_id})).ok));
  const out=new Headers(cors);for(const n of ['content-type','content-length','content-range','accept-ranges','etag','last-modified'])if(response.headers.has(n))out.set(n,response.headers.get(n));
  if(response.ok&&!d.resource&&!playlist&&deadline!==null&&req.method==='GET')out.set(INITIAL_EVIDENCE_HEADER,'bytes');
- if(req.method==='HEAD'){const total=response.headers.get('content-range')?.match(/\/(\d+)$/)?.[1];if(total)out.set('content-length',total);out.delete('content-range');await response.body?.cancel();return new Response(null,{status:response.status===206?200:response.status,headers:out})}
+ if(req.method==='HEAD'){
+  if(response.status===416){
+   // The representation size in bytes */N is not the error body's length.
+   // Preserve only bounded unsatisfied-range metadata on the unchanged 416.
+   if(!/^bytes \*\/\d{1,20}$/i.test(out.get('content-range')||''))out.delete('content-range');
+   if(!/^(bytes|none)$/i.test(out.get('accept-ranges')||''))out.delete('accept-ranges');
+  }else{const total=response.headers.get('content-range')?.match(/\/(\d+)$/)?.[1];if(total)out.set('content-length',total);out.delete('content-range')}
+  await response.body?.cancel();return new Response(null,{status:response.status===206?200:response.status,headers:out})
+ }
  if(playlist){const text=await timed(trace,'first_byte',()=>readLivePlaylist(response,deadline));if(!text.startsWith('#EXTM3U'))throw Error('invalid_playlist');const proxy=async value=>{const target=validatedMediaTarget(new URL(value,next),sourceOrigin);return u.origin+'/stream?t='+await ticket(env,{...d,resource:target.href})};
  const lines=await Promise.all(text.split(/\r?\n/).map(async line=>{if(!line.trim())return line;if(!line.startsWith('#'))return proxy(line.trim());const matches=[...line.matchAll(/URI="([^"]+)"/g)];for(const m of matches)line=line.replace(m[0],'URI="'+await proxy(m[1])+'"');return line}));const body=lines.join('\n');if(req.headers.get('X-SMN-Prepare')==='1'&&!d.resource)rememberLiveStart(u.href,body);out.delete('content-length');out.set('content-type','application/vnd.apple.mpegurl');if(!d.resource)out.set(INITIAL_EVIDENCE_HEADER,'manifest');return new Response(body,{headers:out})}
  const result=new Response(response.body,{status:response.status,headers:out});

@@ -64,7 +64,24 @@ export function createXtreamBridge(deps) {
       try{
         const prepared=startup?startup.prepare(request):new Request(request);
         const response=await deps.serverStream(prepared,env,target,ctx,trace);
-        if(!response.ok){lastFailure=response.status;if(startup&&response.status!==410)await reportLiveResult(deps.directory,env,mediaSession,allocation,false,Date.now()-signalAt,'signal',{httpStatus:response.status});await privateCall('/release',{sid:session.sid,lease_id,request_id,reason:'upstream_failed'});await response.body?.cancel();const code=response.headers.get('X-SMN-Error-Code');if(response.status===410&&['playback_superseded','playback_expired','session_expired'].includes(code))return deps.json({error:code},410);if(retryableSourceStatus(response.status)&&allocation.provider_id&&attempt<2){excluded.push(allocation.provider_id);continue}return deps.json({error:'upstream_unavailable'},response.status)}
+        if(!response.ok){
+          lastFailure=response.status;
+          if(startup&&response.status!==410)await reportLiveResult(deps.directory,env,mediaSession,allocation,false,Date.now()-signalAt,'signal',{httpStatus:response.status});
+          await privateCall('/release',{sid:session.sid,lease_id,request_id,reason:'upstream_failed'});await response.body?.cancel();
+          const code=response.headers.get('X-SMN-Error-Code');
+          if(response.status===410&&['playback_superseded','playback_expired','session_expired'].includes(code))return deps.json({error:code},410);
+          if(retryableSourceStatus(response.status)&&allocation.provider_id&&attempt<2){excluded.push(allocation.provider_id);continue}
+          const failed=deps.json({error:'upstream_unavailable'},response.status);
+          if(response.status===416){
+            // Retain only bounded range metadata, never provider error bodies,
+            // cookies, redirects or the length of the replaced upstream body.
+            const range=response.headers.get('content-range'),accept=response.headers.get('accept-ranges');
+            if(/^bytes \*\/\d{1,20}$/i.test(range||''))failed.headers.set('content-range',range);
+            if(/^(bytes|none)$/i.test(accept||''))failed.headers.set('accept-ranges',accept);
+            if(request.method==='HEAD'){await failed.body?.cancel();return new Response(null,{status:416,headers:failed.headers})}
+          }
+          return failed;
+        }
         if(startup){const elapsed=Date.now()-signalAt;deferPlaybackReport(ctx,()=>reportLiveResult(deps.directory,env,mediaSession,allocation,true,elapsed,'signal',{evidence:initialMediaEvidence(response)}));}
         attachPlaybackActivity(activityTask,{env,ctx,directory:deps.directory,session:mediaSession,lease_id,mediaKey:mediaSession.mediaKey});
         // Native clients load this master once, then refresh the signed media

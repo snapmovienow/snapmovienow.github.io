@@ -6,13 +6,13 @@ class Store{constructor(){this.data=new Map();this.queue=Promise.resolve()}async
 const actualNow=Date.now;let time=actualNow();Date.now=()=>time;
 const objects=new Map(),env={TICKET_SECRET:'provider-observation-test-secret',ADMIN_SETUP_SECRET:'provider-observation-setup-long-test-secret'};
 env.PLAYBACK_SESSIONS={idFromName:x=>x,get(id){if(!objects.has(id))objects.set(id,new PlaybackSession({storage:new Store(),waitUntil:p=>pending.push(Promise.resolve(p).catch(()=>{}))},env));return {fetch:(url,opts)=>objects.get(id).fetch(new Request(url,opts))}}};
-let busy=true,broken=false,mediaCalls=0;
+let busy=true,broken=false,mediaCalls=0,headRangeError=null,headRangeCanceled=0;
 const row=id=>['<a>'+id+'</a>','<a>source'+id+'</a>','<span class="table-trunc-copy-cell__text tooltip" title="source-password-test">hidden</span>','owner','<i title="Active"></i>','','','0','3','','','2099-01-01'];
 globalThis.fetch=async(url,opts={})=>{const u=new URL(url);
  if(u.pathname.endsWith('/login'))return new Response(opts.method==='POST'?'<a href="dashboard">Welcome</a>':'<input name="password">',{headers:{'set-cookie':'PHPSESSID=test; path=/'}});
  if(u.pathname.endsWith('/table'))return Response.json({recordsFiltered:2,data:[1,2].map(row)});
  if(u.pathname==='/player_api.php')return u.searchParams.has('action')?Response.json([{stream_id:123,name:'Test movie'}]):Response.json({user_info:{auth:1,status:'Active',max_connections:'3',active_cons:busy?'3':'0'}});
- if(u.pathname.startsWith('/movie/')){mediaCalls++;const range=new Headers(opts.headers).get('range');if(range==='bytes=9999-')return new Response(null,{status:416,headers:{'content-range':'bytes */4'}});if(broken)return new Response('provider unavailable',{status:503});return new Response(new Uint8Array([0,0,0,20,102,116,121,112,105,115,111,109,0,0,0,1]),{status:range?206:200,headers:{'content-type':'video/mp4','content-length':'16',...(range?{'content-range':'bytes 0-15/16'}:{})}})}
+ if(u.pathname.startsWith('/movie/')){mediaCalls++;const range=new Headers(opts.headers).get('range');if(headRangeError){assert.equal(range,'bytes=0-0');return new Response(new ReadableStream({cancel(){headRangeCanceled++}}),{status:416,headers:{'content-range':headRangeError,'content-length':'22','accept-ranges':'bytes','x-provider-secret':'private-token'}})}if(range==='bytes=9999-')return new Response(null,{status:416,headers:{'content-range':'bytes */4'}});if(broken)return new Response('provider unavailable',{status:503});return new Response(new Uint8Array([0,0,0,20,102,116,121,112,105,115,111,109,0,0,0,1]),{status:range?206:200,headers:{'content-type':'video/mp4','content-length':'16',...(range?{'content-range':'bytes 0-15/16'}:{})}})}
  throw Error('unexpected upstream test path');
 };
 const origin='https://api.example.com',pending=[],ctx={waitUntil(p){pending.push(Promise.resolve(p).catch(()=>{}))}};
@@ -31,6 +31,15 @@ try{
  const healthy=await prepare(1);assert.equal(healthy.status,200);let releaseHealth,timer;healthWriteGate=new Promise(r=>{releaseHealth=r});let healthyResponse;try{healthyResponse=await Promise.race([stream(healthy),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('successful_health_write_blocked_video')),200)})]);}finally{clearTimeout(timer);releaseHealth();healthWriteGate=null;}assert.equal(healthyResponse.status,200);await healthyResponse.arrayBuffer();await flush();
  const ownHealthy=await leases.active({});assert.equal(ownHealthy.size,1);const [healthyLeaseId]=[...ownHealthy.keys()];
  let health=await storage.get('provider-health');assert.equal(Object.keys(health).filter(k=>k.startsWith('channel|')).length,1,'direct web VOD observes actual initial bytes, not just allocation validation');
+ for(const contentRange of ['bytes */1000','bytes */0','bytes */private-token','bytes */'+'9'.repeat(21)]){
+  headRangeError=contentRange;const before=mediaCalls,canceled=headRangeCanceled;
+  const response=await worker.fetch(new Request(healthy.data.url,{method:'HEAD'}),env,ctx);
+  assert.equal(response.status,416);assert.equal(response.headers.get('content-range'),/^bytes \*\/\d{1,20}$/.test(contentRange)?contentRange:null);
+  assert.equal(response.headers.get('content-length'),'22','416 must not turn representation size into error-body Content-Length');assert.equal(response.headers.get('accept-ranges'),'bytes');
+  assert.equal(response.headers.get('access-control-allow-origin'),'https://snapmovienow.github.io');assert.match(response.headers.get('access-control-expose-headers'),/Content-Range/);assert.equal(response.headers.get('x-provider-secret'),null);
+  assert.equal(await response.text(),'');assert.equal(headRangeCanceled,canceled+1);assert.equal(mediaCalls,before+1,'HEAD 416 is not retried');assert.ok(await leases.get(healthyLeaseId),'HEAD failure does not release the active GET viewer');
+ }
+ headRangeError=null;
  // Ignore caller-supplied impossible seeks and internal startup headers. They
  // cannot become false provider incidents or prevent the next valid observation.
  for(let i=0;i<3;i++){
