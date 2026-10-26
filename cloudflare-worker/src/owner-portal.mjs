@@ -1,3 +1,4 @@
+import {ROTATION_HTML,ROTATION_SCRIPT} from './gateway-rotation-ui.mjs';
 import {PORTAL_SCRIPT,PORTAL_CSS,PORTAL_ICON} from './reseller-panel-assets.mjs';
 import {readPortalInput,PORTAL_ACCOUNT,PORTAL_SOURCE} from './reseller-portal.mjs';
 export const OWNER_PORTAL_BASE='https://api.snaptvnow.com/owner-panel';
@@ -12,20 +13,22 @@ const blocked=()=>new Response('<!doctype html><html lang="es"><meta charset="ut
 export const matchesOwnerPortal=req=>{const u=new URL(req.url);return u.origin==='https://api.snaptvnow.com'&&(u.pathname===PREFIX||u.pathname.startsWith(PREFIX+'/'));};
 export function createOwnerPortal({getConfig,fetcher=fetch}){return async(req,env)=>{
  const u=new URL(req.url),path=u.pathname.slice(PREFIX.length)||'/';if(!matchesOwnerPortal(req))return json({error:'owner_origin'},403);
- if(req.method==='GET'&&['/assets/panel.js','/assets/panel.css','/assets/favicon.svg'].includes(path))return new Response(path.endsWith('.js')?PORTAL_SCRIPT:path.endsWith('.css')?PORTAL_CSS:PORTAL_ICON,{headers:{...headers,'Content-Type':path.endsWith('.js')?'text/javascript; charset=utf-8':path.endsWith('.css')?'text/css; charset=utf-8':'image/svg+xml; charset=utf-8'}});
- if(!['/','/enter','/api/panel','/api/portal/logout'].includes(path))return json({error:'owner_route'},404);
- if(!['GET','POST'].includes(req.method)||path==='/enter'&&req.method!=='GET'||path==='/api/portal/logout'&&req.method!=='POST'||path==='/'&&req.method!=='GET')return json({error:'owner_method'},405);
+ if(req.method==='GET'&&['/assets/panel.js','/assets/panel.css','/assets/favicon.svg','/assets/gateway-rotation.js'].includes(path))return new Response(path==='/assets/gateway-rotation.js'?ROTATION_SCRIPT:path.endsWith('.js')?PORTAL_SCRIPT:path.endsWith('.css')?PORTAL_CSS:PORTAL_ICON,{headers:{...headers,'Content-Type':path.endsWith('.js')?'text/javascript; charset=utf-8':path.endsWith('.css')?'text/css; charset=utf-8':'image/svg+xml; charset=utf-8'}});
+ if(!['/','/enter','/api/panel','/api/portal/logout','/security/gateway-rotation'].includes(path))return json({error:'owner_route'},404);
+ if(!['GET','POST'].includes(req.method)||path==='/enter'&&req.method!=='GET'||path==='/api/portal/logout'&&req.method!=='POST'||['/','/security/gateway-rotation'].includes(path)&&req.method!=='GET')return json({error:'owner_method'},405);
  if(req.method==='POST'&&(req.headers.get('Origin')!==u.origin||req.headers.get('Sec-Fetch-Site')==='cross-site'))return json({error:'owner_origin'},403);
  if(req.method==='POST'&&req.headers.get('content-type')?.split(';')[0].trim().toLowerCase()!=='application/json')return json({error:'owner_format'},415);
- const session=tokenOf(req);if(path!=='/enter'&&!session)return path==='/'?blocked():json({error:'owner_entry_required',message:'Entra desde Panel admin reseller.'},401);
+ const session=tokenOf(req);if(path!=='/enter'&&!session)return ['/','/security/gateway-rotation'].includes(path)?blocked():json({error:'owner_entry_required',message:'Entra desde Panel admin reseller.'},401);
  try{
   const cfg=await getConfig(env);if(cfg?.accountId!==PORTAL_ACCOUNT||cfg.sourceOrigin!==PORTAL_SOURCE||!/^[a-f0-9]{64}$/.test(cfg.gatewaySecret||'')||typeof cfg.siteToken!=='string')throw Error('config_unavailable');
   let body;
-  if(path==='/enter'){const code=u.searchParams.get('code');if(u.search.length>2200||!ticket(code)||u.searchParams.size!==1)return blocked();body={action:'enter',token:code};}
+  if(path==='/security/gateway-rotation')body={action:'read',token:session,query:{gatewayRotation:'1'}};
+  else if(path==='/enter'){const code=u.searchParams.get('code');if(u.search.length>2200||!ticket(code)||u.searchParams.size!==1)return blocked();body={action:'enter',token:code};}
   else if(path==='/api/portal/logout')body={action:'logout',token:session};
   else if(req.method==='POST')body={action:'write',token:session,input:await readPortalInput(req)};
-  else {const allowed=new Set(['telegram','slug','source','sourceLineId','sourceAccountId','choices','purpose','lineId','requestId','view','q','filter','page','pageSize','version','sort','direction','paid','lineType','mode','stream','connectionLine','player','connectionSort','connectionDirection','connectionAccount','logAccount','logKind','logFrom','logTo','monitorAccount','monitorHours','monitorContent','monitorProvider']);if(u.search.length>4000||[...u.searchParams.keys()].some(k=>!allowed.has(k)))return json({error:'owner_query'},400);body={action:'read',token:session,query:Object.fromEntries(u.searchParams)};}
+  else {const allowed=new Set(['gatewayRotation','telegram','slug','source','sourceLineId','sourceAccountId','choices','purpose','lineId','requestId','view','q','filter','page','pageSize','version','sort','direction','paid','lineType','mode','stream','connectionLine','player','connectionSort','connectionDirection','connectionAccount','logAccount','logKind','logFrom','logTo','monitorAccount','monitorHours','monitorContent','monitorProvider']);if(u.search.length>4000||[...u.searchParams.keys()].some(k=>!allowed.has(k)))return json({error:'owner_query'},400);body={action:'read',token:session,query:Object.fromEntries(u.searchParams)};}
   const response=await fetcher(PORTAL_SOURCE+'/api/owner-portal',{method:'POST',redirect:'manual',headers:{'Content-Type':'application/json','OAI-Sites-Authorization':'Bearer '+cfg.siteToken,'X-SNAP-Portal-Gateway-Token':cfg.gatewaySecret},body:JSON.stringify({...body,accountId:PORTAL_ACCOUNT}),signal:AbortSignal.timeout(16000)}),raw=await response.text();if(raw.length>1048576||response.status>=300&&response.status<400)throw Error('owner_reply');const result=JSON.parse(raw);
+  if(path==='/security/gateway-rotation'){if(!response.ok||result.actorId!=='owner'||typeof result.rotation?.enabled!=='boolean')return blocked();return new Response(ROTATION_HTML,{headers:{...headers,'Content-Type':'text/html; charset=utf-8','Content-Security-Policy':csp}});}
   if(path==='/enter'){if(!response.ok)return blocked();if(result.ok!==true||!ticket(result.token)||!Number.isSafeInteger(result.exp)||result.exp<=Date.now()||result.exp>Date.now()+1800000)throw Error('owner_reply');return new Response(null,{status:303,headers:{...headers,Location:PREFIX+'/', 'Set-Cookie':cookie(result.token,Math.floor((result.exp-Date.now())/1000))}});}
   if(path==='/api/portal/logout')return json({ok:response.ok},response.ok?200:503,{'Set-Cookie':cookie('',0)});
   if(result?.actor){if(result.actor.id!=='owner'||result.actor.role!=='owner')throw Error('owner_scope');result.portalBase=PREFIX;result.authMode='owner-portal';}
