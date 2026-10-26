@@ -212,7 +212,7 @@ export async function accountsFetch(state,env,req){
   if(!b.ok){lease.providerFailed=true;forgetProvider(state,lease);}
   else if(b.stage==='validation'&&!b.capacityBusy){lease.validatedAt=Date.now();rememberProvider(state,lease);}else if(b.capacityBusy)lease.validatedAt=0;
   await local.put(b.lease_id,lease);await tx.put(key,pruneAffinities(state));
-  const health=recordProviderHealth(await tx.get('provider-health'),lease.provider_id,lease.mediaKey,b.ok,b.elapsedMs,b.stage,Date.now(),b.lease_id,lease.providerCredentialKey,b.httpStatus);
+  const health=recordProviderHealth(await tx.get('provider-health'),lease.provider_id,lease.mediaKey,b.ok,b.elapsedMs,b.stage,Date.now(),b.lease_id,lease.providerCredentialKey,b.httpStatus,b);
   if(b.stage==='validation'&&b.ok&&b.capacityBusy===true){const row=health['account|'+lease.provider_id];row.busyUntil=Date.now()+5000;delete row.credentialKey;delete row.validatedAt;delete row.mediaAt;}
   if(b.stage==='validation'&&!b.ok&&b.confirmedInactive===true){
    const row=health['account|'+lease.provider_id];row.openUntil=Math.max(row.openUntil||0,Date.now()+30000);row.backoff=Math.max(row.backoff||0,30000);

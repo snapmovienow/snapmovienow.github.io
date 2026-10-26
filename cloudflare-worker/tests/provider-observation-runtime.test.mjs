@@ -6,13 +6,13 @@ class Store{constructor(){this.data=new Map();this.queue=Promise.resolve()}async
 const actualNow=Date.now;let time=actualNow();Date.now=()=>time;
 const objects=new Map(),env={TICKET_SECRET:'provider-observation-test-secret',ADMIN_SETUP_SECRET:'provider-observation-setup-long-test-secret'};
 env.PLAYBACK_SESSIONS={idFromName:x=>x,get(id){if(!objects.has(id))objects.set(id,new PlaybackSession({storage:new Store(),waitUntil:p=>pending.push(Promise.resolve(p).catch(()=>{}))},env));return {fetch:(url,opts)=>objects.get(id).fetch(new Request(url,opts))}}};
-let busy=true,broken=false,mediaCalls=0,headRangeError=null,headRangeCanceled=0;
+let busy=true,broken=false,mediaCalls=0,headRangeError=null,headRangeCanceled=0,failure504=null;
 const row=id=>['<a>'+id+'</a>','<a>source'+id+'</a>','<span class="table-trunc-copy-cell__text tooltip" title="source-password-test">hidden</span>','owner','<i title="Active"></i>','','','0','3','','','2099-01-01'];
 globalThis.fetch=async(url,opts={})=>{const u=new URL(url);
  if(u.pathname.endsWith('/login'))return new Response(opts.method==='POST'?'<a href="dashboard">Welcome</a>':'<input name="password">',{headers:{'set-cookie':'PHPSESSID=test; path=/'}});
  if(u.pathname.endsWith('/table'))return Response.json({recordsFiltered:2,data:[1,2].map(row)});
  if(u.pathname==='/player_api.php')return u.searchParams.has('action')?Response.json([{stream_id:123,name:'Test movie'}]):Response.json({user_info:{auth:1,status:'Active',max_connections:'3',active_cons:busy?'3':'0'}});
- if(u.pathname.startsWith('/movie/')){mediaCalls++;const range=new Headers(opts.headers).get('range');if(headRangeError){assert.equal(range,'bytes=0-0');return new Response(new ReadableStream({cancel(){headRangeCanceled++}}),{status:416,headers:{'content-range':headRangeError,'content-length':'22','accept-ranges':'bytes','x-provider-secret':'private-token'}})}if(range==='bytes=9999-')return new Response(null,{status:416,headers:{'content-range':'bytes */4'}});if(broken)return new Response('provider unavailable',{status:503});return new Response(new Uint8Array([0,0,0,20,102,116,121,112,105,115,111,109,0,0,0,1]),{status:range?206:200,headers:{'content-type':'video/mp4','content-length':'16',...(range?{'content-range':'bytes 0-15/16'}:{})}})}
+ if(u.pathname.startsWith('/movie/')){mediaCalls++;const range=new Headers(opts.headers).get('range');if(headRangeError){assert.equal(range,'bytes=0-0');return new Response(new ReadableStream({cancel(){headRangeCanceled++}}),{status:416,headers:{'content-range':headRangeError,'content-length':'22','accept-ranges':'bytes','x-provider-secret':'private-token'}})}if(range==='bytes=9999-')return new Response(null,{status:416,headers:{'content-range':'bytes */4'}});if(failure504==='upstream_response')return new Response(null,{status:504,headers:{'X-SMN-Error-Code':'live_startup_timeout','x-provider-secret':'private-token'}});if(failure504==='local_deadline')time+=12001;if(broken)return new Response('provider unavailable',{status:503});return new Response(new Uint8Array([0,0,0,20,102,116,121,112,105,115,111,109,0,0,0,1]),{status:range?206:200,headers:{'content-type':'video/mp4','content-length':'16',...(range?{'content-range':'bytes 0-15/16'}:{})}})}
  throw Error('unexpected upstream test path');
 };
 const origin='https://api.example.com',pending=[],ctx={waitUntil(p){pending.push(Promise.resolve(p).catch(()=>{}))}};
@@ -47,6 +47,16 @@ try{
   const real=await stream(r,{'X-SMN-Prepare':'1','X-SMN-Startup-Deadline':'1'});assert.equal(real.status,200,'public callers cannot force immediate internal startup timeout');await real.arrayBuffer();await flush();
  }
  assert.deepEqual((await admin('playback-diagnostics')).data.providers.circuits,[]);
+ for(const origin of ['local_deadline','upstream_response']){
+  await storage.delete('provider-health');failure504=origin;
+  const r=await prepare();assert.equal(r.status,200);const before=mediaCalls,failed=await stream(r);
+  assert.equal(failed.status,504);assert.equal(mediaCalls,before+1,'diagnostic preservation adds no fetch');
+  assert.equal(failed.headers.get('X-SMN-Error-Code'),origin==='local_deadline'?'live_startup_timeout':'upstream_unavailable','upstream cannot forge our local-deadline code');assert.equal(failed.headers.get('x-provider-secret'),null);await failed.body?.cancel();await flush();
+  const rows=(await admin('playback-diagnostics')).data.providers.recentMediaFailures;
+  assert.equal(rows.length,1);assert.equal(rows[0].failureCauses[0].errorOrigin,origin);assert.equal(rows[0].ext,'mp4');assert.equal(rows[0].id,'123');
+  assert.ok(!JSON.stringify(rows).includes('private-token'));assert.ok(await leases.get(healthyLeaseId),'another viewer remains leased');
+ }
+ failure504=null;await storage.delete('provider-health');
  // Each failed actual GET counts once, releases only its own slot, and the
  // third consecutive failure temporarily isolates the exact movie/source.
  broken=true;

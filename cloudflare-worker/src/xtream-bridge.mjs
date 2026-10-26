@@ -1,5 +1,6 @@
 import {playbackStartup,reportLiveResult,deferPlaybackReport} from './live-startup.mjs';
 import {initialMediaEvidence} from './initial-media-evidence.mjs';
+import {responseMediaFailure} from './media-failure-cause.mjs';
 import {timed} from './playback-timings.mjs';
 import {playbackMonitorClient,attachPlaybackQuality} from './native-playback-quality.mjs';
 import {requestConnectionClient} from './connection-monitor.mjs';
@@ -53,11 +54,11 @@ export function createXtreamBridge(deps) {
       const begun=await privateCall('/playback-begin',{sid:session.sid,request_id});if(!begun.ok)return deps.json(await begun.json(),begun.status);
       trace?.identify(item.type,playbackMonitorClient(request)?'android':'other');
       const startup=playbackStartup(item.type,request.signal);startup.trace=trace;
-      const excluded=[];let lastFailure=null;
+      const excluded=[];let lastFailure=null,lastServiceError=null;
       for(let attempt=0;attempt<3&&(attempt===0||!startup||startup.available);attempt++){
       const mediaSession={...session,request_id,client:requestConnectionClient(request),mediaKey:item.type+'|'+item.server+'|'+item.upstreamId+'|'+item.ext,...(activity?{activity}:{})};
       const allocation=await deps.managedPlayback(env,mediaSession,item.server,ctx,excluded,startup);
-      if(!allocation.r.ok){if(lastFailure&&allocation.r.status===409)return deps.json({error:'upstream_unavailable'},lastFailure);return deps.json(await allocation.r.json(),allocation.r.status)}
+      if(!allocation.r.ok){if(lastFailure&&allocation.r.status===409)return deps.json({error:lastServiceError||'upstream_unavailable'},lastFailure);return deps.json(await allocation.r.json(),allocation.r.status)}
       const {lease_id}=await allocation.r.json(),credentials=allocation.credentials;allocation.lease_id=lease_id;const signalAt=Date.now();
       const monitored=response=>attachPlaybackQuality(response,request,session,{lease_id,request_id},value=>deps.ticket(env,value));
       const encrypted=await deps.ticket(env,{sid:session.sid,username:credentials.username,password:credentials.password,origin:credentials.origin,lease_id,request_id,xtream:true,type:item.type,id:item.upstreamId,ext:item.ext,exp:session.exp});
@@ -67,12 +68,13 @@ export function createXtreamBridge(deps) {
         const response=await deps.serverStream(prepared,env,target,ctx,trace);
         if(!response.ok){
           lastFailure=response.status;
-          if(startup&&response.status!==410)await reportLiveResult(deps.directory,env,mediaSession,allocation,false,Date.now()-signalAt,'signal',{httpStatus:response.status});
+          const cause=responseMediaFailure(response);lastServiceError=cause.serviceError||null;
+          if(startup&&response.status!==410)await reportLiveResult(deps.directory,env,mediaSession,allocation,false,Date.now()-signalAt,'signal',{httpStatus:response.status,...cause});
           await privateCall('/release',{sid:session.sid,lease_id,request_id,reason:'upstream_failed'});await response.body?.cancel();
           const code=response.headers.get('X-SMN-Error-Code');
           if(response.status===410&&['playback_superseded','playback_expired','session_expired'].includes(code))return deps.json({error:code},410);
           if(retryableSourceStatus(response.status)&&allocation.provider_id&&attempt<2){excluded.push(allocation.provider_id);continue}
-          const failed=deps.json({error:'upstream_unavailable'},response.status);
+          const failed=deps.json({error:lastServiceError||'upstream_unavailable'},response.status);
           if(response.status===416){
             // Retain only bounded range metadata, never provider error bodies,
             // cookies, redirects or the length of the replaced upstream body.
@@ -93,9 +95,9 @@ export function createXtreamBridge(deps) {
           return monitored(new Response('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=8000000\n'+target.href+'\n',{headers:{'content-type':'application/vnd.apple.mpegurl','cache-control':'no-store'}}));
         }
         return monitored(response);
-      }catch(error){lastFailure=502;const cancelled=request.signal.aborted||['playback_superseded','playback_expired'].includes(error.message);if(startup&&!cancelled&&error.message!=='media_origin_unapproved')await reportLiveResult(deps.directory,env,mediaSession,allocation,false,Date.now()-signalAt);await privateCall('/release',{sid:session.sid,lease_id,request_id,reason:'upstream_failed'});if(cancelled)throw Error('playback_superseded');if(error.message!=='media_origin_unapproved'&&allocation.provider_id&&attempt<2){excluded.push(allocation.provider_id);continue}throw error}
+      }catch(error){lastFailure=502;lastServiceError=null;const cancelled=request.signal.aborted||['playback_superseded','playback_expired'].includes(error.message);if(startup&&!cancelled&&error.message!=='media_origin_unapproved')await reportLiveResult(deps.directory,env,mediaSession,allocation,false,Date.now()-signalAt);await privateCall('/release',{sid:session.sid,lease_id,request_id,reason:'upstream_failed'});if(cancelled)throw Error('playback_superseded');if(error.message!=='media_origin_unapproved'&&allocation.provider_id&&attempt<2){excluded.push(allocation.provider_id);continue}throw error}
       }
-      return deps.json({error:'live_signal_unavailable'},lastFailure||504);
+      return deps.json({error:lastServiceError||'live_signal_unavailable'},lastFailure||504);
     };
     try { const special=deps.exclusives?await deps.exclusives.xtream(req,env,ctx,authenticate):null;return special||await handleXtream(req,{authenticate,catalog,register,resolve,play,adultPolicy:createAdultPolicy(catalog,rawCatalog.inspect),json:deps.json}); }
     catch(error) { if(req.signal.aborted||['playback_superseded','playback_expired'].includes(error.message))return deps.json({error:'playback_superseded'},410);if(error.status)return deps.json({error:error.message},error.status);return deps.json({error:['media_origin_unapproved','provider_unavailable','provider_inactive','panel_unavailable'].includes(error.message)?error.message:'xtream_unavailable'},502); }

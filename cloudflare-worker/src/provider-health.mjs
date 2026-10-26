@@ -1,5 +1,6 @@
 // Advisory health never grants authorization or capacity. Circuit state lives
 // beside atomic allocations, so only one request may test a recovering source.
+import {mediaFailureCause} from './media-failure-cause.mjs';
 const FRESH_MS=120000,TTL=1800000,COOLDOWN=15000,MAX=512;
 export const PROVIDER_CIRCUIT_POLICY=Object.freeze({failureThreshold:3,failureWindowMs:120000,initialCooldownMs:30000,maxCooldownMs:300000,probeMs:20000});
 const accountKey=id=>'account|'+id;
@@ -29,7 +30,7 @@ export function claimProviderTrial(old,id,mediaKey,claimId,now=Date.now(),option
  }
  return {health,claimed};
 }
-export function recordProviderHealth(old,id,mediaKey,ok,elapsedMs,stage,now=Date.now(),claimId=null,credentialKey=null,httpStatus=null){
+export function recordProviderHealth(old,id,mediaKey,ok,elapsedMs,stage,now=Date.now(),claimId=null,credentialKey=null,httpStatus=null,cause=null){
  const next=prune(old,now,2),key=stage==='validation'?accountKey(id):channelKey(id,mediaKey),previous=old?.[key];
  const ms=Math.max(0,Math.min(30000,Number(elapsedMs)||0));
  // A late report cannot overtake the request currently testing recovery.
@@ -48,7 +49,7 @@ export function recordProviderHealth(old,id,mediaKey,ok,elapsedMs,stage,now=Date
   const wasOpen=liveRecord(previous,now)&&previous.openUntil>0;
   const reopen=wasOpen||failures>=PROVIDER_CIRCUIT_POLICY.failureThreshold;
   const backoff=reopen?Math.min(PROVIDER_CIRCUIT_POLICY.maxCooldownMs,wasOpen?Math.max(PROVIDER_CIRCUIT_POLICY.initialCooldownMs,previous.backoff||0)*2:PROVIDER_CIRCUIT_POLICY.initialCooldownMs):0;
-  next[key]={at:now,ok:false,ms,failures:Math.min(100,failures),...(stage==='signal'&&Number.isInteger(httpStatus)&&httpStatus>=400&&httpStatus<=599?{httpStatus}:{}),...(reopen?{backoff,openUntil:now+backoff}:{})};
+  next[key]={at:now,ok:false,ms,failures:Math.min(100,failures),...(stage==='signal'&&Number.isInteger(httpStatus)&&httpStatus>=400&&httpStatus<=599?{httpStatus,...mediaFailureCause(httpStatus,cause)}:{}),...(reopen?{backoff,openUntil:now+backoff}:{})};
  }
  return next;
 }
@@ -84,6 +85,7 @@ export function recentMediaFailures(health,now=Date.now()){
   const group=groups.get(groupKey)||{type,server,id,ext,lastObservedAt:row.at,httpStatuses:[],sourcesObserved:0};
   group.lastObservedAt=Math.max(group.lastObservedAt,row.at);group.sourcesObserved++;
   if(!group.httpStatuses.includes(row.httpStatus))group.httpStatuses.push(row.httpStatus);
+  if(row.httpStatus===504){const cause=mediaFailureCause(504,row);group.failureCauses??=[];if(!group.failureCauses.some(c=>c.errorOrigin===cause.errorOrigin))group.failureCauses.push({httpStatus:504,...cause});}
   groups.set(groupKey,group);
  }
  return [...groups.values()].sort((a,b)=>b.lastObservedAt-a.lastObservedAt).slice(0,30).map(row=>({...row,httpStatuses:row.httpStatuses.sort((a,b)=>a-b)}));

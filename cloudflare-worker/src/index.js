@@ -47,6 +47,7 @@ import {matchesXtream} from './xtream.mjs';
 import {contentPermissions,createAdultPolicy,isAdult} from './content-permissions.mjs';
 import {createProviderCatalog} from './provider-catalog.mjs';
 import {cachedFailureNames} from './media-failure-names.mjs';
+import {responseMediaFailure} from './media-failure-cause.mjs';
 import {cachedChannelCatalog,summarizeChannelObservations,loadChannelObservations} from './provider-channel-observations.mjs';
 import {INITIAL_EVIDENCE_HEADER,initialMediaEvidence,consumeInitialEvidence} from './initial-media-evidence.mjs';
 import {diagnoseSeries} from './series-diagnostic.mjs';
@@ -241,9 +242,9 @@ async function observedWebStream(object,req,ctx,trace){
  const key=d?.lease_id+':'+d?.request_id,now=Date.now();object.signalReports??=new Map();
  for(const [id,at]of object.signalReports)if(at<now-300000)object.signalReports.delete(id);
  const fresh=observe&&!object.signalReports.has(key);if(fresh){if(object.signalReports.size>=128)object.signalReports.delete(object.signalReports.keys().next().value);object.signalReports.set(key,now)}
- const report=async(ok,httpStatus,evidence)=>{if(!fresh)return;await reportLiveResult(directory,env,{sid:d.sid,request_id:d.request_id},{lease_id:d.lease_id,provider_id:d.provider_id},ok,Date.now()-now,'signal',{httpStatus,evidence});if(!ok)await directory(env,'/release',{sid:d.sid,lease_id:d.lease_id,request_id:d.request_id,reason:'upstream_failed'});};
- try{const response=await serverStreamDirect(req,env,u,ctx,trace);if([410,416].includes(response.status)||req.signal.aborted){if(fresh)object.signalReports.delete(key)}else if(response.ok)deferPlaybackReport(ctx,()=>report(true,undefined,initialMediaEvidence(response)));else await report(false,response.status);return response}
- catch(error){if(!req.signal.aborted&&!['playback_superseded','media_origin_unapproved'].includes(error.message))await report(false);throw error}
+ const report=async(ok,httpStatus,evidence,cause={})=>{if(!fresh)return;await reportLiveResult(directory,env,{sid:d.sid,request_id:d.request_id},{lease_id:d.lease_id,provider_id:d.provider_id},ok,Date.now()-now,'signal',{httpStatus,evidence,...cause});if(!ok)await directory(env,'/release',{sid:d.sid,lease_id:d.lease_id,request_id:d.request_id,reason:'upstream_failed'});};
+ try{const response=await serverStreamDirect(req,env,u,ctx,trace);if([410,416].includes(response.status)||req.signal.aborted){if(fresh)object.signalReports.delete(key)}else if(response.ok)deferPlaybackReport(ctx,()=>report(true,undefined,initialMediaEvidence(response)));else await report(false,response.status,undefined,responseMediaFailure(response));return response}
+ catch(error){if(!req.signal.aborted&&!['playback_superseded','media_origin_unapproved'].includes(error.message))await report(false,error.message==='live_startup_timeout'?504:undefined,undefined,error.message==='live_startup_timeout'?{errorOrigin:'local_deadline',serviceError:'live_startup_timeout'}:{});throw error}
 }
 async function serverStream(req,env,u,ctx,trace){
  const d=await unticket(env,u.searchParams.get('t')||'');if(!d?.sid||!['movie','series','live'].includes(d.type))return new Response('Expired',{status:410,headers:cors});
@@ -283,6 +284,9 @@ async function serverStreamDirect(req,env,u,ctx,trace){
  // binary playlist resource by its declared byte range, including redirects.
  if(!diagnostic&&!playlist&&(d.resource||d.type!=='live'))response=recoverMedia(response,async(range,validator)=>{const h=new Headers(headers);h.set('range',range);if(validator)h.set('if-range',validator);return (await fetchValidatedMedia(start,h,d.type,sourceOrigin,{directCcfEntry:env.CCF_ENTRY_TRANSPORT==='tcp'})).response},async()=>(await sessionCall(env,d.sid,'/check')).ok&&(!d.lease_id||(await directory(env,d.xtream?'/heartbeat':'/lease-check',{sid:d.sid,lease_id:d.lease_id,request_id:d.request_id})).ok));
  const out=new Headers(cors);for(const n of ['content-type','content-length','content-range','accept-ranges','etag','last-modified'])if(response.headers.has(n))out.set(n,response.headers.get(n));
+ // This code describes a received HTTP status, not ultimate provider fault.
+ // Generate it after the whitelist; a provider cannot forge a local deadline.
+ if(response.status===504)out.set('X-SMN-Error-Code','upstream_unavailable');
  if(diagnostic)for(const name of [CASE_OBSERVATION_HEADER,'X-SMN-Case-Source','X-SMN-Case-Validator'])if(response.headers.has(name))out.set(name,response.headers.get(name));
  if(response.ok&&!d.resource&&!playlist&&deadline!==null&&req.method==='GET')out.set(INITIAL_EVIDENCE_HEADER,'bytes');
  if(req.method==='HEAD'){
