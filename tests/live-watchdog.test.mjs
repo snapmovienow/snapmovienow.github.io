@@ -60,3 +60,20 @@ console.log('PASS: target-duration-aware live stall deadline without unbounded w
  close();
 }
 console.log('PASS: ended live playlists recover despite browser pause, with bounded retries.');
+
+// Thirty seconds since a recovery is not thirty seconds of healthy playback.
+// Brief isolated advances must not refill the retry budget after two failures.
+{
+ let now=0,tick,retries=[],falls=0;
+ const video={currentTime:0,paused:false};
+ const close=context.watchLivePlayback(video,{now:()=>now,schedule:fn=>(tick=fn,1),unschedule(){},active:()=>true,recover:n=>retries.push(n),fallback:()=>falls++});
+ now=8000;tick();now=16000;tick();assert.deepEqual(retries,[1,2]);
+ const briefAdvances=new Set([23,30,37,44,47]);
+ for(let second=17;second<=55;second++){
+  now=second*1000;if(briefAdvances.has(second))video.currentTime+=0.05;tick();
+ }
+ assert.equal(falls,1,'intermittent quarter-second progress must not reset the exhausted recovery budget');
+ assert.deepEqual(retries,[1,2],'only sustained advancing playback can authorize another recovery cycle');
+ now+=60000;tick();assert.equal(falls,1);close();
+}
+console.log('PASS: intermittent timeline advances do not refill the bounded recovery budget.');

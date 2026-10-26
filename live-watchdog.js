@@ -33,6 +33,9 @@ function watchLivePlayback(video,options){
   const time=now(),position=Number(video.currentTime)||0;
   if((video.paused&&!video.ended)||options.hidden?.()){lastMove=time;stableSince=time;lastTime=position;return}
   if(Math.abs(position-lastTime)>0.04){lastMove=time;lastTime=position;if(time-stableSince>=30000)attempts=0;return}
+  // Isolated advances during repeated freezes are not sustained playback.
+  // Keep the same retry budget until the timeline has advanced continuously.
+  stableSince=time;
   const duration=Number(options.segmentDuration?.());
   const stallWindow=video.ended&&attempts===0?1000:Number.isFinite(duration)&&duration>0?Math.max(8000,Math.min(45000,duration*1500)):8000;
   if(time-lastMove<stallWindow||time-lastTry<stallWindow)return;
