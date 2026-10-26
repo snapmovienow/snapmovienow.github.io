@@ -28,15 +28,17 @@ export async function ownerAccessState(storage,path,body,exp,admin,now=Date.now(
 }
 export function createOwnerAdminAccess({ticket,unticket,sessionCall}){
  return {
-  async issue(env,session){
+  async issue(env,session,purpose){
+   if(purpose!==undefined&&purpose!=='gateway-rotation')return denied();
    const r=await sessionCall(env,session.sid,'/owner-access/issue',{});if(!r.ok)return r;
-   const launch=await r.json(),code=await ticket(env,{kind:'owner_launch',sid:session.sid,nonce:launch.nonce,exp:launch.exp});
-   return Response.json({ok:true,url:OWNER_ADMIN_ENTRY+'?code='+encodeURIComponent(code)},{headers:{'Cache-Control':'no-store','Referrer-Policy':'no-referrer'}});
+   const launch=await r.json(),code=await ticket(env,{kind:'owner_launch',sid:session.sid,nonce:launch.nonce,exp:launch.exp,...(purpose?{purpose}:{})});
+   return Response.json({ok:true,url:(purpose?'https://api.snaptvnow.com/owner-panel/security/enter':OWNER_ADMIN_ENTRY)+'?code='+encodeURIComponent(code)},{headers:{'Cache-Control':'no-store','Referrer-Policy':'no-referrer'}});
   },
   async bridge(env,action,body){
    if(!identity(body.identityId)||typeof body.token!=='string'||body.token.length>2000)return denied();
    const value=await unticket(env,body.token),consume=action==='owner.consume';
    if(!value||value.kind!==(consume?'owner_launch':'owner_gate')||!consume&&value.identityId!==body.identityId)return denied();
+   if(consume&&(value.purpose!==body.purpose||body.purpose!==undefined&&body.purpose!=='gateway-rotation'))return denied();
    const path=consume?'/owner-access/consume':action==='owner.check'?'/owner-access/check':action==='owner.revoke'?'/owner-access/revoke':null;if(!path)return denied();
    const r=await sessionCall(env,value.sid,path,{nonce:value.nonce,gateId:value.gateId,identityId:body.identityId});if(!r.ok)return r;
    const result=await r.json();if(!consume)return Response.json(result);
