@@ -38,6 +38,10 @@ export async function catalogCacheRoute(store, path, body) {
     const index = await tx.get(indexKey) || {}, generation = crypto.randomUUID();
     const savedAt=detail&&body.savedAt!==undefined?body.savedAt:Date.now(),ttl=detail?30000:TTL;
     if(!Number.isSafeInteger(savedAt)||savedAt>Date.now()||savedAt<=Date.now()-ttl)return Response.json({error:'invalid_cache_age'},{status:400});
+    // Background detail saves can finish out of order across Worker isolates.
+    // Keep a newer committed result and its original expiry; a delayed older
+    // save must not shorten that lifetime or trigger an unnecessary refetch.
+    if(detail&&index[body.key]?.savedAt>savedAt)return Response.json({ok:true});
     const remove = async (key, saved) => {for(let i=0;i<saved.chunks;i++)await tx.delete(chunkKey(key,saved.generation,i));delete index[key]};
     if(index[body.key])await remove(body.key,index[body.key]);
     for(const [key,saved] of Object.entries(index))if(saved.until<=Date.now())await remove(key,saved);

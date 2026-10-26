@@ -41,10 +41,18 @@ export async function fetchApprovedMediaIP(value,headers,connectSocket,nativeStr
  reader=socket.readable.getReader();let buffer=new Uint8Array(0),ended=false;
  async function more(){const r=await timed(reader.read());if(r.done){ended=true;return false}const b=new Uint8Array(buffer.length+r.value.length);b.set(buffer);b.set(r.value,buffer.length);buffer=b;return true}
  async function line(){for(;;){for(let i=0;i+1<buffer.length;i++)if(buffer[i]===13&&buffer[i+1]===10){const result=new TextDecoder().decode(buffer.subarray(0,i));buffer=buffer.subarray(i+2);return result}if(buffer.length>65536||ended)throw Error('invalid_http_response');await more()}}
- const statusLine=await line(),match=statusLine.match(/^HTTP\/1\.[01] (\d{3})/);if(!match)throw Error('invalid_http_response');
- const status=Number(match[1]);if(status<200||status>599)throw Error('invalid_http_response');
- const responseHeaders=new Headers();let headerBytes=0;
- for(;;){const text=await line();if(!text)break;headerBytes+=text.length;if(headerBytes>65536)throw Error('invalid_http_response');const colon=text.indexOf(':');if(colon<1)throw Error('invalid_http_response');responseHeaders.append(text.slice(0,colon),text.slice(colon+1).trim())}
+ // Informational replies do not replace the final media response. Match the
+ // independent control's bounded header-block count without extending the
+ // startup deadline or total header-size limit; protocol upgrades stay denied.
+ let status,responseHeaders,headerBytes=0;
+ for(let interim=0;interim<4;interim++){
+  const statusLine=await line(),match=statusLine.match(/^HTTP\/1\.[01] (\d{3})\b/);if(!match)throw Error('invalid_http_response');
+  status=Number(match[1]);if(status<100||status>599||status===101)throw Error('invalid_http_response');
+  responseHeaders=new Headers();
+  for(;;){const text=await line();if(!text)break;headerBytes+=text.length;if(headerBytes>65536)throw Error('invalid_http_response');const colon=text.indexOf(':');if(colon<1)throw Error('invalid_http_response');responseHeaders.append(text.slice(0,colon),text.slice(colon+1).trim())}
+  if(status>=200)break;
+ }
+ if(status<200)throw Error('invalid_http_response');
  headersComplete=true;
  const chunked=/\bchunked\b/i.test(responseHeaders.get('transfer-encoding')||'');let remaining=responseHeaders.has('content-length')?Number(responseHeaders.get('content-length')):null;
  if(remaining!==null&&(!Number.isSafeInteger(remaining)||remaining<0))throw Error('invalid_http_response');
