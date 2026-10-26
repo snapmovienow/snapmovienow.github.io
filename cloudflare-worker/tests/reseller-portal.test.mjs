@@ -4,7 +4,7 @@ import {PORTAL_SCRIPT} from '../src/reseller-panel-assets.mjs';
 const token='a'.repeat(64),secret='b'.repeat(64),siteToken='private-test-service-token',calls=[];
 let fail=false,ownerReply=false,redirect=false,rateLimited=false;
 const portal=createResellerPortal({getConfig:async()=>({accountId:PORTAL_ACCOUNT,sourceOrigin:PORTAL_SOURCE,gatewaySecret:secret,siteToken}),fetcher:async(url,options)=>{
- assert.equal(url,PORTAL_SOURCE+'/api/portal');assert.equal(options.redirect,'manual');assert.equal(options.headers['OAI-Sites-Authorization'],'Bearer '+siteToken);assert.equal(options.headers['X-SNAP-Portal-Gateway'],secret);assert.equal(options.headers['oai-authenticated-user-id'],undefined);assert.equal(options.headers.Cookie,undefined);
+ assert.equal(url,PORTAL_SOURCE+'/api/portal');assert.equal(options.redirect,'manual');assert.equal(options.headers['OAI-Sites-Authorization'],'Bearer '+siteToken);assert.equal(options.headers['X-SNAP-Portal-Gateway-Token'],secret);assert.equal(options.headers['oai-authenticated-user-id'],undefined);assert.equal(options.headers.Cookie,undefined);
  const body=JSON.parse(options.body);calls.push(body);assert.equal(body.accountId,PORTAL_ACCOUNT);if(fail)throw Error('test transport failure');if(redirect)return new Response(null,{status:302,headers:{Location:'https://foreign.example'}});
  if(rateLimited)return Response.json({error:'rate_limit',message:'Wait'},{status:429,headers:{'Retry-After':'60'}});
  if(body.action==='login')return Response.json({ok:true,token,accountId:PORTAL_ACCOUNT,expiresAt:Date.now()+28800000});
