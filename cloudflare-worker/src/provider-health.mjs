@@ -1,6 +1,7 @@
 // Advisory health never grants authorization or capacity. Circuit state lives
 // beside atomic allocations, so only one request may test a recovering source.
 import {mediaFailureCause} from './media-failure-cause.mjs';
+import {rangeFailureDetail,cleanInitialRangeEvidence} from './initial-range-evidence.mjs';
 const FRESH_MS=120000,TTL=1800000,COOLDOWN=15000,MAX=512;
 export const PROVIDER_CIRCUIT_POLICY=Object.freeze({failureThreshold:3,failureWindowMs:120000,initialCooldownMs:30000,maxCooldownMs:300000,probeMs:20000});
 const accountKey=id=>'account|'+id;
@@ -49,7 +50,7 @@ export function recordProviderHealth(old,id,mediaKey,ok,elapsedMs,stage,now=Date
   const wasOpen=liveRecord(previous,now)&&previous.openUntil>0;
   const reopen=wasOpen||failures>=PROVIDER_CIRCUIT_POLICY.failureThreshold;
   const backoff=reopen?Math.min(PROVIDER_CIRCUIT_POLICY.maxCooldownMs,wasOpen?Math.max(PROVIDER_CIRCUIT_POLICY.initialCooldownMs,previous.backoff||0)*2:PROVIDER_CIRCUIT_POLICY.initialCooldownMs):0;
-  next[key]={at:now,ok:false,ms,failures:Math.min(100,failures),...(stage==='signal'&&Number.isInteger(httpStatus)&&httpStatus>=400&&httpStatus<=599?{httpStatus,...mediaFailureCause(httpStatus,cause)}:{}),...(reopen?{backoff,openUntil:now+backoff}:{})};
+  next[key]={at:now,ok:false,ms,failures:Math.min(100,failures),...(stage==='signal'&&Number.isInteger(httpStatus)&&httpStatus>=400&&httpStatus<=599?{httpStatus,...mediaFailureCause(httpStatus,cause),...rangeFailureDetail(httpStatus,cause)}:{}),...(reopen?{backoff,openUntil:now+backoff}:{})};
  }
  return next;
 }
@@ -86,6 +87,7 @@ export function recentMediaFailures(health,now=Date.now()){
   group.lastObservedAt=Math.max(group.lastObservedAt,row.at);group.sourcesObserved++;
   if(!group.httpStatuses.includes(row.httpStatus))group.httpStatuses.push(row.httpStatus);
   if(row.httpStatus===504){const cause=mediaFailureCause(504,row);group.failureCauses??=[];if(!group.failureCauses.some(c=>c.errorOrigin===cause.errorOrigin))group.failureCauses.push({httpStatus:504,...cause});}
+  if(row.httpStatus===416){const evidence=cleanInitialRangeEvidence(row.rangeEvidence);group.rangeEvidence??=[];group.rangeEvidenceIncomplete??=false;if(!evidence)group.rangeEvidenceIncomplete=true;else{if(evidence.reportedTotal===null||evidence.ifRangePresent===null||[evidence.incomingRange.kind,evidence.outgoingRange.kind].includes('unknown'))group.rangeEvidenceIncomplete=true;if(!group.rangeEvidence.some(item=>JSON.stringify(item)===JSON.stringify(evidence))){if(group.rangeEvidence.length<3)group.rangeEvidence.push(evidence);else group.rangeEvidenceIncomplete=true;}}}
   groups.set(groupKey,group);
  }
  return [...groups.values()].sort((a,b)=>b.lastObservedAt-a.lastObservedAt).slice(0,30).map(row=>({...row,httpStatuses:row.httpStatuses.sort((a,b)=>a-b)}));
