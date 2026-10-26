@@ -1,6 +1,6 @@
 import {isAdult} from './content-permissions.mjs';
 import {playbackRequestDiagnostic,safeValidationFailure} from './playback-diagnostics.mjs';
-import {targetedCase,targetedSession,targetedWindow,CASE_EXPIRES_AT} from './targeted-case-policy.mjs';
+import {targetedCase,targetedSession,targetedWindow,targetedExpiresAt} from './targeted-case-policy.mjs';
 const ORIGIN='https://api.snaptvnow.com';
 const numeric=value=>/^\d{1,16}$/.test(String(value));
 const failure=status=>Object.assign(Error('canary_request_failed'),{status});
@@ -20,13 +20,13 @@ export function ownPlaybackCanaryAdapter({env,storage,directory,ownSession,ticke
  return {
   async authenticate(config,{signal}){
    if(!allowed||String(config.username||'').toLowerCase()!==allowed||env.ENVIRONMENT==='staging')throw failure(403);
-   if(config.targetedCase!==undefined&&(!targetedWindow(env)||!targetedCase(config.targetedCase)||config.diagnostic!==true))throw failure(403);
+   if(config.targetedCase!==undefined&&(!targetedWindow(env,Date.now(),config.targetedCase)||!targetedCase(config.targetedCase)||config.diagnostic!==true))throw failure(403);
    const r=await directory(env,'/canary-identity',{username:allowed});if(!r.ok)throw failure(r.status);const user=await r.json();
    if(signal.aborted)throw Error('canary_timeout');
    const session=await ownSession(env,{...user,expiresAt:Math.min(user.expiresAt||Infinity,Date.now()+60000)});
    session.canary=true; // Only this private adapter can mint this signed claim.
    if(config.diagnostic===true)session.comparison=true;
-   if(config.targetedCase){session.targetedCase=config.targetedCase;session.caseDeadline=Math.min(Number(config.targetedDeadline)||Date.now()+30000,Date.now()+30000,CASE_EXPIRES_AT);session.exp=Math.min(session.exp,session.caseDeadline)}
+   if(config.targetedCase){session.targetedCase=config.targetedCase;session.caseDeadline=Math.min(Number(config.targetedDeadline)||Date.now()+30000,Date.now()+30000,targetedExpiresAt(config.targetedCase));session.exp=Math.min(session.exp,session.caseDeadline)}
    // Set the owned object before any additional await so late aborts can clean
    // it even when a session-info request stalls.
    try{session.token=await ticket(env,session);await send(session,'session_info',{},signal);return session}
