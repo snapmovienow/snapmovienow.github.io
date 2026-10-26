@@ -86,6 +86,14 @@ export function createProviderCatalog(deps, env, ctx,{timeoutMs=CATALOG_FETCH_MS
       };
       let saved=cache.entries.get(key),cacheSource='memory';
       if(saved?.until<=Date.now()){cache.entries.delete(key);cache.bytes-=saved.bytes;saved=null}
+      // Another request may publish this exact scoped key while a durable read
+      // is pending. Prefer its unexpired result to a late miss/older snapshot;
+      // otherwise the completed request is fetched again or overwritten.
+      const acceptSnapshot=(retained,source)=>{
+        const completed=cache.entries.get(key);
+        if(completed?.until>Date.now()&&(!retained||completed.savedAt>=retained.savedAt)){saved=completed;cacheSource='memory';return;}
+        if(retained){remember(retained.data,retained.savedAt);saved=retained;cacheSource=source;}
+      };
       // A server-specific permission check can reuse an already verified full
       // snapshot. It must never wait for unrelated providers or fetch it again.
       if(!saved&&server&&list){
@@ -93,10 +101,11 @@ export function createProviderCatalog(deps, env, ctx,{timeoutMs=CATALOG_FETCH_MS
         let all=cache.entries.get(allKey);
         if(all?.until<=Date.now())all=null;
         if(!all&&!options.memoryOnly)try{all=await readSaved(allKey);if(all)cacheSource='durable'}catch{}
-        if(all&&all.until>Date.now()&&Array.isArray(all.data)){const data=all.data.filter(row=>String(row._server||'ccf')===String(server));remember(data,all.savedAt);saved={data,savedAt:all.savedAt,until:all.until}}
+        if(all&&all.until>Date.now()&&Array.isArray(all.data))acceptSnapshot({data:all.data.filter(row=>String(row._server||'ccf')===String(server)),savedAt:all.savedAt,until:all.until},cacheSource);
+        else acceptSnapshot(null,'memory');
       }
       if(!saved&&persist&&!options.memoryOnly){
-        try{const retained=await readSaved(key,detail);if(retained){remember(retained.data,retained.savedAt);saved=retained;cacheSource='durable'}}catch{}
+        try{acceptSnapshot(await readSaved(key,detail),'durable')}catch{acceptSnapshot(null,'memory')}
       }
       const freshFor=list?300000:30000;
       if(detail&&saved&&saved.savedAt<=Date.now()-freshFor)saved=null;
