@@ -24,12 +24,19 @@ export const playbackStartup=(type,signal)=>new LiveStartup(signal,Date.now,type
 // A 200 header with a silent body is not a working source. Keep the same
 // startup deadline until its first payload, then relay without that deadline.
 export async function readInitialMedia(response,deadline){
- const reader=response.body?.getReader();if(!reader)throw Error('media_empty');let timer,first;
- try{const timeout=startupTimeout(deadline,VOD_STARTUP_MS);first=await Promise.race([reader.read(),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('live_startup_timeout')),timeout)})]);if(first.done||!first.value?.byteLength)throw Error('media_empty')}
+ if(!response.body)throw Error('media_empty');
+ // A default native reader may fragment large available packets into small
+ // chunks. BYOB sets a larger maximum, never a minimum that delays first byte
+ // or deadlocks a backpressured writer waiting for the prior packet to drain.
+ let reader,read;
+ try{reader=response.body.getReader({mode:'byob'});read=()=>reader.read(new Uint8Array(65536));}
+ catch{reader=response.body.getReader();read=()=>reader.read();}
+ let timer,first;
+ try{const timeout=startupTimeout(deadline,VOD_STARTUP_MS);first=await Promise.race([read(),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('live_startup_timeout')),timeout)})]);if(first.done||!first.value?.byteLength)throw Error('media_empty')}
  catch(error){void reader.cancel(error).catch(()=>{});throw error}
  finally{clearTimeout(timer)}
  let prefix=first.value;
- const body=new ReadableStream({async pull(controller){try{if(prefix){controller.enqueue(prefix);prefix=null;return}const next=await reader.read();if(next.done)controller.close();else controller.enqueue(next.value)}catch(error){controller.error(error)}},cancel:reason=>reader.cancel(reason)});
+ const body=new ReadableStream({async pull(controller){try{if(prefix){controller.enqueue(prefix);prefix=null;return}const next=await read();if(next.done)controller.close();else controller.enqueue(next.value)}catch(error){controller.error(error)}},cancel:reason=>reader.cancel(reason)});
  return new Response(body,{status:response.status,statusText:response.statusText,headers:response.headers});
 }
 export function startupTimeout(deadline,cap,now=Date.now()){
