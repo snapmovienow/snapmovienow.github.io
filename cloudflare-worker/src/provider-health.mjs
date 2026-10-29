@@ -34,6 +34,13 @@ export function claimProviderTrial(old,id,mediaKey,claimId,now=Date.now(),option
 export function recordProviderHealth(old,id,mediaKey,ok,elapsedMs,stage,now=Date.now(),claimId=null,credentialKey=null,httpStatus=null,cause=null){
  const next=prune(old,now,2),key=stage==='validation'?accountKey(id):channelKey(id,mediaKey),previous=old?.[key];
  const ms=Math.max(0,Math.min(30000,Number(elapsedMs)||0));
+ // Range rejection is request-specific, not proof of resource unavailability.
+ // Keep bounded diagnostic evidence separately; neither open nor clear a circuit.
+ if(stage==='signal'&&!ok&&httpStatus===416){
+  const observed=prune(old,now,1);
+  observed['range|'+mediaKey+'|'+id]={at:now,ok:false,ms,httpStatus:416,...rangeFailureDetail(416,cause)};
+  return observed;
+ }
  // A late report cannot overtake the request currently testing recovery.
  if(liveRecord(previous,now)&&previous.probeId&&previous.probeUntil>now&&claimId&&previous.probeId!==claimId){next[key]=previous;return next}
  if(ok){
@@ -77,14 +84,14 @@ export function providerHealthSummary(health,now=Date.now()){
 // return storage keys, provider account IDs, credentials, leases or media URLs.
 // Absence from this bounded, expiring snapshot is not proof of recovery.
 export function recentMediaFailures(health,now=Date.now()){
- const groups=new Map();
+ const groups=new Map(),sources=new Map();
  for(const [key,row]of Object.entries(prune(health,now))){
   if(row.ok!==false||!Number.isFinite(row.at)||row.at>now||!Number.isInteger(row.httpStatus)||row.httpStatus<400||row.httpStatus>599)continue;
   const [scope,type,server,id,ext,...account]=key.split('|');
-  if(scope!=='channel'||!['live','movie','series'].includes(type)||!/^[a-zA-Z0-9_-]{1,80}$/.test(server||'')||!/^\d{1,16}$/.test(id||'')||!/^[a-zA-Z0-9]{1,10}$/.test(ext||'')||!account.join('|'))continue;
+  if((scope!=='channel'&&!(scope==='range'&&row.httpStatus===416))||!['live','movie','series'].includes(type)||!/^[a-zA-Z0-9_-]{1,80}$/.test(server||'')||!/^\d{1,16}$/.test(id||'')||!/^[a-zA-Z0-9]{1,10}$/.test(ext||'')||!account.join('|'))continue;
   const groupKey=[type,server,id,ext].join('|');
   const group=groups.get(groupKey)||{type,server,id,ext,lastObservedAt:row.at,httpStatuses:[],sourcesObserved:0};
-  group.lastObservedAt=Math.max(group.lastObservedAt,row.at);group.sourcesObserved++;
+  group.lastObservedAt=Math.max(group.lastObservedAt,row.at);const seen=sources.get(groupKey)||new Set();seen.add(account.join('|'));sources.set(groupKey,seen);group.sourcesObserved=seen.size;
   if(!group.httpStatuses.includes(row.httpStatus))group.httpStatuses.push(row.httpStatus);
   if(row.httpStatus===504){const cause=mediaFailureCause(504,row);group.failureCauses??=[];if(!group.failureCauses.some(c=>c.errorOrigin===cause.errorOrigin))group.failureCauses.push({httpStatus:504,...cause});}
   if(row.httpStatus===416){const evidence=cleanInitialRangeEvidence(row.rangeEvidence);group.rangeEvidence??=[];group.rangeEvidenceIncomplete??=false;if(!evidence)group.rangeEvidenceIncomplete=true;else{if(evidence.reportedTotal===null||evidence.ifRangePresent===null||[evidence.incomingRange.kind,evidence.outgoingRange.kind].includes('unknown'))group.rangeEvidenceIncomplete=true;if(!group.rangeEvidence.some(item=>JSON.stringify(item)===JSON.stringify(evidence))){if(group.rangeEvidence.length<3)group.rangeEvidence.push(evidence);else group.rangeEvidenceIncomplete=true;}}}
