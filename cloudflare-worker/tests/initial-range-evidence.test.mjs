@@ -39,8 +39,8 @@ try{
  assert.notDeepEqual(unsatisfiable.retained,compatible.retained,'distinct numeric range evidence survives the native report and health projection');
  assert.deepEqual(unsatisfiable.retained[0].rangeEvidence[0].outgoingRange,{kind:'bytes',start:100,end:199});
  assert.deepEqual(compatible.retained[0].rangeEvidence[0].outgoingRange,{kind:'bytes',start:0,end:99});
- assert.equal(unsatisfiable.circuitBlocked,true);assert.equal(compatible.circuitBlocked,true);
- console.log('PASS: initial native 416 retains distinct numeric evidence with unchanged requests and circuit behavior.');
+ assert.equal(unsatisfiable.circuitBlocked,false);assert.equal(compatible.circuitBlocked,false);
+ console.log('PASS: initial native 416 retains distinct numeric evidence with unchanged requests and no resource circuit penalty.');
 }finally{globalThis.fetch=realFetch}
 
 const capture=(range,total='bytes */100',method='GET')=>initialRangeEvidence(new Request('https://synthetic.invalid/',{method,headers:{...(range===undefined?{}:{range}),'if-range':'private-validator'}}),new Response(null,{status:416,headers:{'content-range':total,'content-length':'999','X-SMN-Case-Observation':'private-forged-observation','X-SMN-Range-Evidence':'private-forged-evidence'}}));
