@@ -1,7 +1,7 @@
 name: Quality
 on:
   push:
-    branches: [main, engineering-v43]
+    branches: [main, engineering-v43, fix/416-range-isolation-20261029]
   pull_request:
   workflow_dispatch:
 permissions:
