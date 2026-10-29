@@ -1,68 +1,12 @@
 {
   "version": 1,
   "kind": "movies",
-  "requestId": "movies-current-cinema-20261022205539083",
-  "generatedAt": "2026-10-22T20:55:39.083Z",
-  "items": [
-    {
-      "id": "gnula-el-corazon-de-la-bestia",
-      "name": "El corazón de la bestia (2026)",
-      "year": 2026,
-      "page": "https://ww3.gnulahd.nu/ver/el-corazon-de-la-bestia-2026/"
-    },
-    {
-      "id": "gnula-la-caida-de-la-ballena",
-      "name": "La caída de la ballena (2026)",
-      "year": 2026,
-      "page": "https://ww3.gnulahd.nu/ver/la-caida-de-la-ballena/"
-    },
-    {
-      "id": "gnula-madre-siniestra",
-      "name": "Madre siniestra (2026)",
-      "year": 2026,
-      "page": "https://ww3.gnulahd.nu/ver/madre-siniestra/"
-    },
-    {
-      "id": "gnula-street-fighter",
-      "name": "Street Fighter (2026)",
-      "year": 2026,
-      "page": "https://ww3.gnulahd.nu/ver/street-fighter/"
-    },
-    {
-      "id": "gnula-el-poder-de-la-red",
-      "name": "El poder de la red (2026)",
-      "year": 2026,
-      "page": "https://ww3.gnulahd.nu/ver/el-poder-de-la-red/"
-    },
-    {
-      "id": "gnula-clayface",
-      "name": "Clayface (2026)",
-      "year": 2026,
-      "page": "https://ww3.gnulahd.nu/ver/clayface/"
-    },
-    {
-      "id": "gnula-resident-evil-noche-cero",
-      "name": "Resident Evil: Noche cero (2026)",
-      "year": 2026,
-      "page": "https://ww3.gnulahd.nu/ver/resident-evil-noche-cero/"
-    },
-    {
-      "id": "gnula-angel-and-the-badman",
-      "name": "Angel and the Badman (2026)",
-      "year": 2026,
-      "page": "https://ww3.gnulahd.nu/ver/angel-and-the-badman/"
-    }
-  ],
-  "retire": [
-    {
-      "id": "gnula-la-isla-olvidada",
-      "name": "La isla olvidada (2026)",
-      "year": 2026,
-      "reason": "outside_current_cinema_selection"
-    }
-  ],
+  "requestId": "movies-review-20261029-20261029203948209",
+  "generatedAt": "2026-10-29T20:39:48.209Z",
+  "items": [],
+  "retire": [],
   "cinemaReview": {
-    "checkedAt": "2026-10-22T20:55:39.083Z",
+    "checkedAt": "2026-10-29T20:39:48.209Z",
     "sources": [
       "https://www.amctheatres.com/movies",
       "https://www.regmovies.com/theatres/regal-warren-east-1444"
