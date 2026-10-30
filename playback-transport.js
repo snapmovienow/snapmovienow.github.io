@@ -100,7 +100,7 @@
       };
       const onAbort=()=>finish(Error('playback_superseded'));
       const onReady=()=>{ready=true;finish()};
-      const onFailure=(_,data)=>{if(data.fatal)finish(Error('stream_failed'))};
+      const onFailure=(_,data)=>{if(!data.fatal)return;const missing=data.details==='manifestLoadError'&&data.response?.code===404;finish(missing?Object.assign(Error('media_not_found'),{status:404}):Error('stream_failed'))};
       timer=setTimeout(()=>finish(Error('load_timeout')),20000);
       currentEngine.on(events.MANIFEST_PARSED,onReady);currentEngine.on(events.ERROR,onFailure);
       signal.addEventListener('abort',onAbort,{once:true});
@@ -136,3 +136,4 @@
  }
  root.SMNPlaybackTransport={create,hlsOptions,loadHls};
 })(globalThis);
+
