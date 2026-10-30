@@ -1,3 +1,4 @@
+import {publicLiveDescriptor,forgetPublicLiveDescriptor,readPublicLiveDescriptor} from './public-live-descriptor.mjs';
 // Official public news players, resolved afresh; no TV-provider accounts or saved session URLs.
 export const REGIONAL_CHANNELS=[
  {
@@ -166,25 +167,16 @@ export function regionalMediaAllowed(channel,u){
  if(channel.adapter==='cbs-local')return u.hostname==='dai.google.com'&&(u.pathname.startsWith('/linear/hls/')&&u.pathname.includes('/event/'+channel.event+'/')||u.pathname.startsWith('/linear/pods/v1/p/'+channel.event+'/'))||u.hostname===channel.mediaHost&&(u.pathname.startsWith('/live/')||u.pathname.startsWith('/ad/seg/videoplayback/'))||adVideo(u);
  return false;
 }
-async function pageText(url,{fetcher=fetch,signal}={}){
- const response=await fetcher(url,{redirect:'manual',headers:{'User-Agent':'Mozilla/5.0'},signal:signal?AbortSignal.any([signal,AbortSignal.timeout(18000)]):AbortSignal.timeout(18000)});
- if(!response.ok){await response.body?.cancel();fail();}const reader=response.body?.getReader();if(!reader)fail();const decoder=new TextDecoder();let text='',size=0;
- try{for(;;){const {done,value}=await reader.read();if(done)break;size+=value.length;if(size>3000000)fail();text+=decoder.decode(value,{stream:true});}return decode(text+decoder.decode());}finally{await reader.cancel().catch(()=>{});reader.releaseLock();}
-}
+export function forgetRegionalLive(channel,options={}){return forgetPublicLiveDescriptor('regional:'+channel.page,options);}
 export async function resolveRegionalLive(channel,options={}){
- const html=await pageText(channel.page,options);let url;
- if(channel.adapter==='nbcu-fast'){
-  // Only the approved free, ad-supported stream advertised by this station. No national/TVE fallback.
-  for(const m of html.matchAll(/"m3u8_url"\s*:\s*("(?:\\.|[^"\\])*")/g)){
-   let value;try{value=JSON.parse(m[1])}catch{continue}let u;try{u=new URL(value)}catch{continue}
-   if(u.protocol==='https:'&&u.hostname==='d2kowtvrzzi7ps.cloudfront.net'&&u.pathname==='/11602/'+channel.streamId+'/hls/master.m3u8'){url=u.href;break;}
-  }
- }else if(channel.adapter==='cbs-local'){
-  for(const m of html.matchAll(/"video"\s*:\s*("(?:\\.|[^"\\])*")/g)){
-   let value;try{value=JSON.parse(m[1])}catch{continue}let u;try{u=new URL(value)}catch{continue}
-   if(u.protocol==='https:'&&u.hostname==='dai.google.com'&&u.pathname==='/linear/hls/event/'+channel.event+'/master.m3u8'){url=u.href;break;}
-  }
-
- }
- if(!url||!regionalMediaAllowed(channel,new URL(url)))fail();return {url,officialPage:channel.page};
+ const url=await publicLiveDescriptor('regional:'+channel.page,()=>readPublicLiveDescriptor(channel.page,text=>{
+  const html=decode(text),field=channel.adapter==='nbcu-fast'?'m3u8_url':'video';
+  const pattern=new RegExp('"'+field+'"\\s*:\\s*("(?:\\\\.|[^"\\\\])*")','g');
+  for(const m of html.matchAll(pattern)){
+   let u;try{u=new URL(JSON.parse(m[1]))}catch{continue}
+   if(channel.adapter==='nbcu-fast'&&u.protocol==='https:'&&u.hostname==='d2kowtvrzzi7ps.cloudfront.net'&&u.pathname==='/11602/'+channel.streamId+'/hls/master.m3u8')return u.href;
+   if(channel.adapter==='cbs-local'&&u.protocol==='https:'&&u.hostname==='dai.google.com'&&u.pathname==='/linear/hls/event/'+channel.event+'/master.m3u8')return u.href;
+  }return null;
+ },options),options);
+ if(!regionalMediaAllowed(channel,new URL(url)))fail();return {url,officialPage:channel.page};
 }

@@ -1,0 +1,701 @@
+{
+  "reviewedAt": "2026-10-30T22:24:17.483499+00:00",
+  "scope": "Same local external Xtream adapter and signed HLS proxy, AES-GCM resource URL encoding, real upstream media and one video rendition. Directory/session grants are synthetic. Tests are from a managed network, not the production edge or the user device.",
+  "physicalDeviceTested": false,
+  "baselineRevision": "103a03c73c244ee7e930d5a7bb92906862d25bb2",
+  "before": [
+    {
+      "id": "local-kwch-news",
+      "label": "before-pair",
+      "checkedAt": "2026-10-30T22:14:19.547Z",
+      "firstPlaylistMs": 19462,
+      "firstVideoBytesMs": 22363,
+      "firstDecodedFrameMs": 25433,
+      "decodeExitCode": 0,
+      "timedOut": false,
+      "requests": 10,
+      "masterBytes": 30899,
+      "variantBytes": 51655,
+      "maxResourceUrlBytes": 3221,
+      "fetches": [
+        {
+          "host": "www.kwch.com",
+          "headersMs": 3647,
+          "status": 200
+        },
+        {
+          "host": "www.kwch.com",
+          "headersMs": 472,
+          "status": 200
+        },
+        {
+          "host": "auth-gw.api.gray.quickplay.com",
+          "headersMs": 3038,
+          "status": 200
+        },
+        {
+          "host": "device-register-service.api.gray.quickplay.com",
+          "headersMs": 2756,
+          "status": 200
+        },
+        {
+          "host": "playback-auth-service.api.gray.quickplay.com",
+          "headersMs": 3216,
+          "status": 200
+        },
+        {
+          "host": "pubads.g.doubleclick.net",
+          "headersMs": 2603,
+          "status": 302
+        },
+        {
+          "host": "dai.google.com",
+          "headersMs": 3543,
+          "status": 200
+        },
+        {
+          "host": "dai.google.com",
+          "headersMs": 38,
+          "status": 200
+        },
+        {
+          "host": "live-streaming-mcdn.api.graylive.quickplay.com",
+          "headersMs": 2853,
+          "status": 206
+        },
+        {
+          "host": "live-streaming-mcdn.api.graylive.quickplay.com",
+          "headersMs": 3044,
+          "status": 206
+        }
+      ],
+      "faults": [],
+      "decodeWarnings": [],
+      "firstFrameConfirmed": true
+    },
+    {
+      "id": "local-kwch-news",
+      "label": "before-pair",
+      "checkedAt": "2026-10-30T22:15:19.554Z",
+      "firstPlaylistMs": 42246,
+      "firstVideoBytesMs": 0,
+      "firstDecodedFrameMs": 0,
+      "decodeExitCode": 0,
+      "timedOut": true,
+      "requests": 32,
+      "masterBytes": 30899,
+      "variantBytes": 55173,
+      "maxResourceUrlBytes": 3221,
+      "fetches": [
+        {
+          "host": "www.kwch.com",
+          "headersMs": 2769,
+          "status": 200
+        },
+        {
+          "host": "www.kwch.com",
+          "headersMs": 47,
+          "status": 200
+        },
+        {
+          "host": "auth-gw.api.gray.quickplay.com",
+          "headersMs": 2860,
+          "status": 200
+        },
+        {
+          "host": "device-register-service.api.gray.quickplay.com",
+          "headersMs": 3082,
+          "status": 200
+        },
+        {
+          "host": "playback-auth-service.api.gray.quickplay.com",
+          "headersMs": 2744,
+          "status": 200
+        },
+        {
+          "host": "pubads.g.doubleclick.net",
+          "headersMs": 3741,
+          "status": 302
+        },
+        {
+          "host": "dai.google.com",
+          "headersMs": 3489,
+          "status": 200
+        },
+        {
+          "host": "dai.google.com",
+          "headersMs": 136,
+          "status": 200
+        },
+        {
+          "host": "dai.google.com",
+          "headersMs": 278,
+          "status": 302
+        },
+        {
+          "host": "rr7---sn-ojq4f5-51.googlevideo.com",
+          "headersMs": 2671,
+          "status": 206
+        },
+        {
+          "host": "dai.google.com",
+          "headersMs": 42,
+          "status": 302
+        },
+        {
+          "host": "rr7---sn-ojq4f5-51.googlevideo.com",
+          "headersMs": 57,
+          "status": 206
+        },
+        {
+          "host": "dai.google.com",
+          "headersMs": 39,
+          "status": 302
+        },
+        {
+          "host": "rr7---sn-ojq4f5-51.googlevideo.com",
+          "headersMs": 57,
+          "status": 206
+        },
+        {
+          "host": "www.kwch.com",
+          "headersMs": 2470,
+          "status": 200
+        },
+        {
+          "host": "www.kwch.com",
+          "headersMs": 91,
+          "status": 200
+        },
+        {
+          "host": "auth-gw.api.gray.quickplay.com",
+          "headersMs": 2564,
+          "status": 200
+        },
+        {
+          "host": "device-register-service.api.gray.quickplay.com",
+          "headersMs": 2518,
+          "status": 200
+        },
+        {
+          "host": "playback-auth-service.api.gray.quickplay.com",
+          "headersMs": 2704,
+          "status": 200
+        },
+        {
+          "host": "pubads.g.doubleclick.net",
+          "headersMs": 4408,
+          "status": 302
+        },
+        {
+          "host": "dai.google.com",
+          "headersMs": 3373,
+          "status": 200
+        },
+        {
+          "host": "dai.google.com",
+          "headersMs": 186,
+          "status": 200
+        },
+        {
+          "host": "dai.google.com",
+          "headersMs": 138,
+          "status": 302
+        },
+        {
+          "host": "rr8---sn-ojq4f5-51.googlevideo.com",
+          "headersMs": 2836,
+          "status": 206
+        },
+        {
+          "host": "dai.google.com",
+          "headersMs": 38,
+          "status": 302
+        },
+        {
+          "host": "rr8---sn-ojq4f5-51.googlevideo.com",
+          "headersMs": 55,
+          "status": 206
+        },
+        {
+          "host": "dai.google.com",
+          "headersMs": 39,
+          "status": 302
+        },
+        {
+          "host": "rr8---sn-ojq4f5-51.googlevideo.com",
+          "headersMs": 52,
+          "status": 206
+        },
+        {
+          "host": "www.kwch.com",
+          "headersMs": 3583,
+          "status": 200
+        },
+        {
+          "host": "www.kwch.com",
+          "headersMs": 47,
+          "status": 200
+        },
+        {
+          "host": "auth-gw.api.gray.quickplay.com",
+          "headersMs": 2857,
+          "status": 200
+        },
+        {
+          "host": "device-register-service.api.gray.quickplay.com",
+          "headersMs": 2694,
+          "status": 200
+        },
+        {
+          "host": "playback-auth-service.api.gray.quickplay.com",
+          "headersMs": 2887,
+          "status": 200
+        }
+      ],
+      "faults": [],
+      "decodeWarnings": [
+        "Upstream details redacted",
+        "[in#0 @ address] Error opening input: Immediate exit requested",
+        "Upstream details redacted"
+      ],
+      "firstFrameConfirmed": false
+    },
+    {
+      "id": "local-nbc-newyork",
+      "label": "before-pair",
+      "checkedAt": "2026-10-30T22:15:30.889Z",
+      "firstPlaylistMs": 5970,
+      "firstVideoBytesMs": 8881,
+      "firstDecodedFrameMs": 11323,
+      "decodeExitCode": 0,
+      "timedOut": false,
+      "requests": 8,
+      "masterBytes": 18180,
+      "variantBytes": 47037,
+      "maxResourceUrlBytes": 2412,
+      "fetches": [
+        {
+          "host": "www.nbcnewyork.com",
+          "headersMs": 3211,
+          "status": 200
+        },
+        {
+          "host": "pubads.g.doubleclick.net",
+          "headersMs": 3165,
+          "status": 302
+        },
+        {
+          "host": "d2kowtvrzzi7ps.cloudfront.net",
+          "headersMs": 2586,
+          "status": 200
+        },
+        {
+          "host": "d2kowtvrzzi7ps.cloudfront.net",
+          "headersMs": 78,
+          "status": 200
+        },
+        {
+          "host": "dai.google.com",
+          "headersMs": 3720,
+          "status": 200
+        },
+        {
+          "host": "dai.google.com",
+          "headersMs": 139,
+          "status": 200
+        },
+        {
+          "host": "xumo-drct-ch101-8hacu.fast.nbcuni.com",
+          "headersMs": 2826,
+          "status": 206
+        },
+        {
+          "host": "xumo-drct-ch101-8hacu.fast.nbcuni.com",
+          "headersMs": 2414,
+          "status": 206
+        }
+      ],
+      "faults": [],
+      "decodeWarnings": [],
+      "firstFrameConfirmed": true
+    },
+    {
+      "id": "local-nbc-newyork",
+      "label": "before-pair",
+      "checkedAt": "2026-10-30T22:15:42.472Z",
+      "firstPlaylistMs": 6830,
+      "firstVideoBytesMs": 9228,
+      "firstDecodedFrameMs": 11573,
+      "decodeExitCode": 0,
+      "timedOut": false,
+      "requests": 5,
+      "masterBytes": 18180,
+      "variantBytes": 47037,
+      "maxResourceUrlBytes": 2412,
+      "fetches": [
+        {
+          "host": "www.nbcnewyork.com",
+          "headersMs": 4228,
+          "status": 200
+        },
+        {
+          "host": "d2kowtvrzzi7ps.cloudfront.net",
+          "headersMs": 2458,
+          "status": 200
+        },
+        {
+          "host": "d2kowtvrzzi7ps.cloudfront.net",
+          "headersMs": 80,
+          "status": 200
+        },
+        {
+          "host": "xumo-drct-ch101-8hacu.fast.nbcuni.com",
+          "headersMs": 2313,
+          "status": 206
+        },
+        {
+          "host": "xumo-drct-ch101-8hacu.fast.nbcuni.com",
+          "headersMs": 2316,
+          "status": 206
+        }
+      ],
+      "faults": [],
+      "decodeWarnings": [],
+      "firstFrameConfirmed": true
+    }
+  ],
+  "after": [
+    {
+      "id": "local-kwch-news",
+      "label": "after-final-pair",
+      "checkedAt": "2026-10-30T22:18:28.270Z",
+      "firstPlaylistMs": 17358,
+      "firstVideoBytesMs": 20006,
+      "firstDecodedFrameMs": 22709,
+      "decodeExitCode": 0,
+      "timedOut": false,
+      "requests": 10,
+      "masterBytes": 25751,
+      "variantBytes": 12407,
+      "maxResourceUrlBytes": 2649,
+      "fetches": [
+        {
+          "host": "www.kwch.com",
+          "headersMs": 3534,
+          "status": 200
+        },
+        {
+          "host": "www.kwch.com",
+          "headersMs": 3750,
+          "status": 200
+        },
+        {
+          "host": "auth-gw.api.gray.quickplay.com",
+          "headersMs": 3410,
+          "status": 200
+        },
+        {
+          "host": "device-register-service.api.gray.quickplay.com",
+          "headersMs": 2356,
+          "status": 200
+        },
+        {
+          "host": "playback-auth-service.api.gray.quickplay.com",
+          "headersMs": 2861,
+          "status": 200
+        },
+        {
+          "host": "pubads.g.doubleclick.net",
+          "headersMs": 2482,
+          "status": 302
+        },
+        {
+          "host": "dai.google.com",
+          "headersMs": 2617,
+          "status": 200
+        },
+        {
+          "host": "dai.google.com",
+          "headersMs": 88,
+          "status": 200
+        },
+        {
+          "host": "live-streaming-mcdn.api.graylive.quickplay.com",
+          "headersMs": 2551,
+          "status": 206
+        },
+        {
+          "host": "live-streaming-mcdn.api.graylive.quickplay.com",
+          "headersMs": 2673,
+          "status": 206
+        }
+      ],
+      "faults": [],
+      "decodeWarnings": [],
+      "firstFrameConfirmed": true
+    },
+    {
+      "id": "local-kwch-news",
+      "label": "after-final-pair",
+      "checkedAt": "2026-10-30T22:18:42.418Z",
+      "firstPlaylistMs": 8597,
+      "firstVideoBytesMs": 11470,
+      "firstDecodedFrameMs": 14141,
+      "decodeExitCode": 0,
+      "timedOut": false,
+      "requests": 6,
+      "masterBytes": 25751,
+      "variantBytes": 12405,
+      "maxResourceUrlBytes": 2649,
+      "fetches": [
+        {
+          "host": "playback-auth-service.api.gray.quickplay.com",
+          "headersMs": 2878,
+          "status": 200
+        },
+        {
+          "host": "pubads.g.doubleclick.net",
+          "headersMs": 3167,
+          "status": 302
+        },
+        {
+          "host": "dai.google.com",
+          "headersMs": 2504,
+          "status": 200
+        },
+        {
+          "host": "dai.google.com",
+          "headersMs": 138,
+          "status": 200
+        },
+        {
+          "host": "live-streaming-mcdn.api.graylive.quickplay.com",
+          "headersMs": 2730,
+          "status": 206
+        },
+        {
+          "host": "live-streaming-mcdn.api.graylive.quickplay.com",
+          "headersMs": 2646,
+          "status": 206
+        }
+      ],
+      "faults": [],
+      "decodeWarnings": [],
+      "firstFrameConfirmed": true
+    },
+    {
+      "id": "local-nbc-newyork",
+      "label": "after-final-pair",
+      "checkedAt": "2026-10-30T22:18:53.736Z",
+      "firstPlaylistMs": 6111,
+      "firstVideoBytesMs": 8825,
+      "firstDecodedFrameMs": 11307,
+      "decodeExitCode": 0,
+      "timedOut": false,
+      "requests": 5,
+      "masterBytes": 6448,
+      "variantBytes": 13517,
+      "maxResourceUrlBytes": 736,
+      "fetches": [
+        {
+          "host": "www.nbcnewyork.com",
+          "headersMs": 2983,
+          "status": 200
+        },
+        {
+          "host": "d2kowtvrzzi7ps.cloudfront.net",
+          "headersMs": 3069,
+          "status": 200
+        },
+        {
+          "host": "d2kowtvrzzi7ps.cloudfront.net",
+          "headersMs": 73,
+          "status": 200
+        },
+        {
+          "host": "xumo-drct-ch101-8hacu.fast.nbcuni.com",
+          "headersMs": 2635,
+          "status": 206
+        },
+        {
+          "host": "xumo-drct-ch101-8hacu.fast.nbcuni.com",
+          "headersMs": 2450,
+          "status": 206
+        }
+      ],
+      "faults": [],
+      "decodeWarnings": [],
+      "firstFrameConfirmed": true
+    },
+    {
+      "id": "local-nbc-newyork",
+      "label": "after-final-pair",
+      "checkedAt": "2026-10-30T22:19:03.074Z",
+      "firstPlaylistMs": 2876,
+      "firstVideoBytesMs": 5857,
+      "firstDecodedFrameMs": 9327,
+      "decodeExitCode": 0,
+      "timedOut": false,
+      "requests": 4,
+      "masterBytes": 6448,
+      "variantBytes": 13517,
+      "maxResourceUrlBytes": 736,
+      "fetches": [
+        {
+          "host": "d2kowtvrzzi7ps.cloudfront.net",
+          "headersMs": 2828,
+          "status": 200
+        },
+        {
+          "host": "d2kowtvrzzi7ps.cloudfront.net",
+          "headersMs": 81,
+          "status": 200
+        },
+        {
+          "host": "xumo-drct-ch101-8hacu.fast.nbcuni.com",
+          "headersMs": 2894,
+          "status": 206
+        },
+        {
+          "host": "xumo-drct-ch101-8hacu.fast.nbcuni.com",
+          "headersMs": 3433,
+          "status": 206
+        }
+      ],
+      "faults": [],
+      "decodeWarnings": [],
+      "firstFrameConfirmed": true
+    },
+    {
+      "id": "local-cbs-newyork",
+      "label": "after-final-pair",
+      "checkedAt": "2026-10-30T22:19:18.720Z",
+      "firstPlaylistMs": 9486,
+      "firstVideoBytesMs": 12688,
+      "firstDecodedFrameMs": 15640,
+      "decodeExitCode": 0,
+      "timedOut": false,
+      "requests": 8,
+      "masterBytes": 6713,
+      "variantBytes": 13024,
+      "maxResourceUrlBytes": 781,
+      "fetches": [
+        {
+          "host": "www.cbsnews.com",
+          "headersMs": 3262,
+          "status": 200
+        },
+        {
+          "host": "dai.google.com",
+          "headersMs": 3426,
+          "status": 302
+        },
+        {
+          "host": "dai.google.com",
+          "headersMs": 2646,
+          "status": 200
+        },
+        {
+          "host": "dai.google.com",
+          "headersMs": 188,
+          "status": 200
+        },
+        {
+          "host": "dai.google.com",
+          "headersMs": 339,
+          "status": 302
+        },
+        {
+          "host": "newyo9h67ea3.airspace-cdn.cbsivideo.com",
+          "headersMs": 2666,
+          "status": 200
+        },
+        {
+          "host": "dai.google.com",
+          "headersMs": 37,
+          "status": 302
+        },
+        {
+          "host": "newyo9h67ea3.airspace-cdn.cbsivideo.com",
+          "headersMs": 2889,
+          "status": 200
+        }
+      ],
+      "faults": [],
+      "decodeWarnings": [],
+      "firstFrameConfirmed": true
+    },
+    {
+      "id": "local-cbs-newyork",
+      "label": "after-final-pair",
+      "checkedAt": "2026-10-30T22:19:28.674Z",
+      "firstPlaylistMs": 3510,
+      "firstVideoBytesMs": 6964,
+      "firstDecodedFrameMs": 9947,
+      "decodeExitCode": 0,
+      "timedOut": false,
+      "requests": 7,
+      "masterBytes": 6713,
+      "variantBytes": 13874,
+      "maxResourceUrlBytes": 781,
+      "fetches": [
+        {
+          "host": "dai.google.com",
+          "headersMs": 915,
+          "status": 302
+        },
+        {
+          "host": "dai.google.com",
+          "headersMs": 2543,
+          "status": 200
+        },
+        {
+          "host": "dai.google.com",
+          "headersMs": 254,
+          "status": 200
+        },
+        {
+          "host": "dai.google.com",
+          "headersMs": 202,
+          "status": 302
+        },
+        {
+          "host": "newyo9h67ea3.airspace-cdn.cbsivideo.com",
+          "headersMs": 2989,
+          "status": 200
+        },
+        {
+          "host": "dai.google.com",
+          "headersMs": 41,
+          "status": 302
+        },
+        {
+          "host": "newyo9h67ea3.airspace-cdn.cbsivideo.com",
+          "headersMs": 2912,
+          "status": 200
+        }
+      ],
+      "faults": [],
+      "decodeWarnings": [],
+      "firstFrameConfirmed": true
+    }
+  ],
+  "limitations": [
+    "One baseline KWCH reopening did not confirm a frame and is retained as a failure, not counted as a zero-second success.",
+    "Upstream advertisement and network timing vary. Short samples do not establish continuous uptime.",
+    "A faster preparation/first byte is not the same measurement as image on the physical device.",
+    "Cold NBC frame timing was essentially unchanged in this run; metadata and anonymous device reuse improve reopening and warm instances."
+  ],
+  "validation": {
+    "regressionFilesPassed": 135,
+    "workerdPublicCacheAndAnonymousDeviceTestPassed": true,
+    "platformSqlitePassed": true,
+    "customerAuthorizationCached": false,
+    "playbackAuthorizationPerStart": true,
+    "publicDescriptorCacheSeconds": 60,
+    "anonymousDeviceReuseSeconds": 60,
+    "anonymousDeviceScope": "same signed viewer and Gray station only; no concurrent-start sharing",
+    "existingIDsAndFoldersChanged": false
+  }
+}

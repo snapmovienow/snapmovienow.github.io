@@ -365,3 +365,45 @@ shared NY/NJ membership, manual visibility, scoped station/ad resources,
 forbidden destinations and finite partial imports. Upstream decode evidence is
 recorded separately; short server-side samples do not establish continuous
 uptime, every rendition or playback on a customer's physical device.
+
+### Local TV startup optimization (2026-10-30)
+
+Local channel starts previously downloaded the full official page each time,
+recreated the Gray anonymous device, read the catalog twice and repeated a large
+master URL plus root-only state in every signed HLS resource URL. These costs
+are reduced without changing channel IDs, folders, media renditions, the APK or
+the upstream account path.
+
+`public-live-descriptor.mjs` stops reading a public page when the exact approved
+player descriptor is found. Only small anonymous public descriptors are cached
+for sixty seconds: bounded per-adapter memory and, for the default production
+adapter, a separate named Cache API namespace in the current data center.
+It never caches customer permission, a playback grant, media playlists/segments,
+a Quickplay device or a viewer's ad session. Expired/missing/failed entries are
+refetched; media HTTP failures invalidate the relevant public descriptor. Source
+maintenance probes still perform their default fresh-page checks.
+
+Gray public-page confirmation and anonymous device setup run independently.
+Anonymous device setup may be reused in private bounded memory for at most sixty
+seconds, only for the same signed viewer session and station, capped by known
+token/viewer expiry. An in-use device is not shared by overlapping starts.
+Content authorization always runs for each new start, including blackout/DRM
+checks. An HTTP 401/403 from a reused device causes one fresh setup attempt.
+Every playback keeps a separate heartbeat identity/token even when its anonymous
+device is reused. No device credentials enter the public metadata cache or repo.
+
+The internal live adapter reuses its just-read row; authoritative acquisition
+still rechecks the current saved identity, permissions and playback revision.
+Media session and item reads run together before heartbeat/renewal or upstream
+media requests. Every signed resource retains its own session, user/version,
+parent/item/revision, lease, request, expiry and official-page scope. Only
+redundant source/root fields are removed; binary resources omit the playlist-only
+anonymous heartbeat. Non-official media retains its original same-origin source
+contract. Advertisements, captions, audio and all adaptive variants remain.
+
+`localTvXtream.startup.version=1` in public health reports the active configuration;
+root official playlists also carry `X-SNAP-Local-Startup: 1`. These are deployment
+markers, not claims of physical-device latency. Credential-free short upstream
+measurements, including the failed baseline sample and limits of the comparison,
+are in `verification/2026-10-30-local-tv-startup.json`. Native buffering, network
+conditions and upstream response time can still affect time to image.

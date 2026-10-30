@@ -6,7 +6,9 @@ import {KANSAS_CHANNELS as OFFICIAL_CHANNELS} from '../src/official-live.mjs';
 const source=`
 import {KANSAS_CHANNELS as OFFICIAL_CHANNELS} from '../src/official-live.mjs';
 import {inspectCatalogSource} from '../src/catalog-source-check.mjs';
-export default {async fetch(){const result=[];for(const c of OFFICIAL_CHANNELS)result.push({id:c.id,...await inspectCatalogSource({mode:'gnula',page:c.page})});return Response.json(result)}};`;
+import {resolveOfficialLive} from '../src/official-live.mjs';
+import {publicLiveDescriptor} from '../src/public-live-descriptor.mjs';
+export default {async fetch(){const result=[];for(const c of OFFICIAL_CHANNELS)result.push({id:c.id,...await inspectCatalogSource({mode:'gnula',page:c.page})});const opts={cachePublicPages:true,viewerKey:'real-workerd-fixture',viewerExpiresAt:Date.now()+3600000},a=await resolveOfficialLive(OFFICIAL_CHANNELS[0].page,opts),b=await resolveOfficialLive(OFFICIAL_CHANNELS[0].page,opts);const original=fetch;globalThis.fetch=(...args)=>original(...args);let edge;try{edge=await publicLiveDescriptor('gray-page:'+OFFICIAL_CHANNELS[0].contentId,()=>{throw Error('public edge metadata missing')},{cachePublicPages:true});}finally{globalThis.fetch=original;}return Response.json({result,reused:a.officialHeartbeat.deviceId===b.officialHeartbeat.deviceId,separate:a.officialHeartbeat.beatId!==b.officialHeartbeat.beatId,edge})}};`;
 const compiled=await build({stdin:{contents:source,resolveDir:fileURLToPath(new URL('.',import.meta.url))},bundle:true,format:'esm',platform:'browser',write:false});
 let reads=0;const reply=data=>Response.json({header:{code:0},data});
 const options={name:'official-live-runtime',modules:true,script:compiled.outputFiles[0].text,compatibilityDate:'2026-10-03',outboundService:async req=>{
@@ -28,4 +30,4 @@ const options={name:'official-live-runtime',modules:true,script:compiled.outputF
  return new Response(new Uint8Array(2048).fill(0x47),{headers:{'Content-Type':'video/mp2t'}});
 }};
 const mf=new Miniflare(convertV4MiniflareOptions(options));
-try{await mf.ready;const response=await mf.dispatchFetch('https://local.test/probe'),result=await response.json();assert.ok(result.every(r=>r.ok),JSON.stringify({reads,result}));assert.equal(result.length,8);assert.ok(reads>=20);console.log('PASS: eight official live adapters perform real workerd Requests and validate synthetic HLS media across reviewed station scopes.');}finally{await mf.dispose()}
+try{await mf.ready;const response=await mf.dispatchFetch('https://local.test/probe'),data=await response.json(),result=data.result;assert.equal(data.reused,true);assert.equal(data.separate,true);assert.equal(data.edge,true);assert.ok(result.every(r=>r.ok),JSON.stringify({reads,result}));assert.equal(result.length,8);assert.ok(reads>=20);console.log('PASS: eight official live adapters perform real workerd Requests and validate synthetic HLS media across reviewed station scopes.');}finally{await mf.dispose()}

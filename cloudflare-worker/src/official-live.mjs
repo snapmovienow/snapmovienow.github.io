@@ -1,4 +1,5 @@
-import {REGIONAL_CHANNELS,regionalMediaAllowed,resolveRegionalLive} from './regional-live.mjs';
+import {publicLiveDescriptor,forgetPublicLiveDescriptor,readPublicLiveDescriptor} from './public-live-descriptor.mjs';
+import {REGIONAL_CHANNELS,regionalMediaAllowed,resolveRegionalLive,forgetRegionalLive} from './regional-live.mjs';
 export {REGIONAL_CHANNELS} from './regional-live.mjs';
 // Public station players only. No subscriber accounts, geo overrides or stored CDN URLs.
 const GRAY='live-streaming-mcdn.api.graylive.quickplay.com';
@@ -19,7 +20,7 @@ export const KANSAS_CHANNELS=[...OFFICIAL_CHANNELS,...EXTRA_OFFICIAL_CHANNELS];
 export const LOCAL_TV_CHANNELS=[...KANSAS_CHANNELS,...REGIONAL_CHANNELS];
 const channelFor=value=>{try{const u=new URL(value);if(u.protocol!=='https:'||u.username||u.password||u.port||u.search||u.hash)return null;return LOCAL_TV_CHANNELS.find(c=>c.page===u.href)||null;}catch{return null}};
 export const isOfficialLivePage=value=>!!channelFor(value instanceof URL?value.href:value);
-const fail=()=>{throw Error('official_live_unavailable')};
+const fail=status=>{throw Object.assign(Error('official_live_unavailable'),Number.isInteger(status)?{upstreamStatus:status}:{})};
 const safe=value=>{let u;try{u=new URL(value)}catch{fail()}if(u.protocol!=='https:'||u.port||u.username||u.password||u.hash||/[\\\u0000-\u0020]/.test(value))fail();return u;};
 export function officialMediaAllowed(page,value){
  try{
@@ -34,13 +35,13 @@ export function officialMediaAllowed(page,value){
  }catch{return false;}
 }
 async function small(response,max=1000000){
- if(!response.ok){await response.body?.cancel();fail();}const reader=response.body?.getReader();if(!reader)fail();let size=0,result='';const decoder=new TextDecoder();
+ if(!response.ok){await response.body?.cancel();fail(response.status);}const reader=response.body?.getReader();if(!reader)fail();let size=0,result='';const decoder=new TextDecoder();
  try{for(;;){const {done,value}=await reader.read();if(done)break;size+=value.length;if(size>max)fail();result+=decoder.decode(value,{stream:true});}return result+decoder.decode();}finally{await reader.cancel().catch(()=>{});reader.releaseLock();}
 }
 async function request(url,{fetcher=fetch,signal,headers={},body}={}){
  const response=await fetcher(url,{method:body?'POST':'GET',redirect:'manual',signal:signal?AbortSignal.any([signal,AbortSignal.timeout(15000)]):AbortSignal.timeout(15000),headers:{'User-Agent':'Mozilla/5.0',...headers,...(body?{'Content-Type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})});return small(response);
 }
-async function json(url,options){try{return JSON.parse(await request(url,options))}catch{fail()}}
+async function json(url,options){try{return JSON.parse(await request(url,options))}catch(error){if(error.message==='official_live_unavailable')throw error;fail()}}
 const payload=value=>{if(value?.header?.code!==0||!value.data)fail();return value.data;};
 const encode=bytes=>btoa(String.fromCharCode(...bytes)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 const text64=text=>encode(new TextEncoder().encode(text));
@@ -51,23 +52,50 @@ async function graySession(channel,deviceId,options){
  const qpat=payload(await json('https://auth-gw.api.gray.quickplay.com/platform/access/token',{...options,headers,body:{deviceId}}));if(typeof qpat.token!=='string'||qpat.token.length>12000)fail();
  return {headers:{...headers,'X-Authorization':qpat.token,'X-Property-Id':'gm|'+channel.station+'|'+channel.station},deviceId};
 }
-export async function resolveOfficialLive(page,options={}){
- const channel=channelFor(page);if(!channel)fail();
- if(REGIONAL_CHANNELS.includes(channel))return resolveRegionalLive(channel,options);
- if(channel.adapter==='amagi'){
-  const html=await request(channel.page,options),value=html.match(/<source[^>]+src="(https:\/\/amg01499-amg01499c3-morganmurphy-us-4207\.playouts\.now\.amagi\.tv\/playlist\/amg01499-morganmurphyfast-koam-morganmurphyus\/playlist\.m3u8[^"<>]*)"/i)?.[1];
-  if(!value)fail();const url=value.replace(/&amp;/g,'&');if(!officialMediaAllowed(page,url))fail();return {url,officialPage:channel.page};
- }
- if(!channel.station){
-  const html=await request(channel.page,options),block=html.match(/<iframe[^>]+src="(https:\/\/www\.kake\.com\/tncms\/block\/\d+)"/i)?.[1];if(!block)fail();
-  const player=await request(block+'/',{...options,headers:{Referer:channel.page}}),url=player.match(/<source[^>]+src="(https:\/\/townnews\.g-mana\.live\/media\/[a-f0-9-]{36}\/master\.m3u8)"/i)?.[1];if(!url||!officialMediaAllowed(page,url))fail();return {url,officialPage:channel.page};
- }
- // Confirm this exact channel is still advertised on the station's official page.
- const html=await request(channel.home||'https://www.'+channel.station+'.com/livestream/',options);
- if(!html.includes('"id":"'+channel.contentId+'"'))fail();
+// Public-player device setup is briefly reusable only within the same signed
+// viewer session and station. Content authorization and heartbeat tokens are
+// always new. There is no cache of customer permissions or playback grants.
+const deviceScopes=new WeakMap();
+const tokenUntil=value=>{try{const part=value.split('.')[1].replace(/-/g,'+').replace(/_/g,'/'),data=JSON.parse(atob(part));return Number.isFinite(data.exp)?data.exp*1000:Infinity}catch{return Infinity}};
+async function grayDevice(channel,options){
+ const scope=options.fetcher||fetch,viewer=options.viewerKey,cacheable=typeof viewer==='string'&&viewer.length>0&&viewer.length<=128&&options.viewerExpiresAt>Date.now();
+ let values=deviceScopes.get(scope);if(!values)deviceScopes.set(scope,values=new Map());const now=Date.now();for(const [key,value]of values)if(value.until<=now&&!value.busy)values.delete(key);
+ const key=cacheable?viewer+'|'+channel.station:null,old=key&&!options.freshDevice?values.get(key):null;
+ if(old&&!old.busy&&old.until>now+5000){old.busy=true;return {entry:old,values,key,reused:true};}
  const deviceId=crypto.randomUUID(),auth=await graySession(channel,deviceId,options);
  const registered=payload(await json('https://device-register-service.api.gray.quickplay.com/device/app/register',{...options,headers:auth.headers,body:{uniqueId:deviceId}}));
  if(typeof registered.secret!=='string'||registered.secret.length>1000)fail();let bytes;try{bytes=Uint8Array.from(atob(registered.secret),c=>c.charCodeAt(0))}catch{fail()}
+ const until=Math.min(Date.now()+60000,options.viewerExpiresAt||Infinity,tokenUntil(auth.headers.Authorization.slice(7))-5000,tokenUntil(auth.headers['X-Authorization'])-5000);
+ return {entry:{deviceId,auth,bytes,until,busy:true},values,key,reused:false};
+}
+function releaseGrayDevice(handle,ok){
+ const {entry,values,key}=handle;entry.busy=false;if(!key)return;
+ if(!ok){if(values.get(key)===entry)values.delete(key);return;}
+ if(entry.until<=Date.now()+5000)return;
+ if(values.size>=128&&!values.has(key)){const discard=[...values].find(([,value])=>!value.busy);if(!discard)return;values.delete(discard[0]);}
+ values.set(key,entry);
+}
+export async function resolveOfficialLive(page,options={}){
+ const channel=channelFor(page);if(!channel)fail();
+ if(REGIONAL_CHANNELS.includes(channel))return resolveRegionalLive(channel,options);
+ if(channel.adapter==='amagi'||!channel.station){
+  const url=await publicLiveDescriptor('official-source:'+channel.page,async()=>{
+   if(channel.adapter==='amagi')return readPublicLiveDescriptor(channel.page,text=>text.match(/<source[^>]+src="(https:\/\/amg01499-amg01499c3-morganmurphy-us-4207\.playouts\.now\.amagi\.tv\/playlist\/amg01499-morganmurphyfast-koam-morganmurphyus\/playlist\.m3u8[^"<>]*)"/i)?.[1]?.replace(/&amp;/g,'&')||null,options);
+   const block=await readPublicLiveDescriptor(channel.page,text=>text.match(/<iframe[^>]+src="(https:\/\/www\.kake\.com\/tncms\/block\/\d+)"/i)?.[1]||null,options);
+   return readPublicLiveDescriptor(block+'/',text=>text.match(/<source[^>]+src="(https:\/\/townnews\.g-mana\.live\/media\/[a-f0-9-]{36}\/master\.m3u8)"/i)?.[1]||null,{...options,headers:{Referer:channel.page}});
+  },options);
+  if(!officialMediaAllowed(page,url))fail();return {url,officialPage:channel.page};
+ }
+ // Public declaration and anonymous device setup run together. Stream
+ // authorization still requires both. An in-use device is never shared by
+ // overlapping channel starts, including two starts from the same viewer.
+ const prepared=await Promise.allSettled([
+  publicLiveDescriptor('gray-page:'+channel.contentId,()=>readPublicLiveDescriptor(channel.home||'https://www.'+channel.station+'.com/livestream/',text=>text.includes('"id":"'+channel.contentId+'"')?true:null,{...options,maxBytes:1000000}),options),
+  grayDevice(channel,options)
+ ]);
+ if(prepared.some(value=>value.status==='rejected')){if(prepared[1].status==='fulfilled')releaseGrayDevice(prepared[1].value,false);throw prepared.find(value=>value.status==='rejected').reason;}
+ const handle=prepared[1].value,{deviceId,auth,bytes}=handle.entry;let completed=false;
+ try{
  const time=Math.floor(Date.now()/1000),sign=text64(JSON.stringify({alg:'HS256',typ:'JWT'}))+'.'+text64(JSON.stringify({deviceId,aud:'playback-auth-service',iat:time,exp:time+3600}));
  const key=await crypto.subtle.importKey('raw',bytes,{name:'HMAC',hash:'SHA-256'},false,['sign']),deviceToken=sign+'.'+encode(new Uint8Array(await crypto.subtle.sign('HMAC',key,new TextEncoder().encode(sign))));
  const body={deviceName:'web',deviceId,contentId:channel.contentId,contentTypeId:'live',catalogType:'channel',mediaFormat:'hls',drm:'none',delivery:'streaming',disableSsai:'false',urlParameters:{'ads.ltd':'1','ads.npa':'1','ads.rdp':'1','ads.url':channel.page,'ads.vpos':'midroll'},playbackMode:'live',quality:'medium',supportedResolution:'FHD'};
@@ -77,16 +105,19 @@ export async function resolveOfficialLive(page,options={}){
  const url=new URL('https://pubads.g.doubleclick.net/ssai/event/'+data.assetKey+'/master.m3u8');
  for(const [k,v]of Object.entries(data.custom?.adParams||{}).sort())if(!['an','idtype','is_lat','lat','msid','rdid'].includes(k)&&v!==null&&v!==undefined)url.searchParams.set(k,String(v));
  if(typeof data.heartbeatToken!=='string'||data.heartbeatToken.length>12000)fail();
- return {url:url.href,officialPage:channel.page,officialHeartbeat:{page:channel.page,deviceId,contentId:channel.contentId,token:data.heartbeatToken,startedAt:Date.now()}};
+ completed=true;return {url:url.href,officialPage:channel.page,officialHeartbeat:{page:channel.page,deviceId,contentId:channel.contentId,token:data.heartbeatToken,startedAt:Date.now(),beatId:crypto.randomUUID()}};
+ }catch(error){if(handle.reused&&[401,403].includes(error.upstreamStatus)){releaseGrayDevice(handle,false);return resolveOfficialLive(page,{...options,freshDevice:true});}throw error;}finally{releaseGrayDevice(handle,completed);}
 }
 // Bounded, in-memory heartbeat coalescing; no public logs or persistent credentials.
 const beats=new Map();
 export async function officialHeartbeat(state,options={}){
  if(!state)return;const channel=channelFor(state.page);if(!channel?.station||channel.contentId!==state.contentId||! /^[a-f0-9-]{36}$/.test(state.deviceId)||typeof state.token!=='string')fail();
  const now=Date.now();for(const [key,value]of beats)if(now-value.at>3600000)beats.delete(key);
- const previous=beats.get(state.deviceId);if(now-(previous?.at||state.startedAt)<55000)return previous?.promise;
+ const beatKey=state.beatId||state.deviceId,previous=beats.get(beatKey);if(now-(previous?.at||state.startedAt)<55000)return previous?.promise;
  if(beats.size>=256)beats.delete(beats.keys().next().value);
- const entry={at:now,token:previous?.token||state.token};beats.set(state.deviceId,entry);
+ const entry={at:now,token:previous?.token||state.token};beats.set(beatKey,entry);
  entry.promise=(async()=>{const auth=await graySession(channel,state.deviceId,options),data=payload(await json('https://heartbeat-service.api.gray.quickplay.com/user/heartbeat/update',{...options,headers:{...auth.headers,'X-Heartbeat':entry.token},body:{deviceId:state.deviceId,itemId:state.contentId,offset:Math.max(0,Math.floor((now-state.startedAt)/1000))}}));if(typeof data.heartbeatToken==='string')entry.token=data.heartbeatToken;})();
  try{await entry.promise}catch{entry.at=now-45000;fail();}
 }
+
+export async function forgetOfficialLivePage(page,options={}){const channel=channelFor(page);if(!channel)return;if(REGIONAL_CHANNELS.includes(channel))await forgetRegionalLive(channel,options);else await forgetPublicLiveDescriptor(channel.station?'gray-page:'+channel.contentId:'official-source:'+channel.page,options);}
