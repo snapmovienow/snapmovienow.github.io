@@ -1,13 +1,18 @@
 import {exclusiveSnapshot,exclusiveCatalogRoute} from './exclusive-catalog.mjs';
 import {inspectCatalogSource} from './catalog-source-check.mjs';
-import {OFFICIAL_CHANNELS} from './official-live.mjs';
+import {OFFICIAL_CHANNELS,EXTRA_OFFICIAL_CHANNELS} from './official-live.mjs';
 const KEY='catalog-import:kansas-local-tv-20261029-v2';
 export const LOCAL_TV_REQUEST='kansas-local-tv-owner-20261029-v2';
+const EXPANSION_KEY='catalog-import:kansas-local-tv-expansion-20261030-v1';
+export const LOCAL_TV_EXPANSION_REQUEST='kansas-local-tv-expansion-owner-20261030-v1';
 export async function localTvImportStatus(store){
  const job=await store.get(KEY);return job?Object.fromEntries(['requestId','state','attempts','startedAt','finishedAt','results'].filter(k=>job[k]!==undefined).map(k=>[k,job[k]])):{requestId:LOCAL_TV_REQUEST,state:'pending'};
 }
+export async function localTvExpansionStatus(store){const job=await store.get(EXPANSION_KEY);return job?Object.fromEntries(['requestId','state','attempts','startedAt','finishedAt','results'].filter(k=>job[k]!==undefined).map(k=>[k,job[k]])):{requestId:LOCAL_TV_EXPANSION_REQUEST,state:'pending'};}
 // A finite owner-requested import through the existing private cron, not a public write API.
-export async function runLocalTvImport(store,leases,env,{probe=inspectCatalogSource,now=Date.now}={}){
+export const runLocalTvImport=(store,leases,env,options)=>runImport(store,leases,env,{key:KEY,requestId:LOCAL_TV_REQUEST,channels:OFFICIAL_CHANNELS,actor:'owner-local-tv-import-20261029'},options);
+export const runLocalTvExpansion=(store,leases,env,options)=>runImport(store,leases,env,{key:EXPANSION_KEY,requestId:LOCAL_TV_EXPANSION_REQUEST,channels:EXTRA_OFFICIAL_CHANNELS,actor:'owner-local-tv-expansion-20261030'},options);
+async function runImport(store,leases,env,{key:KEY,requestId:LOCAL_TV_REQUEST,channels:OFFICIAL_CHANNELS,actor},{probe=inspectCatalogSource,now=Date.now}={}){
  if(env.ENVIRONMENT!=='production'||env.CATALOG_MAINTENANCE_ENABLED!=='true')return;
  const claim=await store.transaction(async tx=>{
   const old=await tx.get(KEY);if(old?.state==='completed'||old?.claimUntil>now())return null;
@@ -29,7 +34,7 @@ export async function runLocalTvImport(store,leases,env,{probe=inspectCatalogSou
     if(rows.some(row=>row.id===c.id||row.page===c.page))status='catalog_changed';
     else{
      const item={id:c.id,type:'movie',name:c.name,source:'TV LOCAL OFICIAL',mode:'gnula',page:c.page,poster:c.poster,plot:c.plot,year:null,visible:true,adult:false,episodes:[]};
-     const saved=await exclusiveCatalogRoute(tx,'/exclusive-save',{item,revision:0,actor:'owner-local-tv-import-20261029'});status=saved.ok?'added':'save_failed';
+     const saved=await exclusiveCatalogRoute(tx,'/exclusive-save',{item,revision:0,actor});status=saved.ok?'added':'save_failed';
     }
    }
    const result={id:c.id,name:c.name,status,checkedAt:now(),...(status==='added'?{check:'playlist_and_segment'}:{})},index=results.findIndex(r=>r.id===c.id);if(index<0)results.push(result);else results[index]=result;

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {OFFICIAL_CHANNELS,isOfficialLivePage,resolveOfficialLive,officialMediaAllowed,officialHeartbeat} from '../src/official-live.mjs';
+import {OFFICIAL_CHANNELS,EXTRA_OFFICIAL_CHANNELS,isOfficialLivePage,resolveOfficialLive,officialMediaAllowed,officialHeartbeat} from '../src/official-live.mjs';
 import {inspectCatalogSource} from '../src/catalog-source-check.mjs';
 import {createExclusiveService} from '../src/exclusive-service.mjs';
 import {exclusiveCatalogRoute,exclusivePublic,visibleExclusive,exportExclusives,validExclusiveBackup} from '../src/exclusive-catalog.mjs';
@@ -35,6 +35,14 @@ const fetcher=async(value,options={})=>{
  throw Error('unexpected fixture request');
 };
 for(const c of OFFICIAL_CHANNELS)assert.ok(isOfficialLivePage(c.page));
+for(const c of EXTRA_OFFICIAL_CHANNELS)assert.ok(isOfficialLivePage(c.page));
+const kctv=EXTRA_OFFICIAL_CHANNELS[1],koam=EXTRA_OFFICIAL_CHANNELS[3],amagi='https://amg01499-amg01499c3-morganmurphy-us-4207.playouts.now.amagi.tv';
+assert.equal(officialMediaAllowed(kctv.page,'https://live-streaming-mcdn.api.graylive.quickplay.com/kctv-xos1-input-1/kctv-xos1-input-1-v4.isml/segment.ts'),true);
+assert.equal(officialMediaAllowed(kctv.page,'https://live-streaming-mcdn.api.graylive.quickplay.com/kctv-xos1-input-2/kctv-xos1-input-2-v4.isml/segment.ts'),false);
+assert.equal(officialMediaAllowed(koam.page,amagi+'/ts-us-e2-n2/playlist/amg01499-morganmurphyfast-koam-morganmurphyus/segment.ts'),true);
+assert.equal(officialMediaAllowed(koam.page,amagi+'/playlist720p_202055.ts'),true);
+for(const value of [amagi+'/playlist/other-station/segment.ts',amagi+'/unrelated/segment.ts',amagi.replace('.tv','.tv.evil.org')+'/playlist/amg01499-morganmurphyfast-koam-morganmurphyus/a.ts'])assert.equal(officialMediaAllowed(koam.page,value),false);
+assert.equal(officialMediaAllowed(kwch.page,amagi+'/playlist/amg01499-morganmurphyfast-koam-morganmurphyus/a.ts'),false);
 for(const u of ['http://www.kwch.com/livestream/','https://www.kwch.com/livestream/?url=https://127.0.0.1/','https://www.kwch.com.evil.org/livestream/','https://user:pass@www.kwch.com/livestream/','https://www.kwch.com:444/livestream/','https://www.kwch.com/news/'])assert.equal(isOfficialLivePage(u),false);
 for(const u of ['https://127.0.0.1/video.ts','https://ssai1.field59.com.evil.org/kake1/a.ts','https://ssai1.field59.com/other/a.ts','https://live-streaming-mcdn.api.graylive.quickplay.com/wibw-xos1-input-1/a.ts'])assert.equal(officialMediaAllowed(kwch.page,u),false);
 assert.ok(officialMediaAllowed(kake.page,'https://ssai1.field59.com/kake1/a.ts'));

@@ -283,3 +283,40 @@ Fresh KAKE playback also referenced the TownNews/G-Mana public gap slate on
 directory `8a1b14d7-36b9-4901-b333-e62abebbb973` is accepted for KAKE; other
 directories, lookalike hosts and use by a Gray station are rejected. The official
 player's slate and advertising remain part of the feed.
+
+
+### LOCAL KANSAS expansion (2026-10-30)
+
+The owner requested Univision Kansas and additional local stations. The reviewed
+expansion candidates are WIBW Weather, KCTV5+ news, First Warn 5 Weather and KOAM
+News Now (Pittsburg/Joplin/Four States). They are the stations' official web news
+and weather feeds, not full network affiliate signals. Stable official weather
+landing pages distinguish weather from each station's news feed; the exact
+weather channel ID is confirmed in that station's official livestream catalog.
+KCTV uses its published `kctv` property and `www.kctv5.com` web origin. Only its
+observed, station-scoped `-v4.isml` rendition path is additionally permitted.
+KOAM's public source is resolved afresh from its official watch page. Its Amagi
+playlist and beacon/media routes remain confined to the one reviewed host and
+KOAM channel path, retaining the player source parameters and ad-stitched feed.
+No geographic/DRM bypass, Facebook login, stored cookies or temporary HLS URLs
+are introduced.
+
+`EXTRA_OFFICIAL_CHANNELS` appends to `LOCAL_TV_CHANNELS`; never reorder the list,
+as its positions retain the stable Xtream identities of existing channels.
+`runLocalTvExpansion` uses the original private import's media-byte gate,
+concurrency protection and finite three-attempt budget with a separate request
+and storage key. It preserves completed original jobs, existing/manual records,
+hidden entries, favorites and playback revisions. The public sanitized report is
+`catalog_maintenance.localTvExpansion`, request
+`kansas-local-tv-expansion-owner-20261030-v1`. Publication requires matching
+request ID, `state=completed` and the individual added/media-check results.
+The original four stay in LOCAL KANSAS directly below CANALES-NOVELAS. No APK
+change is needed.
+
+Univision Kansas' owner advertises local Facebook broadcasts. At review, no
+continuous public compatible station stream was verified; the old domain did
+not provide a station player. Telemundo Kansas City's official Veo Telemundo
+page supplied reception guidance, not a verified local HLS feed. KSN/KSNT public
+live pages returned HTTP 403, PBS supplied geographic/DRM-aware players, and
+FOX Kansas' available choices were not verified as the local linear station.
+Those stations are not replaced by unrelated national feeds or blank cards.

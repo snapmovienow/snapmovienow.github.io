@@ -1,4 +1,4 @@
-import {OFFICIAL_CHANNELS} from './official-live.mjs';
+import {LOCAL_TV_CHANNELS as OFFICIAL_CHANNELS} from './official-live.mjs';
 import {isAdult} from './content-permissions.mjs';
 
 // A separate registry namespace keeps existing provider IDs and bookmarks intact.
@@ -9,7 +9,7 @@ const categoryName=value=>String(value||'').normalize('NFD').replace(/[\u0300-\u
 const definition=row=>OFFICIAL_CHANNELS.find(channel=>channel.id===row?.id&&channel.page===row.page);
 export const visibleLocalTv=(row,permissions)=>!!(definition(row)&&row.type==='movie'&&row.mode==='gnula'&&row.visible&&permissions.tv&&(permissions.adults||!row.adult&&!isAdult(row)));
 const isLocal=record=>record?.server===LOCAL_TV_SERVER;
-const channelFor=record=>record?.kind==='live'&&/^[1-4]$/.test(String(record.upstreamId))?OFFICIAL_CHANNELS[Number(record.upstreamId)-1]:null;
+const channelFor=record=>record?.kind==='live'&&/^[1-9]\d{0,2}$/.test(String(record.upstreamId))?OFFICIAL_CHANNELS[Number(record.upstreamId)-1]||null:null;
 
 export function createLocalTvXtream({read,prepare,media},env,ctx){
  let snapshot;

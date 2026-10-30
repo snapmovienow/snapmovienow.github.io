@@ -1,0 +1,75 @@
+{
+  "checkedAt": "2026-10-30T15:45:16.886058+00:00",
+  "category": "LOCAL KANSAS",
+  "environment": "Local Xtream adapter and signed HLS proxy, synthetic session, real official public sources; one rendition sampled for approximately four seconds with video and audio.",
+  "physicalDeviceTested": false,
+  "productionCustomerConnections": false,
+  "results": [
+    {
+      "id": "local-wibw-weather",
+      "checkedAt": "2026-10-30T15:38:32.861Z",
+      "decodeSeconds": 4,
+      "decodeExitCode": 0,
+      "requests": 29,
+      "proxyErrors": [],
+      "errorLines": []
+    },
+    {
+      "id": "local-kctv-news",
+      "checkedAt": "2026-10-30T15:40:58.708Z",
+      "decodeSeconds": 4,
+      "decodeExitCode": 0,
+      "requests": 10,
+      "proxyErrors": [],
+      "errorLines": []
+    },
+    {
+      "id": "local-kctv-weather",
+      "checkedAt": "2026-10-30T15:44:20.083Z",
+      "decodeSeconds": 4,
+      "decodeExitCode": 0,
+      "timedOut": false,
+      "outputSeconds": 3.989333,
+      "requests": 10,
+      "proxyErrors": [],
+      "errorLines": []
+    },
+    {
+      "id": "local-koam-news",
+      "checkedAt": "2026-10-30T15:44:33.345Z",
+      "decodeSeconds": 4,
+      "decodeExitCode": 0,
+      "timedOut": false,
+      "outputSeconds": 3.995333,
+      "requests": 7,
+      "proxyErrors": [],
+      "errorLines": [
+        "[null @ 0x55b2c89c7c80] Application provided invalid, non monotonically increasing dts to muxer in stream 1: 288 >= 288"
+      ]
+    }
+  ],
+  "unpublished": [
+    {
+      "name": "Univision Kansas",
+      "evidence": "https://www.entravisionlocalmarketingsolutions.com/univision-wichita",
+      "reason": "Owner advertises Facebook Live; no continuous compatible public station stream verified."
+    },
+    {
+      "name": "Telemundo Kansas City",
+      "evidence": "https://telemundokc.com/veo-telemundo/",
+      "reason": "Official embedded page provides reception guidance rather than a verified live source."
+    },
+    {
+      "name": "KSN / KSNT",
+      "reason": "Public live pages returned HTTP 403."
+    },
+    {
+      "name": "PBS Kansas",
+      "reason": "No compatible local station video verified without geographic/DRM handling."
+    },
+    {
+      "name": "FOX Kansas",
+      "reason": "Current watch choices not verified as the local station signal."
+    }
+  ]
+}

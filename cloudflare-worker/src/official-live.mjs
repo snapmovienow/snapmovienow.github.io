@@ -6,15 +6,24 @@ export const OFFICIAL_CHANNELS=[
  {id:'local-wibw-news',name:'WIBW 13 · Topeka · EN VIVO',page:'https://www.wibw.com/livestream/',station:'wibw',contentId:'26F5B097-680A-4BA7-8D93-E4FD05413185',input:'wibw-xos1-input-1',poster:'https://image-resizer-cloud-cdn.api.graycms.quickplay.com/image/26F5B097-680A-4BA7-8D93-E4FD05413185/0-16x9.jpg?width=640',plot:'Noticias locales de Topeka y el noreste de Kansas. Fuera de los noticieros puede emitir repeticiones o noticias nacionales. Inglés.'},
  {id:'local-kake-news',name:'KAKE 10 · Wichita · EN VIVO',page:'https://www.kake.com/video/live/',poster:'https://www.kake.com/tncms/assets/v3/editorial/4/cc/4cc9c4cf-75d6-486b-bf6c-6c67d3d6bfdb/697bacf2f340f.image.png',plot:'Emisión oficial por internet de KAKE News, Wichita. Noticias en inglés; la programación puede diferir de la señal completa de ABC.'}
 ];
-const channelFor=value=>{try{const u=new URL(value);if(u.protocol!=='https:'||u.username||u.password||u.port||u.search||u.hash)return null;return OFFICIAL_CHANNELS.find(c=>c.page===u.href)||null;}catch{return null}};
+export const EXTRA_OFFICIAL_CHANNELS=[
+ {id:'local-wibw-weather',name:'WIBW First Alert Weather · Topeka · EN VIVO',page:'https://www.wibw.com/weather/',station:'wibw',contentId:'1A7202FE-BC27-49FA-80B8-2A5F6EA27420',input:'wibw-xos1-input-2',poster:'https://image-resizer-cloud-cdn.api.graycms.quickplay.com/image/1A7202FE-BC27-49FA-80B8-2A5F6EA27420/0-16x9.jpg?width=640',plot:'Tiempo, radar y alertas del noreste de Kansas, en inglés. Emisión web oficial de WIBW Weather.'},
+ {id:'local-kctv-news',name:'KCTV 5 News · Kansas City · EN VIVO',page:'https://www.kctv5.com/livestream/',home:'https://www.kctv5.com/livestream/',station:'kctv',contentId:'F4684296-4EEC-4EA5-AF50-970EC964F870',input:'kctv-xos1-input-1',poster:'https://image-resizer-cloud-cdn.api.graycms.quickplay.com/image/F4684296-4EEC-4EA5-AF50-970EC964F870/0-16x9.jpg?width=640',plot:'Noticias de Kansas City y su área metropolitana, en inglés. Emisión web de KCTV5+, con noticieros, repeticiones y programas informativos; no es la señal completa de CBS.'},
+ {id:'local-kctv-weather',name:'First Warn 5 Weather · Kansas City · EN VIVO',page:'https://www.kctv5.com/weather/',home:'https://www.kctv5.com/livestream/',station:'kctv',contentId:'4707045F-31DB-4252-9796-524EFAD67838',input:'kctv-xos1-input-2',poster:'https://image-resizer-cloud-cdn.api.graycms.quickplay.com/image/4707045F-31DB-4252-9796-524EFAD67838/0-16x9.jpg?width=640',plot:'Tiempo y radar de Kansas City las 24 horas, con alertas de First Warn 5. Emisión oficial por internet, en inglés.'},
+ {id:'local-koam-news',name:'KOAM News Now · Pittsburg/Joplin · EN VIVO',page:'https://www.koamnewsnow.com/watch/',adapter:'amagi',poster:'https://bloximages.newyork1.vip.townnews.com/koamnewsnow.com/content/tncms/custom/image/03b13794-43f2-11ed-a31e-b7235b0c9d02.jpg?resize=600%2C315',plot:'Noticias de Pittsburg, Joplin y la región Four States, en inglés. Emisión web oficial de KOAM con noticias locales y repeticiones; no es la señal completa de CBS.'}
+];
+// Append only: array positions are stable Xtream identities, including the original four.
+export const LOCAL_TV_CHANNELS=[...OFFICIAL_CHANNELS,...EXTRA_OFFICIAL_CHANNELS];
+const channelFor=value=>{try{const u=new URL(value);if(u.protocol!=='https:'||u.username||u.password||u.port||u.search||u.hash)return null;return LOCAL_TV_CHANNELS.find(c=>c.page===u.href)||null;}catch{return null}};
 export const isOfficialLivePage=value=>!!channelFor(value instanceof URL?value.href:value);
 const fail=()=>{throw Error('official_live_unavailable')};
 const safe=value=>{let u;try{u=new URL(value)}catch{fail()}if(u.protocol!=='https:'||u.port||u.username||u.password||u.hash||/[\\\u0000-\u0020]/.test(value))fail();return u;};
 export function officialMediaAllowed(page,value){
  try{
   const channel=channelFor(page),u=safe(value instanceof URL?value.href:value);if(!channel)return false;
+  if(channel.adapter==='amagi')return u.hostname==='amg01499-amg01499c3-morganmurphy-us-4207.playouts.now.amagi.tv'&&(/^\/(?:ts-us-e2-n2\/)?(?:playlist|beacon)\/amg01499-morganmurphyfast-koam-morganmurphyus\//.test(u.pathname)||/^\/playlist\d{3,4}p_\d+\.ts$/.test(u.pathname));
   if(!channel.station)return u.hostname==='townnews.g-mana.live'&&(/^\/media\/[a-f0-9-]{36}\//.test(u.pathname)||u.pathname==='/mrouter')||u.hostname==='ssai1.field59.com'&&u.pathname.startsWith('/kake1/')||u.hostname==='evrideo.g-mana.online'&&u.pathname.startsWith('/gmana-assets/slates/8a1b14d7-36b9-4901-b333-e62abebbb973/');
-  if(u.hostname===GRAY)return u.pathname.startsWith('/'+channel.input+'/'+channel.input+'.isml/');
+  if(u.hostname===GRAY)return u.pathname.startsWith('/'+channel.input+'/'+channel.input+'.isml/')||channel.station==='kctv'&&u.pathname.startsWith('/'+channel.input+'/'+channel.input+'-v4.isml/');
   if(u.hostname==='pubads.g.doubleclick.net')return /^\/ssai\/event\/[A-Za-z0-9_-]+\/master\.m3u8$/.test(u.pathname);
   if(/^rr\d+---sn-[a-z0-9-]+\.googlevideo\.com$/.test(u.hostname))return u.pathname.startsWith('/videoplayback/');
   return u.hostname==='dai.google.com'&&u.pathname.startsWith('/linear/');
@@ -32,7 +41,7 @@ const payload=value=>{if(value?.header?.code!==0||!value.data)fail();return valu
 const encode=bytes=>btoa(String.fromCharCode(...bytes)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 const text64=text=>encode(new TextEncoder().encode(text));
 async function graySession(channel,deviceId,options){
- const page='https://www.'+channel.station+'.com/livestream/',baseHeaders={Origin:new URL(page).origin,Referer:page};
+ const page=channel.home||'https://www.'+channel.station+'.com/livestream/',baseHeaders={Origin:new URL(page).origin,Referer:page};
  const access=await json(new URL('/pf/api/v3/content/fetch/quickplay-platform-auth-iam?query=%7B%7D',page).href,{...options,headers:baseHeaders});if(typeof access.access_token!=='string'||access.access_token.length>12000)fail();
  const headers={...baseHeaders,Authorization:'Bearer '+access.access_token,'X-Client-Id':'gray-gm-web'};
  const qpat=payload(await json('https://auth-gw.api.gray.quickplay.com/platform/access/token',{...options,headers,body:{deviceId}}));if(typeof qpat.token!=='string'||qpat.token.length>12000)fail();
@@ -40,12 +49,16 @@ async function graySession(channel,deviceId,options){
 }
 export async function resolveOfficialLive(page,options={}){
  const channel=channelFor(page);if(!channel)fail();
+ if(channel.adapter==='amagi'){
+  const html=await request(channel.page,options),value=html.match(/<source[^>]+src="(https:\/\/amg01499-amg01499c3-morganmurphy-us-4207\.playouts\.now\.amagi\.tv\/playlist\/amg01499-morganmurphyfast-koam-morganmurphyus\/playlist\.m3u8[^"<>]*)"/i)?.[1];
+  if(!value)fail();const url=value.replace(/&amp;/g,'&');if(!officialMediaAllowed(page,url))fail();return {url,officialPage:channel.page};
+ }
  if(!channel.station){
   const html=await request(channel.page,options),block=html.match(/<iframe[^>]+src="(https:\/\/www\.kake\.com\/tncms\/block\/\d+)"/i)?.[1];if(!block)fail();
   const player=await request(block+'/',{...options,headers:{Referer:channel.page}}),url=player.match(/<source[^>]+src="(https:\/\/townnews\.g-mana\.live\/media\/[a-f0-9-]{36}\/master\.m3u8)"/i)?.[1];if(!url||!officialMediaAllowed(page,url))fail();return {url,officialPage:channel.page};
  }
  // Confirm this exact channel is still advertised on the station's official page.
- const html=await request('https://www.'+channel.station+'.com/livestream/',options);
+ const html=await request(channel.home||'https://www.'+channel.station+'.com/livestream/',options);
  if(!html.includes('"id":"'+channel.contentId+'"'))fail();
  const deviceId=crypto.randomUUID(),auth=await graySession(channel,deviceId,options);
  const registered=payload(await json('https://device-register-service.api.gray.quickplay.com/device/app/register',{...options,headers:auth.headers,body:{uniqueId:deviceId}}));

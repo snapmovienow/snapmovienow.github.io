@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import worker,{PlaybackSession} from '../src/index.js';
-import {OFFICIAL_CHANNELS} from '../src/official-live.mjs';
+import {LOCAL_TV_CHANNELS as OFFICIAL_CHANNELS} from '../src/official-live.mjs';
 import {LOCAL_TV_SERVER,visibleLocalTv,localTvXtreamStatus} from '../src/local-tv-xtream.mjs';
 import {openLeaseStore} from '../src/lease-store.mjs';
 
@@ -30,7 +30,7 @@ globalThis.fetch=async(value,options={})=>{
  }
  sourceCalls++;assert.equal(new Headers(options.headers).has('Cookie'),false);
  if(denyOfficial)return new Response('Forbidden',{status:403});
- const station=u.hostname==='www.kwch.com'?'kwch':u.hostname==='www.wibw.com'?'wibw':null;
+ const station=u.hostname==='www.kwch.com'?'kwch':u.hostname==='www.wibw.com'?'wibw':u.hostname==='www.kctv5.com'?'kctv':null;
  if(station&&u.pathname==='/livestream/')return new Response(OFFICIAL_CHANNELS.filter(c=>c.station===station).map(c=>'"id":"'+c.contentId+'"').join(' '));
  if(station&&u.pathname.startsWith('/pf/'))return Response.json({access_token:'anonymous-test-access'});
  if(u.hostname==='auth-gw.api.gray.quickplay.com')return reply({token:'anonymous-test-qpat'});
@@ -39,6 +39,8 @@ globalThis.fetch=async(value,options={})=>{
   const c=OFFICIAL_CHANNELS.find(c=>c.contentId===body.contentId);assert.ok(c);
   return reply({contentUrl:'https://live-streaming-mcdn.api.graylive.quickplay.com/'+c.input+'/'+c.input+'.isml/index.m3u8',drm:'none',pgmBlackout:false,ssaiEnabled:true,assetKey:'fixture-asset-'+c.id,heartbeatToken:'anonymous-test-heartbeat'});
  }
+ if(u.hostname==='www.koamnewsnow.com')return new Response('<source src="https://amg01499-amg01499c3-morganmurphy-us-4207.playouts.now.amagi.tv/playlist/amg01499-morganmurphyfast-koam-morganmurphyus/playlist.m3u8?coppa=0&amp;genre=news">');
+ if(u.hostname==='amg01499-amg01499c3-morganmurphy-us-4207.playouts.now.amagi.tv'){if(u.pathname.endsWith('.m3u8'))return new Response('#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXTINF:4,\nhttps://amg01499-amg01499c3-morganmurphy-us-4207.playouts.now.amagi.tv/ts-us-e2-n2/beacon/amg01499-morganmurphyfast-koam-morganmurphyus/segment.ts\n',{headers:{'Content-Type':'application/vnd.apple.mpegurl'}});return new Response(new Uint8Array(2048).fill(0x47),{headers:{'Content-Type':'video/mp2t'}});}
  if(u.hostname==='www.kake.com'&&u.pathname==='/video/live/')return new Response('<iframe src="https://www.kake.com/tncms/block/3942264"></iframe>');
  if(u.hostname==='www.kake.com'&&u.pathname==='/tncms/block/3942264/')return new Response('<source src="https://townnews.g-mana.live/media/11111111-1111-1111-1111-111111111111/master.m3u8">');
  if(u.hostname==='pubads.g.doubleclick.net')return new Response(null,{status:302,headers:{Location:'https://dai.google.com/linear/'+u.pathname.split('/')[3]+'/master.m3u8'}});
@@ -70,12 +72,12 @@ assert.deepEqual(rows.slice(0,2),beforeRows,'provider channels and bookmarks rem
 const local=rows.slice(2),novelas=categories.find(c=>c.category_name==='CANALES-NOVELAS');
 const kansas=categories.find(c=>c.category_name==='LOCAL KANSAS');
 assert.deepEqual(local.map(c=>c.stream_id),previousIds,'moving the folder preserves existing channel IDs and favorites');
-assert.equal(local.length,4);assert.equal(new Set(local.map(c=>c.stream_id)).size,4);
+assert.equal(local.length,8);assert.equal(new Set(local.map(c=>c.stream_id)).size,8);
 for(const row of local){assert.equal(row.category_id,kansas.category_id);assert.equal(row.stream_type,'live');assert.equal(row.container_extension,'m3u8');assert.equal(new URL(row.direct_source).origin,origin);assert.ok(!row.direct_source.includes('quickplay'));assert.ok(!JSON.stringify(row).includes('anonymous-test'));}
 assert.deepEqual(await(await api('get_live_streams')).json(),rows,'refresh preserves stable numeric stream IDs');
 assert.deepEqual((await(await api('get_live_streams',{category_id:novelas.category_id},'POST')).json()).map(r=>r.name),rows.filter(r=>r.category_id===novelas.category_id).map(r=>r.name));
-assert.equal((await(await api('get_live_streams',{category_id:novelas.category_id})).json()).length,1,'the four local channels are removed from novelas');
-assert.deepEqual((await(await api('get_live_streams',{category_id:kansas.category_id},'POST')).json()).map(c=>c.stream_id),previousIds,'LOCAL KANSAS contains exactly the same four channels');
+assert.equal((await(await api('get_live_streams',{category_id:novelas.category_id})).json()).length,1,'the eight local channels are removed from novelas');
+assert.deepEqual((await(await api('get_live_streams',{category_id:kansas.category_id},'POST')).json()).map(c=>c.stream_id),previousIds,'LOCAL KANSAS contains exactly the same eight channels');
 assert.equal((await(await api('get_live_streams',{category_id:categories[2].category_id})).json()).length,1,'locals are not added to other categories');
 assert.deepEqual(await(await api('get_live_streams',{category_id:'2147483647'})).json(),[]);
 assert.deepEqual(await(await api('get_vod_streams')).json(),[]);
@@ -95,7 +97,7 @@ assert.equal((await stream(local[0].stream_id,'m3u8','movie')).status,404);
 assert.equal((await api('get_live_streams',{password:'wrong-password-fixture'})).status,401);
 // TV-only subscribers retain TV access without gaining access to exclusive VOD.
 assert.equal((await admin('save',{...customer,status:'active',expiresAt:Date.now()+86400000,permissions:{tv:true,movies:false,series:false,adults:false}})).status,200);
-assert.equal((await(await api('get_live_streams')).json()).length,6);
+assert.equal((await(await api('get_live_streams')).json()).length,10);
 assert.equal((await(await api('get_exclusive_catalog')).json()).items.length,0);
 assert.equal((await stream(local[0].stream_id)).status,200);
 assert.equal((await admin('save',{...customer,status:'active',expiresAt:Date.now()+86400000,permissions:{tv:false,movies:true,series:true,adults:false}})).status,200);
@@ -103,7 +105,7 @@ assert.deepEqual(await(await api('get_live_streams')).json(),[]);assert.equal((a
 assert.equal((await admin('save',{...customer,status:'active',expiresAt:Date.now()+86400000,permissions:{tv:true,movies:true,series:true,adults:false}})).status,200);
 const row=await accountStore.get('exclusive:item:'+OFFICIAL_CHANNELS[0].id);
 await accountStore.put('exclusive:item:'+row.id,{...row,visible:false});
-assert.equal((await(await api('get_live_streams')).json()).length,5);assert.equal((await stream(local[0].stream_id)).status,404);
+assert.equal((await(await api('get_live_streams')).json()).length,9);assert.equal((await stream(local[0].stream_id)).status,404);
 await accountStore.put('exclusive:item:'+row.id,{...row,page:OFFICIAL_CHANNELS[1].page});
 assert.equal((await stream(local[0].stream_id)).status,404,'never swap a fixed channel identity for a different station');
 await accountStore.put('exclusive:item:'+row.id,row);
@@ -125,7 +127,7 @@ assert.equal(await count(),0);
 assert.equal((await admin('save',{...customer,status:'active',expiresAt:Date.now()+86400000})).status,200);
 env.CATALOG_MAINTENANCE_ENABLED='true';
 const health=await(await worker.fetch(new Request(origin+'/health'),env)).json();
-assert.equal(health.catalog_maintenance.localTvXtream.channels.length,4);assert.equal(health.catalog_maintenance.localTvXtream.category,'LOCAL KANSAS');assert.equal(health.catalog_maintenance.localTvXtream.afterCategory,'CANALES-NOVELAS');assert.equal(health.catalog_maintenance.localTvXtream.version,2);
+assert.equal(health.catalog_maintenance.localTvXtream.channels.length,8);assert.equal(health.catalog_maintenance.localTvXtream.category,'LOCAL KANSAS');assert.equal(health.catalog_maintenance.localTvXtream.afterCategory,'CANALES-NOVELAS');assert.equal(health.catalog_maintenance.localTvXtream.version,2);
 assert.equal(visibleLocalTv({...row,adult:true},{tv:true,adults:false}),false);
 assert.equal((await localTvXtreamStatus(new Store())).channels.length,0);
 // Standalone category fallback when an upstream panel has no matching folder.
@@ -138,4 +140,4 @@ const fallbackCategories=await hooks.list({...common,action:'get_live_categories
 const duplicated=await hooks.list({...common,action:'get_live_categories',rows:[{category_id:'5',category_name:'Canales Novelas',parent_id:0},fallbackCategories[0],{category_id:'6',category_name:'Sports',parent_id:0}]});assert.deepEqual(duplicated.map(c=>c.category_name),['Canales Novelas','LOCAL KANSAS','Sports'],'insert once below normalized anchor labels');
 assert.equal((await hooks.list({...common,action:'get_live_streams',rows:[],categoryId:'987'})).length,1);
 assert.equal(registered[0].server,LOCAL_TV_SERVER);
-console.log('PASS: full Worker Xtream category merging, stable IDs, GET/POST, all four signed HLS streams and bytes, provider isolation, TV-only permission, authentication, hidden/changed sources, TS redirect, EPG, failure cleanup and fallback category.');
+console.log('PASS: full Worker Xtream category merging, stable IDs, GET/POST, all eight signed HLS streams and bytes, provider isolation, TV-only permission, authentication, hidden/changed sources, TS redirect, EPG, failure cleanup and fallback category.');

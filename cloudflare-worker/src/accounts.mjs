@@ -1,4 +1,4 @@
-import {runLocalTvImport,localTvImportStatus} from './local-tv-import.mjs';
+import {runLocalTvImport,localTvImportStatus,runLocalTvExpansion,localTvExpansionStatus} from './local-tv-import.mjs';
 import {localTvXtreamStatus,visibleLocalTv} from './local-tv-xtream.mjs';
 import {gatewayRotationStore} from './gateway-rotation-store.mjs';
 import {recordProviderHealth,rankProviderCandidates,providerCircuitState,claimProviderTrial,providerHealthSummary,failedLive404Sample} from './provider-health.mjs';
@@ -47,9 +47,10 @@ export async function accountsFetch(state,env,req){
  if(p==='/catalog-maintenance-tick'){
   await runYagaImport(store,leases,env);
   await runLocalTvImport(store,leases,env);
+  await runLocalTvExpansion(store,leases,env);
   await runCatalogMaintenance(env,{directory:(env,path,body={})=>env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_accounts_v1')).fetch('https://private/accounts'+path,{method:'POST',body:JSON.stringify(body)})});return answer({ok:true});
  }
- if(p==='/catalog-maintenance-status'){const response=await catalogMaintenanceRoute(store,leases,p,b);return answer({...await response.json(),exclusiveImport:await yagaImportStatus(store),localTvImport:await localTvImportStatus(store),localTvXtream:await localTvXtreamStatus(store)});}
+ if(p==='/catalog-maintenance-status'){const response=await catalogMaintenanceRoute(store,leases,p,b);return answer({...await response.json(),exclusiveImport:await yagaImportStatus(store),localTvImport:await localTvImportStatus(store),localTvExpansion:await localTvExpansionStatus(store),localTvXtream:await localTvXtreamStatus(store)});}
  if(['/catalog-maintenance-status','/catalog-maintenance-start','/catalog-maintenance-probe','/catalog-maintenance-observe'].includes(p))return await catalogMaintenanceRoute(store,leases,p,b);
  if(['/exclusive-read','/exclusive-item-read','/exclusive-save','/exclusive-cover-save','/exclusive-cover-read'].includes(p))return store.transaction(async tx=>{
   const response=await exclusiveCatalogRoute(tx,p,b);
