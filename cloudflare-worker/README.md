@@ -195,3 +195,45 @@ SMN_BROWSER_EXECUTABLE=/absolute/path/chromium node tests/live-audio-runtime.mjs
 `SMN_QA_MODULES` can point to a separate `node_modules` directory and
 `SMN_LIVE_AUDIO_REPORT` saves the four case results. Fixtures are generated and
 deleted locally; no provider content or credentials are needed.
+
+
+## Official Kansas local TV (2026-10-29)
+
+The owner requested KWCH news, Storm Team 12 weather, WIBW news and KAKE news
+in Exclusivo. `official-live.mjs` accepts only their four exact HTTPS station
+pages. It resolves the public players afresh, uses anonymous Quickplay device
+authorization and its required heartbeat for Gray, and retains the same Google
+SSAI advertisements as the official web player. KAKE uses its reviewed embedded
+TownNews player. No subscriber account, location override or DRM bypass exists.
+HTTP failures, blackouts, unknown sources and DRM fail closed.
+
+Catalog entries retain stable pages and IDs. Anonymous playback tokens stay in
+encrypted, session-bound media tickets or bounded process memory, never public
+feeds, logs or persistent catalog records. Cross-origin HLS resources and
+redirects are limited to reviewed station-specific media paths and Google SSAI;
+other exclusive content retains the original same-origin policy. Existing
+session, lease, revocation and movie permissions remain enforced; local TV also
+requires TV permission. The installed native API still sees movie-shaped cards
+marked EN VIVO under Exclusivo / Películas. A dedicated native channels tab
+would require an APK change; this integration does not distribute an APK.
+
+`local-tv-import.mjs` is a finite one-time owner-authorized publication through
+the existing private maintenance tick. Each station is published only after the
+production server checks its playlist, required initial resources and sampled
+video bytes. Failed stations have at most three attempts. Existing/manual
+records and later hides are preserved; no public mutation route, new cron,
+credentials or unrelated catalog changes are introduced. Confirm the matching
+`catalog_maintenance.localTvImport.requestId` and completed results in `/health`
+before claiming publication. Request: `kansas-local-tv-owner-20261029-v1`.
+
+FOX Kansas is held because its observed current live choices were national
+event streams, not confirmed local KSAS video. PBS Kansas is held because its
+player requires geographic/DRM handling outside this reviewed adapter. Neither
+is represented by a different station or a national feed under a local label.
+KSN's public page returned 403 during review and is not published.
+
+Automated tests cover the unchanged native exclusive route, authorization,
+SSAI preservation, required heartbeats, denied redirects/resources, blackouts,
+DRM, private import concurrency, manual edits and encrypted backup validation.
+Short real upstream samples decoded H.264 1280x720 and AAC for all four channels.
+They do not establish physical-device playback or continuous provider uptime.

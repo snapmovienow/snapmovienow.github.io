@@ -1,0 +1,48 @@
+{
+  "reviewDate": "2026-10-29",
+  "scope": "Official Kansas internet news/weather streams in Exclusivo; no APK distribution",
+  "channels": [
+    {
+      "id": "local-kwch-news",
+      "video": "h264",
+      "width": 1280,
+      "height": 720,
+      "audio": "aac",
+      "decodeSeconds": 4,
+      "decodeExitCode": 0
+    },
+    {
+      "id": "local-kwch-weather",
+      "video": "h264",
+      "width": 1280,
+      "height": 720,
+      "audio": "aac",
+      "decodeSeconds": 4,
+      "decodeExitCode": 0
+    },
+    {
+      "id": "local-wibw-news",
+      "video": "h264",
+      "width": 1280,
+      "height": 720,
+      "audio": "aac",
+      "decodeSeconds": 4,
+      "decodeExitCode": 0
+    },
+    {
+      "id": "local-kake-news",
+      "video": "h264",
+      "width": 1280,
+      "height": 720,
+      "audio": "aac",
+      "decodeSeconds": 4,
+      "decodeExitCode": 0
+    }
+  ],
+  "method": "Public official player authorization, ad-stitched master/variant and sampled segments, FFmpeg audio and video decode",
+  "limitations": [
+    "Upstream samples only; physical Android/Fire TV playback not tested",
+    "Production publication must be confirmed separately by matching health requestId and result",
+    "FOX local, PBS Kansas and KSN not confirmed compatible; not published"
+  ]
+}

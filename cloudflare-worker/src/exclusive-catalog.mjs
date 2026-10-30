@@ -1,3 +1,4 @@
+import {isOfficialLivePage} from './official-live.mjs';
 import {GNULA_CATALOG} from './exclusive-seed.mjs';
 import {supportedSourcePage} from './gnula-source.mjs';
 import {isAdult} from './content-permissions.mjs';
@@ -33,7 +34,7 @@ export function exclusivePublic(row,origin=''){
  const poster=row.poster?.startsWith('/')?origin+row.poster:row.poster;
  return {exclusive:true,exclusive_id:row.id,...(row.type==='movie'?{stream_id:row.id,stream_icon:poster}:{series_id:row.id,cover:poster}),source:'gnula',_server:row.profileServer,_adult:row.adult||isAdult(row),type:row.type,name:row.name,year:row.year,plot:row.plot,container_extension:row.mode==='gnula'||row.type==='series'?'m3u8':new URL(row.page).pathname.split('.').at(-1),smn_profile:{type:row.type,id:row.id,server:row.profileServer}};
 }
-export function visibleExclusive(row,permissions){return row?.visible&&permissions[row.type==='movie'?'movies':'series']&&(permissions.adults||!row.adult&&!isAdult(row));}
+export function visibleExclusive(row,permissions){return row?.visible&&(!isOfficialLivePage(row.page)||permissions.tv)&&permissions[row.type==='movie'?'movies':'series']&&(permissions.adults||!row.adult&&!isAdult(row));}
 export function selectExclusive(rows,id){for(const row of rows){if(row.id===id)return {row,media:row};for(const episode of row.episodes||[])if(episode.id===id)return {row,media:{...episode,mode:row.mode,type:'series'}};}return null;}
 function coverData(data){
  if(typeof data!=='string'||data.length>33000)fail('exclusive_cover');const match=data.match(/^data:image\/(jpeg|png);base64,([A-Za-z0-9+/]+={0,2})$/);if(!match)fail('exclusive_cover');

@@ -1,8 +1,9 @@
+import {isOfficialLivePage,resolveOfficialLive} from './official-live.mjs';
 // Resolve a saved episode page at playback time: CDN signatures are temporary.
 import {isPelisflixPage,pelisflixEmbeds} from './pelisflix-source.mjs';
 export const GNULA_PAGE_HOSTS=new Set(['www2.gnula.one','gnula.one','www.gnula.one','ww3.gnulahd.nu']);
 // The legacy API mode remains "gnula" so installed APKs need no protocol change.
-export const supportedSourcePage=u=>GNULA_PAGE_HOSTS.has(u.hostname)||isPelisflixPage(u);
+export const supportedSourcePage=u=>GNULA_PAGE_HOSTS.has(u.hostname)||isPelisflixPage(u)||isOfficialLivePage(u);
 const VOE_HOSTS=new Set(['voe.sx','teresapoliticallearn.com','megankiddifference.com','jamespatterncamera.com','ashleyhardat.com']);
 const embedPattern=/^https:\/\/(?:voe\.sx\/e\/[a-z0-9]+|uqload\.(?:com|vc)\/embed-[a-z0-9]+\.html)$/;
 export function allowedGnula(u){return u.protocol==='https:'&&/^(?:strm\d+\.uqload\.vc|ugc-cdn-caching-[a-z0-9]+\.cloudwindow-route\.com)$/.test(u.hostname)&&!u.port&&!u.username&&!u.password;}
@@ -51,6 +52,7 @@ async function episodeEmbeds(page,html,options){
  return (language?.servers||[]).map(x=>x.src).filter(x=>typeof x==='string'&&embedPattern.test(x));
 }
 export async function resolveGnula(pageUrl='https://www2.gnula.one/movie/batman-vs-superman-el-origen-de-la-justicia/',preferredEmbed=null,{signal,fetcher=fetch}={}){
+ if(isOfficialLivePage(pageUrl))return (await resolveOfficialLive(pageUrl,{signal,fetcher})).url;
  const options={signal,fetcher},page=cleanURL(pageUrl,supportedSourcePage);
  const html=await sourceText(page.href,u=>isPelisflixPage(page)?u.origin===page.origin&&isPelisflixPage(u):GNULA_PAGE_HOSTS.has(u.hostname),options);
  const embeds=[...new Set([...(!isPelisflixPage(page)&&preferredEmbed&&embedPattern.test(preferredEmbed)?[preferredEmbed]:[]),...await episodeEmbeds(page,html,options)])];
