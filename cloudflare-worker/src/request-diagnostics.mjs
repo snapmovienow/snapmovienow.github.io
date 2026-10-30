@@ -1,3 +1,4 @@
+import {setGatewayReference,takeGatewayFailure} from './portal-gateway-diagnostics.mjs';
 import {PlaybackTimings} from './playback-timings.mjs';
 import {playbackErrorCode} from './playback-outcomes.mjs';
 export const SERVICE_VERSION = '43';
@@ -13,10 +14,11 @@ function routeGroup(path) {
 // contain credentials and must never be included in diagnostics.
 export async function traceRequest(req, handler, {logger = console.error, now = Date.now, allowedOrigin, onTiming} = {}) {
   const started = now(), requestId = crypto.randomUUID(),trace=new PlaybackTimings(now);
-  let response;
+  setGatewayReference(req,requestId);let response;
   try { response = await handler(trace); }
   catch { response = Response.json({error: 'service_unavailable'}, {status: 502,
     headers: allowedOrigin ? {'Access-Control-Allow-Origin': allowedOrigin, 'Cache-Control': 'no-store'} : {}}); }
+  const portalFailure=takeGatewayFailure(req);
   const headers = new Headers(response.headers);
   const elapsedMs=Math.max(0,now()-started);
   const errorCode=playbackErrorCode(headers.get('X-SMN-Error-Code'));
@@ -34,7 +36,7 @@ export async function traceRequest(req, handler, {logger = console.error, now = 
         request_id: requestId, ray_id: rayId(req.headers.get('CF-Ray')),
         route: routeGroup(new URL(req.url).pathname),
         method: ['GET', 'HEAD', 'POST', 'OPTIONS'].includes(req.method) ? req.method : 'other',
-        status: response.status, elapsed_ms: elapsedMs, version: SERVICE_VERSION,...(trace.type?{playback:trace.snapshot(response.status,errorCode)}:{})});
+        status: response.status,...(portalFailure?{portal:portalFailure}:{}), elapsed_ms: elapsedMs, version: SERVICE_VERSION,...(trace.type?{playback:trace.snapshot(response.status,errorCode)}:{})});
     } catch { /* Diagnostics cannot interrupt a response. */ }
   }
   if(trace.type&&onTiming)try{onTiming(trace.snapshot(response.status,errorCode))}catch{} // Optional, off the playback path.

@@ -1,3 +1,4 @@
+import {gatewayDiagnostic} from './portal-gateway-diagnostics.mjs';
 import {ROTATION_HTML,ROTATION_SCRIPT} from './gateway-rotation-ui.mjs';
 import {PORTAL_SCRIPT,PORTAL_CSS,PORTAL_ICON} from './reseller-panel-assets.mjs';
 import {readPortalInput,PORTAL_ACCOUNT,PORTAL_SOURCE} from './reseller-portal.mjs';
@@ -19,20 +20,23 @@ export function createOwnerPortal({getConfig,fetcher=fetch}){return async(req,en
  if(req.method==='POST'&&(req.headers.get('Origin')!==u.origin||req.headers.get('Sec-Fetch-Site')==='cross-site'))return json({error:'owner_origin'},403);
  if(req.method==='POST'&&req.headers.get('content-type')?.split(';')[0].trim().toLowerCase()!=='application/json')return json({error:'owner_format'},415);
  const session=tokenOf(req);if(!isEntry&&!session)return ['/','/security/gateway-rotation'].includes(path)?blocked():json({error:'owner_entry_required',message:'Entra desde Panel admin reseller.'},401);
+ const diagnostic=gatewayDiagnostic('owner',req);
  try{
   const cfg=await getConfig(env);if(cfg?.accountId!==PORTAL_ACCOUNT||cfg.sourceOrigin!==PORTAL_SOURCE||!/^[a-f0-9]{64}$/.test(cfg.gatewaySecret||'')||typeof cfg.siteToken!=='string')throw Error('config_unavailable');
-  let body;
+  diagnostic.phase('input');let body;
   if(path==='/security/gateway-rotation')body={action:'read',token:session,query:{gatewayRotation:'1'}};
   else if(isEntry){const code=u.searchParams.get('code');if(u.search.length>2200||!ticket(code)||u.searchParams.size!==1)return blocked();body={action:path==='/security/enter'?'enter-security':'enter',token:code};}
   else if(path==='/api/portal/logout')body={action:'logout',token:session};
   else if(req.method==='POST')body={action:'write',token:session,input:await readPortalInput(req)};
   else {const allowed=new Set(['gatewayRotation','telegram','slug','source','sourceLineId','sourceAccountId','choices','purpose','lineId','requestId','view','q','filter','page','pageSize','version','sort','direction','paid','lineType','mode','stream','connectionLine','player','connectionSort','connectionDirection','connectionAccount','logAccount','logKind','logFrom','logTo','monitorAccount','monitorHours','monitorContent','monitorProvider']);if(u.search.length>4000||[...u.searchParams.keys()].some(k=>!allowed.has(k)))return json({error:'owner_query'},400);body={action:'read',token:session,query:Object.fromEntries(u.searchParams)};}
-  const response=await fetcher(PORTAL_SOURCE+'/api/owner-portal',{method:'POST',redirect:'manual',headers:{'Content-Type':'application/json','OAI-Sites-Authorization':'Bearer '+cfg.siteToken,'X-SNAP-Portal-Gateway-Token':cfg.gatewaySecret},body:JSON.stringify({...body,accountId:PORTAL_ACCOUNT}),signal:AbortSignal.timeout(16000)}),raw=await response.text();if(raw.length>1048576||response.status>=300&&response.status<400)throw Error('owner_reply');const result=JSON.parse(raw);
+  diagnostic.action(body);diagnostic.phase('fetch');
+  const response=await fetcher(PORTAL_SOURCE+'/api/owner-portal',{method:'POST',redirect:'manual',headers:{'Content-Type':'application/json','OAI-Sites-Authorization':'Bearer '+cfg.siteToken,'X-SNAP-Portal-Gateway-Token':cfg.gatewaySecret},body:JSON.stringify({...body,accountId:PORTAL_ACCOUNT}),signal:AbortSignal.timeout(16000)});diagnostic.status(response.status);diagnostic.phase('body');const raw=await response.text();if(raw.length>1048576||response.status>=300&&response.status<400)throw Error('owner_reply');let result=JSON.parse(raw);diagnostic.phase('scope');
   if(path==='/security/gateway-rotation'){if(!response.ok||result.actorId!=='owner'||typeof result.rotation?.enabled!=='boolean')return blocked();return new Response(ROTATION_HTML,{headers:{...headers,'Content-Type':'text/html; charset=utf-8','Content-Security-Policy':csp}});}
   if(isEntry){if(!response.ok)return blocked();if(result.ok!==true||!ticket(result.token)||!Number.isSafeInteger(result.exp)||result.exp<=Date.now()||result.exp>Date.now()+1800000)throw Error('owner_reply');return new Response(null,{status:303,headers:{...headers,Location:path==='/security/enter'?PREFIX+'/security/gateway-rotation':PREFIX+'/', 'Set-Cookie':cookie(result.token,Math.floor((result.exp-Date.now())/1000))}});}
   if(path==='/api/portal/logout')return json({ok:response.ok},response.ok?200:503,{'Set-Cookie':cookie('',0)});
   if(result?.actor){if(result.actor.id!=='owner'||result.actor.role!=='owner')throw Error('owner_scope');result.portalBase=PREFIX;result.authMode='owner-portal';}
   if(path==='/'){if(!response.ok)return blocked();if(result.actor?.role!=='owner')throw Error('owner_scope');return new Response('<!doctype html><html lang="es" data-portal-base="'+PREFIX+'" data-portal-mode="owner"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SNAPTVNOW · Panel admin reseller</title><link rel="icon" href="'+PREFIX+'/assets/favicon.svg"><link rel="stylesheet" href="'+PREFIX+'/assets/panel.css"></head><body><div id="portal-root"></div><script src="'+PREFIX+'/assets/panel.js" defer></script></body></html>',{headers:{...headers,'Content-Type':'text/html; charset=utf-8','Content-Security-Policy':csp}});}
+  diagnostic.phase('response');if(response.status>=500)result=diagnostic.failure(result,response.status,undefined,'upstream_http');
   const extra={...([401,403].includes(response.status)?{'Set-Cookie':cookie('',0)}:{}),...(response.status===429&&/^\d{1,3}$/.test(response.headers.get('Retry-After')||'')?{'Retry-After':response.headers.get('Retry-After')}:{})};return json(result,response.status,extra);
- }catch{return json({error:'owner_unavailable',message:'No se pudo comprobar el acceso. Vuelve al administrador principal.',final:false},503);}
+ }catch(error){return json(diagnostic.failure({error:'owner_unavailable',message:'No se pudo comprobar el acceso. Vuelve al administrador principal.',final:false},503,error),503);}
 };}
