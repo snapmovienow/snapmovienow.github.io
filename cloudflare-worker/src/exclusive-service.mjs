@@ -1,4 +1,5 @@
 import {isOfficialLivePage,resolveOfficialLive,officialMediaAllowed,officialHeartbeat} from './official-live.mjs';
+import {createLocalTvXtream,visibleLocalTv} from './local-tv-xtream.mjs';
 import {exclusiveURL,exclusiveId,exclusivePublic,visibleExclusive,selectExclusive} from './exclusive-catalog.mjs';
 const error=(code,status=400)=>Object.assign(Error(code),{status});
 async function mediaFetch(url,{range,head=false,signal,fetcher=fetch,allowed}={}){
@@ -14,14 +15,14 @@ async function limitedText(response,max=1000000){const reader=response.body?.get
 export function createExclusiveService(deps){
  const read=async env=>{const r=await deps.directory(env,'/exclusive-read');if(!r.ok)throw error('exclusive_unavailable',503);return r.json();};
  const resolve=async media=>isOfficialLivePage(media.page)?resolveOfficialLive(media.page,{fetcher:deps.fetcher,signal:AbortSignal.timeout(45000)}):{url:media.mode==='gnula'?await deps.resolveGnula(media.page,media.preferredEmbed||null,{signal:AbortSignal.timeout(35000)}):exclusiveURL(media.page)};
- const lookup=async(env,id,permissions)=>{const data=await read(env),selected=selectExclusive(data.items,id);if(!selected||!visibleExclusive(selected.row,permissions))throw error('title_not_allowed',404);if(selected.row.type==='series'&&selected.media===selected.row)throw error('exclusive_episode_required');return selected;};
+ const lookup=async(env,id,permissions,options={})=>{const data=await read(env),selected=selectExclusive(data.items,id);if(!selected||!(options.live?visibleLocalTv(selected.row,permissions):visibleExclusive(selected.row,permissions)))throw error('title_not_allowed',404);if(selected.row.type==='series'&&selected.media===selected.row)throw error('exclusive_episode_required');return selected;};
  const catalog=async(env,permissions,origin,options={})=>{const data=await read(env);return {revision:data.revision,items:data.items.filter(row=>visibleExclusive(row,permissions)&&(!options.legacy||row.mode==='gnula'&&!isOfficialLivePage(row.page))).sort((a,b)=>b.createdAt-a.createdAt).map(row=>exclusivePublic(row,origin))};};
  const episodes=async(env,id,permissions,origin)=>{const data=await read(env),row=data.items.find(x=>x.id===id);if(!row||row.type!=='series'||!visibleExclusive(row,permissions))throw error('title_not_allowed',404);const grouped={};for(const ep of row.episodes){(grouped[ep.season]??=[]).push({...ep,page:undefined,exclusive_id:ep.id,container_extension:row.mode==='gnula'?'m3u8':new URL(ep.page).pathname.split('.').at(-1),smn_profile:{type:'series',id:row.id,server:row.profileServer,episodeId:ep.id}});}return {info:{name:row.name,plot:row.plot,year:row.year,cover:exclusivePublic(row,origin).cover},episodes:grouped};};
  const prepare=async(req,env,session,id,options={})=>{
-  const {row,media}=await lookup(env,id,session.permissions),request_id=options.request_id||crypto.randomUUID();
+  const {row,media}=await lookup(env,id,session.permissions,options),request_id=options.request_id||crypto.randomUUID();
   const begun=await deps.directory(env,'/playback-begin',{sid:session.sid,request_id,...(Number.isSafeInteger(options.revision)?{revision:options.revision}:{})});if(!begun.ok)throw error('playback_superseded',begun.status);
   const resolved=await resolve(media),source=exclusiveURL(resolved.url);
-  const allocated=await deps.directory(env,'/exclusive-acquire',{...session,request_id,exclusiveId:id,playbackRevision:row.playbackRevision,client:deps.requestConnectionClient(req)});if(!allocated.ok){const b=await allocated.json();throw error(b.error||'exclusive_capacity',allocated.status);}
+  const allocated=await deps.directory(env,'/exclusive-acquire',{...session,request_id,exclusiveId:id,playbackRevision:row.playbackRevision,...(options.live?{live:true}:{}),client:deps.requestConnectionClient(req)});if(!allocated.ok){const b=await allocated.json();throw error(b.error||'exclusive_capacity',allocated.status);}
   const {lease_id}=await allocated.json();
   try{
    const monitor=await deps.ticket(env,{kind:'playback-quality',uid:session.uid,version:session.version,sid:session.sid,lease_id,request_id,exp:session.exp});
@@ -73,5 +74,6 @@ export function createExclusiveService(deps){
   if(play){const prepared=await prepare(req,env,auth.session,play[3]);try{return await media(new Request(prepared.url,req),env,ctx);}catch(e){await deps.directory(env,'/release',{sid:auth.session.sid,...prepared});throw e;}}
   return Response.json(action==='get_exclusive_catalog'?await catalog(env,auth.session.permissions,url.origin):await episodes(env,url.searchParams.get('series_id'),auth.session.permissions,url.origin));
  };
- return {catalog,episodes,prepare,media,admin,xtream,read,async cover(env,id){const r=await deps.directory(env,'/exclusive-cover-read',{id});if(!r.ok)return new Response('Not found',{status:404});const value=await r.json();return new Response(Uint8Array.from(atob(value.data),c=>c.charCodeAt(0)),{headers:{'Content-Type':value.type,'Cache-Control':'public, max-age=31536000, immutable','X-Content-Type-Options':'nosniff'}});}};
+ const liveXtream=(env,ctx)=>createLocalTvXtream({read,media,prepare:async(...args)=>{const prepared=await prepare(...args);return {...prepared,release:()=>deps.directory(env,'/release',{sid:args[2].sid,lease_id:prepared.lease_id,request_id:prepared.request_id})};}},env,ctx);
+ return {catalog,episodes,prepare,media,admin,xtream,liveXtream,read,async cover(env,id){const r=await deps.directory(env,'/exclusive-cover-read',{id});if(!r.ok)return new Response('Not found',{status:404});const value=await r.json();return new Response(Uint8Array.from(atob(value.data),c=>c.charCodeAt(0)),{headers:{'Content-Type':value.type,'Cache-Control':'public, max-age=31536000, immutable','X-Content-Type-Options':'nosniff'}});}};
 }

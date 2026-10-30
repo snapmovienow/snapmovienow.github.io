@@ -13,7 +13,7 @@ const safe=value=>{let u;try{u=new URL(value)}catch{fail()}if(u.protocol!=='http
 export function officialMediaAllowed(page,value){
  try{
   const channel=channelFor(page),u=safe(value instanceof URL?value.href:value);if(!channel)return false;
-  if(!channel.station)return u.hostname==='townnews.g-mana.live'&&(/^\/media\/[a-f0-9-]{36}\//.test(u.pathname)||u.pathname==='/mrouter')||u.hostname==='ssai1.field59.com'&&u.pathname.startsWith('/kake1/');
+  if(!channel.station)return u.hostname==='townnews.g-mana.live'&&(/^\/media\/[a-f0-9-]{36}\//.test(u.pathname)||u.pathname==='/mrouter')||u.hostname==='ssai1.field59.com'&&u.pathname.startsWith('/kake1/')||u.hostname==='evrideo.g-mana.online'&&u.pathname.startsWith('/gmana-assets/slates/8a1b14d7-36b9-4901-b333-e62abebbb973/');
   if(u.hostname===GRAY)return u.pathname.startsWith('/'+channel.input+'/'+channel.input+'.isml/');
   if(u.hostname==='pubads.g.doubleclick.net')return /^\/ssai\/event\/[A-Za-z0-9_-]+\/master\.m3u8$/.test(u.pathname);
   if(/^rr\d+---sn-[a-z0-9-]+\.googlevideo\.com$/.test(u.hostname))return u.pathname.startsWith('/videoplayback/');

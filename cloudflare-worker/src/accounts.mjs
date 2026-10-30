@@ -1,4 +1,5 @@
 import {runLocalTvImport,localTvImportStatus} from './local-tv-import.mjs';
+import {localTvXtreamStatus,visibleLocalTv} from './local-tv-xtream.mjs';
 import {gatewayRotationStore} from './gateway-rotation-store.mjs';
 import {recordProviderHealth,rankProviderCandidates,providerCircuitState,claimProviderTrial,providerHealthSummary,failedLive404Sample} from './provider-health.mjs';
 import {recordChannelObservation,readChannelObservations} from './provider-channel-observations.mjs';
@@ -48,7 +49,7 @@ export async function accountsFetch(state,env,req){
   await runLocalTvImport(store,leases,env);
   await runCatalogMaintenance(env,{directory:(env,path,body={})=>env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_accounts_v1')).fetch('https://private/accounts'+path,{method:'POST',body:JSON.stringify(body)})});return answer({ok:true});
  }
- if(p==='/catalog-maintenance-status'){const response=await catalogMaintenanceRoute(store,leases,p,b);return answer({...await response.json(),exclusiveImport:await yagaImportStatus(store),localTvImport:await localTvImportStatus(store)});}
+ if(p==='/catalog-maintenance-status'){const response=await catalogMaintenanceRoute(store,leases,p,b);return answer({...await response.json(),exclusiveImport:await yagaImportStatus(store),localTvImport:await localTvImportStatus(store),localTvXtream:await localTvXtreamStatus(store)});}
  if(['/catalog-maintenance-status','/catalog-maintenance-start','/catalog-maintenance-probe','/catalog-maintenance-observe'].includes(p))return await catalogMaintenanceRoute(store,leases,p,b);
  if(['/exclusive-read','/exclusive-item-read','/exclusive-save','/exclusive-cover-save','/exclusive-cover-read'].includes(p))return store.transaction(async tx=>{
   const response=await exclusiveCatalogRoute(tx,p,b);
@@ -198,7 +199,7 @@ export async function accountsFetch(state,env,req){
  if(p==='/exclusive-acquire')return store.transaction(async tx=>{
   if(!b.request_id||(await tx.get('playback:'+b.sid))?.request_id!==b.request_id)return answer({error:'playback_superseded'},410);
   const user=await tx.get('user:'+normal(b.username));if(!alive(user)||user.id!==b.uid||user.version!==b.version)return answer({error:'account_inactive'},401);
-  const found=selectExclusive((await exclusiveSnapshot(tx)).items,b.exclusiveId);if(!found||!visibleExclusive(found.row,contentPermissions(user.permissions))||found.row.playbackRevision!==b.playbackRevision)return answer({error:'title_not_allowed'},404);
+  const found=selectExclusive((await exclusiveSnapshot(tx)).items,b.exclusiveId);if(!found||!(b.live===true?visibleLocalTv(found.row,contentPermissions(user.permissions)):visibleExclusive(found.row,contentPermissions(user.permissions)))||found.row.playbackRevision!==b.playbackRevision)return answer({error:'title_not_allowed'},404);
   const local=leases.in(tx);await local.prune();await local.removeFor({sid:b.sid});const used=await local.count({uid:b.uid});
   const mediaKey=found.row.type+'|'+found.row.profileServer+'|'+b.exclusiveId+'|'+(found.media.mode==='gnula'?'m3u8':new URL(found.media.page).pathname.split('.').at(-1));
   if(used>=3){await recordConnectionLimit(tx,user,{...b,mediaKey,activity:{title:found.media===found.row?found.row.name:found.row.name+' · '+found.media.title}},used);return answer({error:'user_connection_limit'},409);}

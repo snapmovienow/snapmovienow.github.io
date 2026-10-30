@@ -133,6 +133,7 @@ export async function handleXtream(req, deps) {
     if (!auth.user.permissions[permission(kind)]) return deps.json({error: 'content_disabled'}, 403);
     const record = await deps.resolve(publicId), expected = kind === 'series' ? 'episode' : kind;
     if (!record || record.kind !== expected) return deps.json({error: 'not_found'}, 404);
+    if (deps.localLive?.matches(record)) return kind==='live'?deps.localLive.play(req,auth,{...record,ext:ext.toLowerCase()}):deps.json({error:'not_found'},404);
     if (auth.user.permissions.adults === false && !await deps.adultPolicy.allowed(record)) return deps.json({error:'adult_content_disabled'},403);
     return deps.play(req, auth.session, {...record, type: kind, ext: ext.toLowerCase()});
   }
@@ -146,6 +147,7 @@ export async function handleXtream(req, deps) {
   if (action === 'get_short_epg' || action === 'get_simple_data_table') {
     const record = await deps.resolve(params.get('stream_id'));
     if (!record || record.kind !== 'live') return deps.json({epg_listings: []});
+    if (deps.localLive?.matches(record)) return deps.json({epg_listings: []});
     if (auth.user.permissions.adults === false && !await deps.adultPolicy.allowed(record)) return deps.json({epg_listings: []});
     return deps.json(await deps.catalog(action, record.server, {stream_id: record.upstreamId, limit: String(Math.min(100, Math.max(1, Number(params.get('limit')) || 10)))}));
   }
@@ -155,8 +157,8 @@ export async function handleXtream(req, deps) {
   if (auth.user.permissions.adults === false) rows = await deps.adultPolicy.filter(action, rows);
   if (categoryId && !spec[1].endsWith('_category')) {
     const category = await deps.resolve(categoryId);
-    if (!category || category.kind !== categoryKind(spec[1])) return deps.json([]);
-    rows = rows.filter(row => row._server === category.server && String(row.category_id) === category.upstreamId);
+    rows = !category || category.kind !== categoryKind(spec[1]) ? [] : rows.filter(row => row._server === category.server && String(row.category_id) === category.upstreamId);
   }
-  return deps.json(await mapList(rows, spec[1], auth, deps, url.origin));
+  const mapped=await mapList(rows, spec[1], auth, deps, url.origin);
+  return deps.json(deps.localLive?await deps.localLive.list({action,rows:mapped,auth,base:url.origin,categoryId,catalog:deps.catalog,register:deps.register,adultPolicy:deps.adultPolicy}):mapped);
 }

@@ -100,7 +100,7 @@ export function createXtreamBridge(deps) {
       }
       return deps.json({error:lastServiceError||'live_signal_unavailable'},lastFailure||504);
     };
-    try { const special=deps.exclusives?await deps.exclusives.xtream(req,env,ctx,authenticate):null;return special||await handleXtream(req,{authenticate,catalog,register,resolve,play,adultPolicy:createAdultPolicy(catalog,rawCatalog.inspect),json:deps.json}); }
+    try { const special=deps.exclusives?await deps.exclusives.xtream(req,env,ctx,authenticate):null;return special||await handleXtream(req,{authenticate,catalog,register,resolve,play,localLive:deps.exclusives?.liveXtream?.(env,ctx),adultPolicy:createAdultPolicy(catalog,rawCatalog.inspect),json:deps.json}); }
     catch(error) { if(req.signal.aborted||['playback_superseded','playback_expired'].includes(error.message))return deps.json({error:'playback_superseded'},410);if(error.status)return deps.json({error:error.message},error.status);return deps.json({error:['media_origin_unapproved','provider_unavailable','provider_inactive','panel_unavailable'].includes(error.message)?error.message:'xtream_unavailable'},502); }
   };
 }

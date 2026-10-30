@@ -1,0 +1,47 @@
+{
+  "checkedAt": "2026-10-30T03:26:07.376Z",
+  "route": "standard Xtream live adapter and signed HLS media proxy",
+  "targetCategory": "CANALES-NOVELAS",
+  "physicalDeviceTested": false,
+  "productionCustomerConnections": false,
+  "environment": "Local adapter with a synthetic session and real official public station video/audio; full API authentication, permissions, IDs and lease invariants tested separately with full-Worker fixtures.",
+  "regressionFiles": 129,
+  "results": [
+    {
+      "id": "local-kwch-news",
+      "checkedAt": "2026-10-30T03:21:20.823Z",
+      "decodeSeconds": 4,
+      "decodeExitCode": 0,
+      "upstreamRequests": 26,
+      "errorLines": [],
+      "proxyErrors": []
+    },
+    {
+      "id": "local-kwch-weather",
+      "checkedAt": "2026-10-30T03:22:24.079Z",
+      "decodeSeconds": 4,
+      "decodeExitCode": 0,
+      "upstreamRequests": 26,
+      "errorLines": [],
+      "proxyErrors": []
+    },
+    {
+      "id": "local-wibw-news",
+      "checkedAt": "2026-10-30T03:22:53.638Z",
+      "decodeSeconds": 4,
+      "decodeExitCode": 0,
+      "upstreamRequests": 25,
+      "errorLines": [],
+      "proxyErrors": []
+    },
+    {
+      "id": "local-kake-news",
+      "checkedAt": "2026-10-30T03:26:07.376Z",
+      "decodeSeconds": 4,
+      "decodeExitCode": 0,
+      "upstreamRequests": 16,
+      "errorLines": [],
+      "proxyErrors": []
+    }
+  ]
+}

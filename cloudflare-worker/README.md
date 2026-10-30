@@ -245,3 +245,39 @@ and rejects 3xx responses rather than following them. Workers does not implement
 workerd regression performs all four adapter flows with synthetic public-player
 responses. The v2 import retries the previously unvalidated channels through the
 same media gate; stable IDs and manual/hidden records are preserved.
+
+### External Xtream apps: CANALES-NOVELAS
+
+The owner also requested these four stations in CANALES-NOVELAS in an independent
+Xtream app configured with `https://api.snaptvnow.com:443`. `local-tv-xtream.mjs`
+projects only the four already-published official records into the standard
+`get_live_categories` / `get_live_streams` responses. It reuses the existing
+category's public ID when present; otherwise it exposes one category with that
+exact name. It does not rename, move or delete any upstream channel. Stable
+numeric stream IDs use their own registry namespace, preserving provider IDs,
+favorites and existing exclusive records. This changes the DNS server's output,
+not the external app's panel or APK.
+
+Authenticated `/live/user/password/id.m3u8` requests resolve the official player
+afresh and use the same signed HLS media proxy, reviewed source restrictions,
+anonymous upstream heartbeat and three-connection account limit as Exclusivo.
+TS requests redirect to the supported HLS route; the server does not advertise
+an invented MPEG-TS rendition or fabricated EPG. The TV path requires TV
+permission, current source identity and saved visibility; it does not require
+movie access or grant access to any other exclusive title. Revoked accounts and
+manual source/visibility changes remain enforced. The four channels remain in
+the original Exclusivo view as well. `catalog_maintenance.localTvXtream` in
+`/health` reports this adapter's version, folder and eligible saved station IDs,
+not a claim of physical-device playback or a new upstream health check.
+
+The full-Worker regression covers category filtering and fallback, stable IDs,
+GET/POST, signed playlists and video bytes for all four fixtures, existing
+provider channels, TV-only accounts, hidden/changed sources, authentication,
+lease limits and revocation. No customer data, credentials or temporary HLS URLs
+are added to the repository.
+
+Fresh KAKE playback also referenced the TownNews/G-Mana public gap slate on
+`evrideo.g-mana.online`. Only the exact observed `/gmana-assets/slates/` asset
+directory `8a1b14d7-36b9-4901-b333-e62abebbb973` is accepted for KAKE; other
+directories, lookalike hosts and use by a Gray station are rejected. The official
+player's slate and advertising remain part of the feed.
