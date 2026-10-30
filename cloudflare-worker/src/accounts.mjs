@@ -1,3 +1,4 @@
+import {saveCatalogReferences,readCatalogReferences} from './catalog-references.mjs';
 import {runLocalTvImport,localTvImportStatus,runLocalTvExpansion,localTvExpansionStatus,runRegionalTvImport,regionalTvImportStatus} from './local-tv-import.mjs';
 import {localTvXtreamStatus,visibleLocalTv} from './local-tv-xtream.mjs';
 import {gatewayRotationStore} from './gateway-rotation-store.mjs';
@@ -81,6 +82,8 @@ export async function accountsFetch(state,env,req){
   if(result)return result;
   return backupRoute(store,env,p,b,leases);
  }
+ if(p==='/catalog-references-put')return answer({ok:await saveCatalogReferences(store,b)});
+ if(p==='/catalog-references-status')return answer(await store.transaction(tx=>readCatalogReferences(tx,Date.now(),b.references)));
  if(p==='/xtream-cache-inspect')return await inspectCatalog(store,b);
  if(p==='/xtream-cache-get'||p==='/xtream-cache-put')return await catalogCacheRoute(store,p,b);
  if(p==='/xtream-config')return answer(await store.get('xtream-config')||{enabled:true,version:1});

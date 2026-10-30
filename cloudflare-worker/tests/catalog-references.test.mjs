@@ -1,0 +1,34 @@
+import assert from 'node:assert/strict';
+import {referenceIds,saveCatalogReferences,readCatalogReferences,catalogReferenceObservations} from '../src/catalog-references.mjs';
+import {applyObservations} from '../src/monitor.mjs';
+class Store{constructor(){this.data=new Map();this.q=Promise.resolve()}async get(k){return structuredClone(this.data.get(k))}async put(k,v){assert.ok(JSON.stringify(v).length<100000);this.data.set(k,structuredClone(v))}async delete(k){this.data.delete(k)}transaction(fn){const r=this.q.then(()=>fn(this));this.q=r.catch(()=>{});return r}}
+const h=n=>String(n).repeat(64),t=1800000000000,store=new Store();
+const sample=(ids,at=t,extra={})=>({server:'ccf',ids,at,keyScope:h(0),scope:h(1),origin:h(2),fingerprint:h(3),...extra});
+const save=(s,now=s.at)=>saveCatalogReferences(store,{samples:[s]},now);
+assert.deepEqual(referenceIds([{stream_id:2},{stream_id:1}]),['1','2']);
+for(const rows of [[],[{}],[{stream_id:1},{stream_id:1}],Array(20001).fill({stream_id:1})])assert.equal(referenceIds(rows),null);
+assert.equal(await save(sample(['1','2'])),true);
+let r=await readCatalogReferences(store,t);assert.equal(r.servers[0].change,null);assert.equal(r.providerInventoryVerified,false);assert.equal(r.mediaHealthVerified,false);
+await save(sample(['2','3'],t+1,{fingerprint:h(4)}));r=await readCatalogReferences(store,t+1);assert.deepEqual(r.servers[0].change.missing,['1']);assert.deepEqual(r.servers[0].change.added,['3']);
+await save(sample([],t+2));assert.equal((await readCatalogReferences(store,t+2)).servers[0].lastSuccessAt,t+1);
+await save(sample(['9'],t,{fingerprint:h(5)}));assert.equal((await readCatalogReferences(store,t)).servers[0].lastSuccessAt,t+1);
+await save(sample(['8'],t+3,{scope:h(6),fingerprint:h(7)}));r=await readCatalogReferences(store,t+3);assert.equal(r.servers[0].change.at,t+1);
+await save(sample(['8'],t+4,{scope:h(6),origin:h(8),fingerprint:h(9)}));r=await readCatalogReferences(store,t+4);assert.equal(r.servers[0].change.originChanged,true);assert.equal(r.servers[0].change.missingCount,0);
+assert.equal((await readCatalogReferences(store,t+13*3600000)).servers[0].state,'stale_catalog');
+let state={createdAt:t,config:{channel:'panel'},checks:{},incidents:{},history:[],outbox:[]};
+applyObservations(state,{catalogReferences:r},t+300000);assert.equal(state.history.length,1);
+applyObservations(state,{catalogReferences:r},t+600000);assert.equal(state.history.length,1);
+const rr=structuredClone(r);rr.servers[0].change.revision=h(0);applyObservations(state,{catalogReferences:rr},t+900000);assert.equal(state.history.length,2);
+applyObservations(state,{catalogReferences:null},t+1200000);assert.equal(Object.values(state.incidents)[0].status,'open');
+assert.ok(catalogReferenceObservations(r)[1].detail.includes('no confirma retirada'));
+const large=new Store();await saveCatalogReferences(large,{samples:[sample(Array.from({length:20000},(_,i)=>String(i)))]},t);assert.ok(large.data.size<=11);
+await Promise.all([save(sample(['99'],t+8,{fingerprint:h(5)}),t+8),save(sample(['88'],t+7,{fingerprint:h(4)}),t+8)]);assert.equal((await readCatalogReferences(store,t+8)).servers[0].lastSuccessAt,t+8);
+assert.ok(!JSON.stringify([...store.data]).includes('https://'));
+console.log('PASS catalog references: scopes, bounds, ambiguous replies, timestamps, concurrency and dedup');
+
+const evidence=await readCatalogReferences(store,t+8,[{server:'ccf',id:'99'},{server:'ccf',id:'88'},{server:'missing',id:'1'}]);
+assert.deepEqual(evidence.references.map(r=>r.state),['present_in_observed_catalog','not_in_observed_catalog','no_catalog_evidence']);
+assert.equal((await readCatalogReferences(store,t+13*3600000,[{server:'ccf',id:'99'}])).references[0].state,'stale_catalog');
+const priorChange=(await readCatalogReferences(store,t+8)).servers[0].change;
+await save(sample(['55'],t+9,{keyScope:h(9),scope:h(8),origin:h(7),fingerprint:h(6)}));
+assert.deepEqual((await readCatalogReferences(store,t+9)).servers[0].change,priorChange,'signing-key rotation is not an origin change');
