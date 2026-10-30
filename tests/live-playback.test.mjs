@@ -18,3 +18,12 @@ context.currentPlay={type:'live',item:low};const before=played.length;
 await context.playLiveSelection(low);assert.equal(played.length,before);
 assert.ok(fs.readFileSync(new URL('../playback-transport.js',import.meta.url),'utf8').includes("!Hls.isSupported()&&video.canPlayType"));
 console.log('PASS: same-channel quality fallback, country/server isolation, lease release, obsolete request cancellation, HLS-first selection.');
+
+// A terminal404 on one quality must not suppress the independent fallback.
+for(const allMissing of [false,true]){
+ const attempts=[];const fixture={...context,currentPlay:{type:'live',item:original},api:async(op,b)=>{attempts.push(b.id);return{url:String(b.id),lease_id:String(b.id)}},startPlayback:async(url)=>{if(url==='1'||allMissing)throw Object.assign(Error('media_not_found'),{status:404})}};
+ vm.createContext(fixture);vm.runInContext(fs.readFileSync(new URL('../playback-lifecycle.js',import.meta.url),'utf8'),fixture);fixture.playbackLifecycle=fixture.createPlaybackLifecycle({cancel:async()=>{}});vm.runInContext(source,fixture);
+ if(allMissing)await assert.rejects(fixture.playLiveSelection(original),e=>e.status===404&&e.message==='media_not_found');else await fixture.playLiveSelection(original);
+ assert.deepEqual(attempts,[1,2]);if(!allMissing)assert.equal(fixture.currentPlay.liveActual,low);
+}
+console.log('PASS:404 alternative succeeds; all404 preserves status; each candidate attempted once.');
