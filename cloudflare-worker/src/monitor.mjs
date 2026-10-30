@@ -1,3 +1,4 @@
+import {catalogReferenceObservations,catalogFailureContext} from './catalog-references.mjs';
 import {seal,unseal} from './security.mjs';
 import {cleanCanarySettings,defaultCanarySettings,cleanCanaryResult} from './playback-canary.mjs';
 import {startupTimingObservations} from './playback-timings.mjs';
@@ -29,13 +30,13 @@ async function putState(store,state){
  await store.put('monitor',state);
 }
 const request=(path,body={})=>({method:'POST',body:JSON.stringify(body),signal:AbortSignal.timeout(45000)});
-function directory(env,path){return env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_accounts_v1')).fetch('https://private/accounts'+path,request(path))}
+function directory(env,path,body={},timeoutMs=45000){return env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_accounts_v1')).fetch('https://private/accounts'+path,{...request(path,body),signal:AbortSignal.timeout(timeoutMs)})}
 async function read(response){if(!response.ok)throw Error('monitor_source_unavailable');return response.json()}
 
 // Observations contain only bounded aggregates. Missing playback samples are
 // unknown, not proof that a failing stream has recovered.
 export function observations(snapshot,now,createdAt){
- const out=[];
+ const out=[...catalogReferenceObservations(snapshot.catalogReferences)];
  out.push(...startupTimingObservations(snapshot.playback?.timings));
  for(const part of ['providers','playback','backups'])if(snapshot[part]===null)out.push({key:'monitor:'+part,kind:'monitor',title:'No se pudo comprobar '+({providers:'el proveedor',playback:'las reproducciones',backups:'las copias'}[part]),bad:true,confirm:2});else out.push({key:'monitor:'+part,kind:'monitor',bad:false,confirm:2});
  if(snapshot.providers)for(const p of snapshot.providers.providers||[])if(/^[a-zA-Z0-9_-]{1,80}$/.test(p.id))out.push({key:'provider:'+p.id,kind:'provider',title:'Proveedor sin respuesta o sin cuentas activas',detail:p.label, bad:p.ok!==true,confirm:2});
@@ -58,13 +59,15 @@ export function observations(snapshot,now,createdAt){
  }
  for(const item of out)if(item.bad&&['startup','playback'].includes(item.kind)){
   const parts=item.key.split(':'),type=parts[item.kind==='startup'?1:2],server=item.kind==='playback'?parts[1]:null;
-  const context=mediaFailureContext(snapshot.mediaFailures,type,server,now);if(context)item.diagnosticContext=context;
+  const context=mediaFailureContext(snapshot.mediaFailures,type,server,now);if(context)item.diagnosticContext=context+(type==='live'&&snapshot.catalogReferences?.references?.length?'\nReferencia del catálogo (ámbito de una cuenta; no atribuye todos los fallos):\n'+catalogFailureContext({references:snapshot.catalogReferences.references.filter(r=>!server||r.server===server)}):'');
  }
  return out;
 }
 
 export function applyObservations(state,snapshot,now){
  const changed=[],bucket=Math.floor(now/interval),seen=new Set();
+ if(snapshot.catalogReferences)state.catalogReferences={...snapshot.catalogReferences,collectedAt:now,readStatus:'ok'};
+ else if(snapshot.catalogReferences===null)state.catalogReferences={readStatus:'unavailable',collectedAt:now};
  for(const item of observations(snapshot,now,state.createdAt)){
   if(item.kind==='playback'&&!item.bad&&!state.incidents[item.key])continue;
   seen.add(item.key);const previous=state.checks[item.key]||{bad:0,good:0};
@@ -72,12 +75,12 @@ export function applyObservations(state,snapshot,now){
   if(previous.bucket!==bucket&&(!item.sampleAt||previous.sampleAt!==item.sampleAt)){previous.bad=item.bad?previous.bad+1:0;previous.good=item.bad?0:previous.good+1;previous.bucket=bucket;if(item.sampleAt)previous.sampleAt=item.sampleAt}
   state.checks[item.key]=previous;const incident=state.incidents[item.key];
   if(item.bad&&previous.bad>=item.confirm){
-   if(!incident||incident.status==='resolved'){
+   if(!incident||incident.status==='resolved'||item.kind==='catalog'&&item.revision&&item.revision!==incident.revision){
     if(Object.values(state.incidents).filter(i=>i.status==='open').length>=80)continue;
-    state.incidents[item.key]={id:crypto.randomUUID(),key:item.key,kind:item.kind,title:item.title,detail:item.detail||'',status:'open',openedAt:now,lastObservedAt:now,waitingForSamples:false,...(item.diagnosticContext?{diagnosticContext:item.diagnosticContext}:{})};
+    state.incidents[item.key]={id:crypto.randomUUID(),key:item.key,kind:item.kind,...(item.revision?{revision:item.revision}:{}),title:item.title,detail:item.detail||'',status:'open',openedAt:now,lastObservedAt:now,waitingForSamples:false,...(item.diagnosticContext?{diagnosticContext:item.diagnosticContext}:{})};
     changed.push({...state.incidents[item.key],kind:'opened'});
    }else Object.assign(incident,{title:item.title,detail:item.detail||'',lastObservedAt:now,waitingForSamples:false,...(item.diagnosticContext?{diagnosticContext:item.diagnosticContext}:{})});
-  }else if(!item.bad&&incident?.status==='open'&&previous.good>=item.confirm){incident.status='resolved';incident.resolvedAt=now;incident.lastObservedAt=now;incident.waitingForSamples=false;changed.push({...incident,kind:'resolved',title:({startup:'Inicio de contenido',canary:'Prueba automática de reproducción',playback:'Reproducción',provider:'Disponibilidad del proveedor',monitor:'Comprobación del sistema',backup:'Comprobación de copias'}[incident.kind])||'Comprobación del servicio',detail:item.detail||'Comprobación correcta.'})}
+  }else if(!item.bad&&incident?.status==='open'&&previous.good>=item.confirm){incident.status='resolved';incident.resolvedAt=now;incident.lastObservedAt=now;incident.waitingForSamples=false;changed.push({...incident,kind:'resolved',title:({startup:'Inicio de contenido',canary:'Prueba automática de reproducción',playback:'Reproducción',provider:'Disponibilidad del proveedor',monitor:'Comprobación del sistema',backup:'Comprobación de copias',catalog:'Actualización del catálogo observado (no valida reproducción)'}[incident.kind])||'Comprobación del servicio',detail:item.detail||'Comprobación correcta.'})}
  }
  for(const [key,incident]of Object.entries(state.incidents)){
   if(incident.status!=='open'||seen.has(key))continue;
@@ -100,7 +103,7 @@ export function applyObservations(state,snapshot,now){
  return state;
 }
 
-function publicStatus(state,env){return {settings:settings(state.config),createdAt:state.createdAt,lastCheckedAt:state.lastCheckedAt,intervalMinutes:5,monitorStale:!state.lastCheckedAt||Date.now()-state.lastCheckedAt>15*60000,incidents:Object.values(state.incidents).sort((a,b)=>b.openedAt-a.openedAt),history:state.history,delivery:state.delivery,pendingEmails:state.outbox.length,canary:canaryStatus(state,env),thresholds:{failedStarts:5,errors:5,minStarts:5,stallPercent:2,startupMs:10000,backupHours:36,playbackWindowMinutes:15}}}
+function publicStatus(state,env){return {settings:settings(state.config),createdAt:state.createdAt,lastCheckedAt:state.lastCheckedAt,intervalMinutes:5,catalogReferences:state.catalogReferences||{readStatus:'not_observed'},monitorStale:!state.lastCheckedAt||Date.now()-state.lastCheckedAt>15*60000,incidents:Object.values(state.incidents).sort((a,b)=>b.openedAt-a.openedAt),history:state.history,delivery:state.delivery,pendingEmails:state.outbox.length,canary:canaryStatus(state,env),thresholds:{failedStarts:5,errors:5,minStarts:5,stallPercent:2,startupMs:10000,backupHours:36,playbackWindowMinutes:15}}}
 function mail(event,config){return {from:config.from,to:[config.to],subject:'SNAPTVNOW · '+(event.changes.every(c=>c.kind!=='opened')?'Recuperación / comprobación':'Aviso del sistema'),text:'SNAPTVNOW\n'+new Date(event.createdAt).toISOString()+'\n\n'+event.changes.map(c=>({opened:'INCIDENCIA',resolved:'RECUPERADO',removed:'CONEXIÓN RETIRADA',test:'PRUEBA'}[c.kind])+': '+c.title+(c.detail?'\n'+c.detail:'')+(c.diagnosticContext?'\n\n'+(c.kind==='resolved'?'Referencia del fallo anterior; esta recuperación agrupada no confirma la reparación de cada contenido:':'Contenidos con fallos observados del mismo tipo; no atribuye toda la alerta a estos contenidos:')+'\n'+c.diagnosticContext:'')).join('\n\n')+'\n\nRevisa el panel: https://app.snaptvnow.com/admin.html'} }
 
 export class OperationsMonitor{
@@ -155,6 +158,7 @@ export class OperationsMonitor{
   if(observations(snapshot,Date.now(),Date.now()).some(item=>item.bad&&['startup','playback'].includes(item.kind))){
    try{const data=await read(await binding.get(binding.idFromName('__smn_provider_refresh_v1')).fetch('https://private/monitor-media-failures',{...request('/monitor-media-failures'),signal:AbortSignal.timeout(2000)}));snapshot.mediaFailures=Array.isArray(data.items)?data.items:[]}catch{snapshot.mediaFailures=[]}
   }
+  try{const references=(snapshot.mediaFailures||[]).filter(r=>r.type==='live'&&r.lastObservedAt>Date.now()-15*60000&&r.lastObservedAt<=Date.now()&&r.httpStatuses?.includes(404)).slice(0,3).map(({server,id})=>({server,id}));snapshot.catalogReferences=await read(await directory(this.env,'/catalog-references-status',{references},2000))}catch{snapshot.catalogReferences=null}
   return snapshot;
  }
  async runCanary(manual=false){

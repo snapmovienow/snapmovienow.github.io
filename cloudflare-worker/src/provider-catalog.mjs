@@ -1,3 +1,4 @@
+import {referenceIds} from './catalog-references.mjs';
 import {encodeCatalog,decodeCatalog} from './catalog-cache.mjs';
 import {countSeriesEpisodes} from './xtream-series.mjs';
 import {selectCatalogDetail} from './catalog-detail-race.mjs';
@@ -118,7 +119,8 @@ export function createProviderCatalog(deps, env, ctx,{timeoutMs=CATALOG_FETCH_MS
         try{credentials=await within(deps.catalogCredentials(env,server,ctx));}finally{stopSetup?.();}
         if(!credentials.length)throw Error('server_unavailable');
         const groups=new Map();for(const account of credentials){if(!groups.has(account.server))groups.set(account.server,[]);groups.get(account.server).push(account)}
-        let fresh=0;const replies=await Promise.all([...groups].map(async([id,accounts])=>{
+        const references=[];let fresh=0;const replies=await Promise.all([...groups].map(async([id,accounts])=>{
+          const candidates=new WeakMap();
           const safe=await selectCatalogDetail(accounts,async(account,signal)=>{
               const url=new URL(account.origin+'/player_api.php');
               url.searchParams.set('username',account.username);url.searchParams.set('password',account.password);url.searchParams.set('action',action);
@@ -131,14 +133,19 @@ export function createProviderCatalog(deps, env, ctx,{timeoutMs=CATALOG_FETCH_MS
               try{raw=await readProviderJSON(url,{signal:requestSignal,timeoutMs:Math.max(1,Math.min(6000,timeoutMs*.75,deadline-Date.now())),directCcfEntry:env.CCF_ENTRY_TRANSPORT==='tcp',maxBytes:Infinity});}finally{stopProvider?.();}
               if(list&&!Array.isArray(raw)||!validProviderReply(action,raw))return null;
               const data=publicMetadata(raw,account),scoped=Array.isArray(data)?data.map(item=>({...item,_server:id})):data;
+              if(action==='get_live_streams'&&!Object.keys(params).length&&referenceIds(scoped))candidates.set(scoped,{account,at:Date.now()});
               return {data:scoped,empty:Array.isArray(scoped)?!scoped.length:action==='get_series_info'&&!countSeriesEpisodes(scoped)};
             },{hedgeMs,timeoutMs:Math.max(0,deadline-Date.now()),maxConcurrent:2});
-          if(safe!==null){fresh++;return safe}
+          if(safe!==null){fresh++;const evidence=candidates.get(safe);if(evidence)references.push({server:id,ids:referenceIds(safe),account:evidence.account,at:evidence.at});return safe}
           const retained=Array.isArray(saved?.data)?saved.data.filter(row=>row._server===id):null;
           return retained?.length?retained:null;
         }));
         const good=replies.filter(x=>x!==null);if(!good.length||!fresh)throw Error('upstream_unavailable');
         const data=good.every(Array.isArray)?good.flat():good[0];
+        if(action==='get_live_streams'&&fresh===groups.size&&references.length===groups.size){
+          const record=async()=>{try{const samples=await Promise.all(references.map(async r=>{const origin=await fingerprint(env.TICKET_SECRET,r.account.origin),scope=await fingerprint(env.TICKET_SECRET,JSON.stringify([r.account.origin,r.account.username]));return {server:r.server,ids:r.ids,at:r.at,origin,scope,keyScope:await fingerprint(env.TICKET_SECRET,'catalog-reference-key-v1'),fingerprint:await fingerprint(env.TICKET_SECRET,JSON.stringify([origin,scope,r.ids]))}}));await deps.registry(env,'/catalog-references-put',{samples})}catch{}};
+          if(ctx?.waitUntil)ctx.waitUntil(record());
+        }
         const savedAt=fresh===groups.size?Date.now():saved?.savedAt||Date.now();remember(data,savedAt);
         if(persist&&fresh===groups.size){const save=async()=>{try{const bytes=await encodeCatalog(data);let content='';for(let i=0;i<bytes.length;i+=24000)content+=String.fromCharCode(...bytes.slice(i,i+24000));await deps.registry(env,'/xtream-cache-put',{key,content:btoa(content),...(detail?{kind:'detail',savedAt}:{})})}catch{}};if(ctx?.waitUntil)ctx.waitUntil(save());else await within(save()).catch(()=>{})}
         return data;

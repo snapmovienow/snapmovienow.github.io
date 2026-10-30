@@ -15,7 +15,7 @@ const monitor=new OperationsMonitor({storage:store},env),call=async(path,body={}
 let mailCalls=[];globalThis.fetch=async(url,options)=>{mailCalls.push({url,options});return Response.json({id:'synthetic-email'})};
 const next=async()=>{now+=300000;return call('/tick')},open=async()=> (await call('/status')).data.incidents.filter(i=>i.status==='open');
 try{
- await call('/tick');assert.equal((await open()).length,0);assert.equal(reads,3);
+ await call('/tick');assert.equal((await open()).length,0);assert.equal(reads,4);
  providers.providers[0].ok=false;await next();assert.equal((await open()).length,0,'one provider timeout cannot send an alarm');
  const count=reads;await call('/tick');assert.equal(reads,count,'duplicate cron cannot re-probe or amplify a failure');
  await next();assert.equal((await open()).length,1);assert.equal((await call('/status')).data.history.length,1);
