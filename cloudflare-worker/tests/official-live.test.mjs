@@ -8,6 +8,7 @@ const asset='test-asset-identifier',master='https://dai.google.com/linear/hls/pa
 let denied=false,adRedirect=false,redirectAttack=false,blackout=false,htmlSegment=false,drm=false,heartbeatCalls=0;
 const reply=data=>Response.json({header:{code:0},data});
 const fetcher=async(value,options={})=>{
+ assert.equal(options.redirect,'manual','use a Workers-supported redirect mode and reject 3xx responses explicitly');
  const u=new URL(value),headers=new Headers(options.headers),body=options.body?JSON.parse(options.body):null;calls.push({url:u.href,headers,body});
  if(denied)return new Response('Forbidden',{status:403});
  if(u.hostname==='www.kwch.com'&&u.pathname==='/livestream/')return new Response('"id":"'+kwch.contentId+'"');

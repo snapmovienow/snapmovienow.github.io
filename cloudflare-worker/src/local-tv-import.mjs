@@ -1,8 +1,8 @@
 import {exclusiveSnapshot,exclusiveCatalogRoute} from './exclusive-catalog.mjs';
 import {inspectCatalogSource} from './catalog-source-check.mjs';
 import {OFFICIAL_CHANNELS} from './official-live.mjs';
-const KEY='catalog-import:kansas-local-tv-20261029-v1';
-export const LOCAL_TV_REQUEST='kansas-local-tv-owner-20261029-v1';
+const KEY='catalog-import:kansas-local-tv-20261029-v2';
+export const LOCAL_TV_REQUEST='kansas-local-tv-owner-20261029-v2';
 export async function localTvImportStatus(store){
  const job=await store.get(KEY);return job?Object.fromEntries(['requestId','state','attempts','startedAt','finishedAt','results'].filter(k=>job[k]!==undefined).map(k=>[k,job[k]])):{requestId:LOCAL_TV_REQUEST,state:'pending'};
 }

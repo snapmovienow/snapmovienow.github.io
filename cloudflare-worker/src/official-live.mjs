@@ -25,7 +25,7 @@ async function small(response,max=1000000){
  try{for(;;){const {done,value}=await reader.read();if(done)break;size+=value.length;if(size>max)fail();result+=decoder.decode(value,{stream:true});}return result+decoder.decode();}finally{await reader.cancel().catch(()=>{});reader.releaseLock();}
 }
 async function request(url,{fetcher=fetch,signal,headers={},body}={}){
- const response=await fetcher(url,{method:body?'POST':'GET',redirect:'error',signal:signal?AbortSignal.any([signal,AbortSignal.timeout(15000)]):AbortSignal.timeout(15000),headers:{'User-Agent':'Mozilla/5.0',...headers,...(body?{'Content-Type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})});return small(response);
+ const response=await fetcher(url,{method:body?'POST':'GET',redirect:'manual',signal:signal?AbortSignal.any([signal,AbortSignal.timeout(15000)]):AbortSignal.timeout(15000),headers:{'User-Agent':'Mozilla/5.0',...headers,...(body?{'Content-Type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})});return small(response);
 }
 async function json(url,options){try{return JSON.parse(await request(url,options))}catch{fail()}}
 const payload=value=>{if(value?.header?.code!==0||!value.data)fail();return value.data;};

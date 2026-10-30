@@ -224,7 +224,7 @@ video bytes. Failed stations have at most three attempts. Existing/manual
 records and later hides are preserved; no public mutation route, new cron,
 credentials or unrelated catalog changes are introduced. Confirm the matching
 `catalog_maintenance.localTvImport.requestId` and completed results in `/health`
-before claiming publication. Request: `kansas-local-tv-owner-20261029-v1`.
+before claiming publication. Request: `kansas-local-tv-owner-20261029-v2`.
 
 FOX Kansas is held because its observed current live choices were national
 event streams, not confirmed local KSAS video. PBS Kansas is held because its
@@ -237,3 +237,11 @@ SSAI preservation, required heartbeats, denied redirects/resources, blackouts,
 DRM, private import concurrency, manual edits and encrypted backup validation.
 Short real upstream samples decoded H.264 1280x720 and AAC for all four channels.
 They do not establish physical-device playback or continuous provider uptime.
+
+
+The local TV adapter uses `redirect: manual` for page and anonymous API requests
+and rejects 3xx responses rather than following them. Workers does not implement
+`redirect: error`; Node-only mocks did not catch that difference. The real
+workerd regression performs all four adapter flows with synthetic public-player
+responses. The v2 import retries the previously unvalidated channels through the
+same media gate; stable IDs and manual/hidden records are preserved.
