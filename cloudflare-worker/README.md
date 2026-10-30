@@ -246,14 +246,16 @@ workerd regression performs all four adapter flows with synthetic public-player
 responses. The v2 import retries the previously unvalidated channels through the
 same media gate; stable IDs and manual/hidden records are preserved.
 
-### External Xtream apps: CANALES-NOVELAS
+### External Xtream apps: LOCAL KANSAS
 
-The owner also requested these four stations in CANALES-NOVELAS in an independent
-Xtream app configured with `https://api.snaptvnow.com:443`. `local-tv-xtream.mjs`
+The owner requested these four stations in their own LOCAL KANSAS folder directly
+after CANALES-NOVELAS in an independent Xtream app configured with
+`https://api.snaptvnow.com:443`. `local-tv-xtream.mjs`
 projects only the four already-published official records into the standard
-`get_live_categories` / `get_live_streams` responses. It reuses the existing
-category's public ID when present; otherwise it exposes one category with that
-exact name. It does not rename, move or delete any upstream channel. Stable
+`get_live_categories` / `get_live_streams` responses. It exposes one dedicated
+category, inserted immediately after CANALES-NOVELAS in server order (appended
+if that anchor is absent). Only the four local stations move out of NOVELAS;
+upstream category/channel records and their relative order remain unchanged. Stable
 numeric stream IDs use their own registry namespace, preserving provider IDs,
 favorites and existing exclusive records. This changes the DNS server's output,
 not the external app's panel or APK.

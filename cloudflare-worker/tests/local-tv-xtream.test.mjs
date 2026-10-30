@@ -61,16 +61,22 @@ const api=(action,params={},method='GET')=>{const query=new URLSearchParams({...
 const stream=(id,ext='m3u8',kind='live')=>worker.fetch(new Request(origin+'/'+kind+'/'+customer.username+'/'+customer.password+'/'+id+'.'+ext,{headers:{'CF-Connecting-IP':'198.51.100.12','User-Agent':'External-Xtream-Fixture'}}),env);
 const beforeCategories=await(await api('get_live_categories')).json(),beforeRows=await(await api('get_live_streams')).json();
 for(const channel of OFFICIAL_CHANNELS)assert.equal((await admin('exclusive-save',{revision:0,item:{...channel,type:'movie',mode:'gnula',source:'TV LOCAL OFICIAL',year:null,adult:false,visible:true,episodes:[]}})).status,200);
+const previousIds=await(await env.PLAYBACK_SESSIONS.get('__smn_xtream_catalog_v1').fetch('https://private/accounts/xtream-register',{method:'POST',body:JSON.stringify({entries:OFFICIAL_CHANNELS.map((c,i)=>({kind:'live',server:LOCAL_TV_SERVER,upstreamId:String(i+1),ext:'m3u8'}))})})).json();
 const accountStore=objects.get('__smn_accounts_v1').state.storage;
 const rows=await(await api('get_live_streams')).json(),categories=await(await api('get_live_categories')).json();
-assert.deepEqual(categories,beforeCategories,'reuse the provider category without changing its identity');
+assert.deepEqual(categories.filter(c=>c.category_name!=='LOCAL KANSAS'),beforeCategories,'keep all provider category identities and their relative order');
+assert.deepEqual(categories.map(c=>c.category_name),['CANALES-NOVELAS','LOCAL KANSAS','CANALES-DEPORTES']);
 assert.deepEqual(rows.slice(0,2),beforeRows,'provider channels and bookmarks remain unchanged');
 const local=rows.slice(2),novelas=categories.find(c=>c.category_name==='CANALES-NOVELAS');
+const kansas=categories.find(c=>c.category_name==='LOCAL KANSAS');
+assert.deepEqual(local.map(c=>c.stream_id),previousIds,'moving the folder preserves existing channel IDs and favorites');
 assert.equal(local.length,4);assert.equal(new Set(local.map(c=>c.stream_id)).size,4);
-for(const row of local){assert.equal(row.category_id,novelas.category_id);assert.equal(row.stream_type,'live');assert.equal(row.container_extension,'m3u8');assert.equal(new URL(row.direct_source).origin,origin);assert.ok(!row.direct_source.includes('quickplay'));assert.ok(!JSON.stringify(row).includes('anonymous-test'));}
+for(const row of local){assert.equal(row.category_id,kansas.category_id);assert.equal(row.stream_type,'live');assert.equal(row.container_extension,'m3u8');assert.equal(new URL(row.direct_source).origin,origin);assert.ok(!row.direct_source.includes('quickplay'));assert.ok(!JSON.stringify(row).includes('anonymous-test'));}
 assert.deepEqual(await(await api('get_live_streams')).json(),rows,'refresh preserves stable numeric stream IDs');
 assert.deepEqual((await(await api('get_live_streams',{category_id:novelas.category_id},'POST')).json()).map(r=>r.name),rows.filter(r=>r.category_id===novelas.category_id).map(r=>r.name));
-assert.equal((await(await api('get_live_streams',{category_id:categories[1].category_id})).json()).length,1,'locals are not added to other categories');
+assert.equal((await(await api('get_live_streams',{category_id:novelas.category_id})).json()).length,1,'the four local channels are removed from novelas');
+assert.deepEqual((await(await api('get_live_streams',{category_id:kansas.category_id},'POST')).json()).map(c=>c.stream_id),previousIds,'LOCAL KANSAS contains exactly the same four channels');
+assert.equal((await(await api('get_live_streams',{category_id:categories[2].category_id})).json()).length,1,'locals are not added to other categories');
 assert.deepEqual(await(await api('get_live_streams',{category_id:'2147483647'})).json(),[]);
 assert.deepEqual(await(await api('get_vod_streams')).json(),[]);
 assert.deepEqual(await(await api('get_series')).json(),[]);
@@ -119,7 +125,7 @@ assert.equal(await count(),0);
 assert.equal((await admin('save',{...customer,status:'active',expiresAt:Date.now()+86400000})).status,200);
 env.CATALOG_MAINTENANCE_ENABLED='true';
 const health=await(await worker.fetch(new Request(origin+'/health'),env)).json();
-assert.equal(health.catalog_maintenance.localTvXtream.channels.length,4);assert.equal(health.catalog_maintenance.localTvXtream.category,'CANALES-NOVELAS');
+assert.equal(health.catalog_maintenance.localTvXtream.channels.length,4);assert.equal(health.catalog_maintenance.localTvXtream.category,'LOCAL KANSAS');assert.equal(health.catalog_maintenance.localTvXtream.afterCategory,'CANALES-NOVELAS');assert.equal(health.catalog_maintenance.localTvXtream.version,2);
 assert.equal(visibleLocalTv({...row,adult:true},{tv:true,adults:false}),false);
 assert.equal((await localTvXtreamStatus(new Store())).channels.length,0);
 // Standalone category fallback when an upstream panel has no matching folder.
@@ -128,7 +134,8 @@ const hooks=createLocalTvXtream({read:async()=>({items:[row]})},{},null),registe
 const register=async entries=>entries.map(e=>{registered.push(e);return e.kind==='live_category'?987:988;});
 const auth={user:{permissions:{tv:true,adults:false}},username:'fixture',password:'fixture'};
 const common={auth,base:origin,register,catalog:async()=>[],adultPolicy:{filter:async(a,r)=>r}};
-const fallbackCategories=await hooks.list({...common,action:'get_live_categories',rows:[]});assert.deepEqual(fallbackCategories,[{category_id:'987',category_name:'CANALES-NOVELAS',parent_id:0}]);
+const fallbackCategories=await hooks.list({...common,action:'get_live_categories',rows:[]});assert.deepEqual(fallbackCategories,[{category_id:'987',category_name:'LOCAL KANSAS',parent_id:0}]);
+const duplicated=await hooks.list({...common,action:'get_live_categories',rows:[{category_id:'5',category_name:'Canales Novelas',parent_id:0},fallbackCategories[0],{category_id:'6',category_name:'Sports',parent_id:0}]});assert.deepEqual(duplicated.map(c=>c.category_name),['Canales Novelas','LOCAL KANSAS','Sports'],'insert once below normalized anchor labels');
 assert.equal((await hooks.list({...common,action:'get_live_streams',rows:[],categoryId:'987'})).length,1);
 assert.equal(registered[0].server,LOCAL_TV_SERVER);
 console.log('PASS: full Worker Xtream category merging, stable IDs, GET/POST, all four signed HLS streams and bytes, provider isolation, TV-only permission, authentication, hidden/changed sources, TS redirect, EPG, failure cleanup and fallback category.');
