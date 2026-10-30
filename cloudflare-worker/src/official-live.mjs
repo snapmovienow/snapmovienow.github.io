@@ -16,6 +16,7 @@ export function officialMediaAllowed(page,value){
   if(!channel.station)return u.hostname==='townnews.g-mana.live'&&(/^\/media\/[a-f0-9-]{36}\//.test(u.pathname)||u.pathname==='/mrouter')||u.hostname==='ssai1.field59.com'&&u.pathname.startsWith('/kake1/');
   if(u.hostname===GRAY)return u.pathname.startsWith('/'+channel.input+'/'+channel.input+'.isml/');
   if(u.hostname==='pubads.g.doubleclick.net')return /^\/ssai\/event\/[A-Za-z0-9_-]+\/master\.m3u8$/.test(u.pathname);
+  if(/^rr\d+---sn-[a-z0-9-]+\.googlevideo\.com$/.test(u.hostname))return u.pathname.startsWith('/videoplayback/');
   return u.hostname==='dai.google.com'&&u.pathname.startsWith('/linear/');
  }catch{return false;}
 }

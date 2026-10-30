@@ -5,7 +5,7 @@ import {createExclusiveService} from '../src/exclusive-service.mjs';
 import {exclusiveCatalogRoute,exclusivePublic,visibleExclusive,exportExclusives,validExclusiveBackup} from '../src/exclusive-catalog.mjs';
 const kwch=OFFICIAL_CHANNELS[0],kake=OFFICIAL_CHANNELS[3],calls=[];
 const asset='test-asset-identifier',master='https://dai.google.com/linear/hls/pa/event/'+asset+'/master.m3u8',variant='https://dai.google.com/linear/hls/pa/event/'+asset+'/variant.m3u8',segment='https://live-streaming-mcdn.api.graylive.quickplay.com/'+kwch.input+'/'+kwch.input+'.isml/segment.ts';
-let denied=false,redirectAttack=false,blackout=false,htmlSegment=false,drm=false,heartbeatCalls=0;
+let denied=false,adRedirect=false,redirectAttack=false,blackout=false,htmlSegment=false,drm=false,heartbeatCalls=0;
 const reply=data=>Response.json({header:{code:0},data});
 const fetcher=async(value,options={})=>{
  const u=new URL(value),headers=new Headers(options.headers),body=options.body?JSON.parse(options.body):null;calls.push({url:u.href,headers,body});
@@ -27,6 +27,8 @@ const fetcher=async(value,options={})=>{
  if(u.hostname==='pubads.g.doubleclick.net')return new Response(null,{status:302,headers:{location:redirectAttack?'https://127.0.0.1/private':master}});
  if(u.href===master)return new Response('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=500000\n'+variant+'\n',{headers:{'Content-Type':'application/vnd.apple.mpegurl'}});
  if(u.href===variant)return new Response('#EXTM3U\n#EXTINF:3,\n'+segment+'\n',{headers:{'Content-Type':'application/vnd.apple.mpegurl'}});
+ if(u.href===segment&&adRedirect)return new Response(null,{status:302,headers:{location:'https://rr1---sn-test.googlevideo.com/videoplayback/ad.ts'}});
+ if(u.hostname==='rr1---sn-test.googlevideo.com')return new Response(new Uint8Array(2048).fill(0x47),{headers:{'Content-Type':'video/mp2t'}});
  if(u.href===segment)return new Response(htmlSegment?'<html>login</html>':new Uint8Array(2048).fill(0x47),{headers:{'Content-Type':htmlSegment?'text/html':'video/mp2t'}});
  if(u.hostname==='townnews.g-mana.live')return new Response('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=500000\nplaylist_0.m3u8\n',{headers:{'Content-Type':'application/vnd.apple.mpegurl'}});
  throw Error('unexpected fixture request');
@@ -38,6 +40,8 @@ assert.ok(officialMediaAllowed(kake.page,'https://ssai1.field59.com/kake1/a.ts')
 assert.equal(officialMediaAllowed(kake.page,variant),false);assert.equal(officialMediaAllowed(kwch.page,'https://user:pass@dai.google.com/linear/a.ts'),false);
 let resolved=await resolveOfficialLive(kwch.page,{fetcher});assert.ok(resolved.url.startsWith('https://pubads.g.doubleclick.net/ssai/event/'));assert.ok(resolved.officialHeartbeat);assert.equal(new URL(resolved.url).searchParams.get('ads.npa'),'1');
 assert.deepEqual(await inspectCatalogSource({mode:'gnula',page:kwch.page},{fetcher}),{ok:true,check:'playlist_and_segment'});
+adRedirect=true;assert.equal((await inspectCatalogSource({mode:'gnula',page:kwch.page},{fetcher})).ok,true,'official Google SSAI ad redirects must remain playable');adRedirect=false;
+for(const u of ['https://rr1---sn-test.googlevideo.com.evil.org/videoplayback/ad.ts','https://rr1---sn-test.googlevideo.com/other/ad.ts'])assert.equal(officialMediaAllowed(kwch.page,u),false);
 redirectAttack=true;assert.equal((await inspectCatalogSource({mode:'gnula',page:kwch.page},{fetcher})).ok,false);assert.ok(!calls.some(c=>new URL(c.url).hostname==='127.0.0.1'));redirectAttack=false;
 htmlSegment=true;assert.equal((await inspectCatalogSource({mode:'gnula',page:kwch.page},{fetcher})).ok,false);htmlSegment=false;
 for(const flag of ['blackout','drm','denied']){

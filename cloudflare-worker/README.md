@@ -210,7 +210,7 @@ HTTP failures, blackouts, unknown sources and DRM fail closed.
 Catalog entries retain stable pages and IDs. Anonymous playback tokens stay in
 encrypted, session-bound media tickets or bounded process memory, never public
 feeds, logs or persistent catalog records. Cross-origin HLS resources and
-redirects are limited to reviewed station-specific media paths and Google SSAI;
+redirects are limited to reviewed station-specific media paths, Google SSAI and its Googlevideo ad CDN;
 other exclusive content retains the original same-origin policy. Existing
 session, lease, revocation and movie permissions remain enforced; local TV also
 requires TV permission. The installed native API still sees movie-shaped cards
