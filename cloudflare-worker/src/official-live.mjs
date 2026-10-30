@@ -1,3 +1,5 @@
+import {REGIONAL_CHANNELS,regionalMediaAllowed,resolveRegionalLive} from './regional-live.mjs';
+export {REGIONAL_CHANNELS} from './regional-live.mjs';
 // Public station players only. No subscriber accounts, geo overrides or stored CDN URLs.
 const GRAY='live-streaming-mcdn.api.graylive.quickplay.com';
 export const OFFICIAL_CHANNELS=[
@@ -13,7 +15,8 @@ export const EXTRA_OFFICIAL_CHANNELS=[
  {id:'local-koam-news',name:'KOAM News Now · Pittsburg/Joplin · EN VIVO',page:'https://www.koamnewsnow.com/watch/',adapter:'amagi',poster:'https://bloximages.newyork1.vip.townnews.com/koamnewsnow.com/content/tncms/custom/image/03b13794-43f2-11ed-a31e-b7235b0c9d02.jpg?resize=600%2C315',plot:'Noticias de Pittsburg, Joplin y la región Four States, en inglés. Emisión web oficial de KOAM con noticias locales y repeticiones; no es la señal completa de CBS.'}
 ];
 // Append only: array positions are stable Xtream identities, including the original four.
-export const LOCAL_TV_CHANNELS=[...OFFICIAL_CHANNELS,...EXTRA_OFFICIAL_CHANNELS];
+export const KANSAS_CHANNELS=[...OFFICIAL_CHANNELS,...EXTRA_OFFICIAL_CHANNELS];
+export const LOCAL_TV_CHANNELS=[...KANSAS_CHANNELS,...REGIONAL_CHANNELS];
 const channelFor=value=>{try{const u=new URL(value);if(u.protocol!=='https:'||u.username||u.password||u.port||u.search||u.hash)return null;return LOCAL_TV_CHANNELS.find(c=>c.page===u.href)||null;}catch{return null}};
 export const isOfficialLivePage=value=>!!channelFor(value instanceof URL?value.href:value);
 const fail=()=>{throw Error('official_live_unavailable')};
@@ -21,6 +24,7 @@ const safe=value=>{let u;try{u=new URL(value)}catch{fail()}if(u.protocol!=='http
 export function officialMediaAllowed(page,value){
  try{
   const channel=channelFor(page),u=safe(value instanceof URL?value.href:value);if(!channel)return false;
+  if(REGIONAL_CHANNELS.includes(channel))return regionalMediaAllowed(channel,u);
   if(channel.adapter==='amagi')return u.hostname==='amg01499-amg01499c3-morganmurphy-us-4207.playouts.now.amagi.tv'&&(/^\/(?:ts-us-e2-n2\/)?(?:playlist|beacon)\/amg01499-morganmurphyfast-koam-morganmurphyus\//.test(u.pathname)||/^\/playlist\d{3,4}p_\d+\.ts$/.test(u.pathname));
   if(!channel.station)return u.hostname==='townnews.g-mana.live'&&(/^\/media\/[a-f0-9-]{36}\//.test(u.pathname)||u.pathname==='/mrouter')||u.hostname==='ssai1.field59.com'&&u.pathname.startsWith('/kake1/')||u.hostname==='evrideo.g-mana.online'&&u.pathname.startsWith('/gmana-assets/slates/8a1b14d7-36b9-4901-b333-e62abebbb973/');
   if(u.hostname===GRAY)return u.pathname.startsWith('/'+channel.input+'/'+channel.input+'.isml/')||channel.station==='kctv'&&u.pathname.startsWith('/'+channel.input+'/'+channel.input+'-v4.isml/');
@@ -49,6 +53,7 @@ async function graySession(channel,deviceId,options){
 }
 export async function resolveOfficialLive(page,options={}){
  const channel=channelFor(page);if(!channel)fail();
+ if(REGIONAL_CHANNELS.includes(channel))return resolveRegionalLive(channel,options);
  if(channel.adapter==='amagi'){
   const html=await request(channel.page,options),value=html.match(/<source[^>]+src="(https:\/\/amg01499-amg01499c3-morganmurphy-us-4207\.playouts\.now\.amagi\.tv\/playlist\/amg01499-morganmurphyfast-koam-morganmurphyus\/playlist\.m3u8[^"<>]*)"/i)?.[1];
   if(!value)fail();const url=value.replace(/&amp;/g,'&');if(!officialMediaAllowed(page,url))fail();return {url,officialPage:channel.page};

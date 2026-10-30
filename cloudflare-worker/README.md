@@ -320,3 +320,48 @@ page supplied reception guidance, not a verified local HLS feed. KSN/KSNT public
 live pages returned HTTP 403, PBS supplied geographic/DRM-aware players, and
 FOX Kansas' available choices were not verified as the local linear station.
 Those stations are not replaced by unrelated national feeds or blank cards.
+
+### New York, New Jersey and California web news (2026-10-30)
+
+The owner requested three additional folders below LOCAL KANSAS. The Xtream
+adapter now presents LOCAL KANSAS, LOCAL NEW YORK, LOCAL NEW JERSEY and LOCAL
+CALIFORNIA, in that order directly below CANALES-NOVELAS. Existing provider
+records and original Kansas numeric IDs remain unchanged. New York/New Jersey
+share Telemundo Noticias Noreste: one saved source, with separate stable numeric
+folder entries for external apps that group by scalar category_id. Hiding or
+editing that one source affects both entries. Philadelphia news is identified
+as Philadelphia/South Jersey, rather than as a New Jersey-licensed station.
+
+`regional-live.mjs` resolves the approved free news streams from the actual
+NBC/Telemundo and CBS official players. NBC's station-specific public FAST
+source and advertising parameters are retained; CBS uses its published Google
+DAI ad-stitched stream, not the raw preview URL. Only reviewed per-station media
+hosts, manifest routes, init segments and ad resource paths are permitted.
+Canonical Telemundo `/ver/` pages avoid unnecessary page redirects. No subscriber
+login, geography override, DRM or advertisement bypass is introduced. Regional
+Telemundo news is distinct from the full Telemundo affiliate programming.
+
+The separate finite owner request is `regional-local-tv-owner-20261030-v1`,
+reported at `catalog_maintenance.regionalTvImport`. The existing private cron
+uses the playlist, initial-resource and video-byte gate before saving each
+candidate, preserves existing/manual/hidden entries and stops after at most
+three attempts. ONNJ was also researched through its official home-page player,
+but its Amagi source returned 403 and is not included among published candidates.
+The eight Kansas records and earlier completed jobs are not reset. No new
+schedule, public write endpoint, customer record or APK is created or changed.
+
+Univision NOW's public FAQ requires participating television-service access and
+limits local station availability by location. It is not a freely reusable
+local stream for these folders. The current official Noticias Kansas site was
+also checked: its public player status returned `is_local:false` and a national
+news fallback, not a confirmed local Univision broadcast. The official Telemundo
+Kansas City site still supplies reception guidance. News 12 New Jersey's live
+page requires TV-provider authentication. These are not replaced by unrelated
+national feeds or represented by unverified cards.
+
+Regression coverage includes real workerd parsing and HLS byte probes, signed
+regional playback, four ordered folders, original IDs and provider order,
+shared NY/NJ membership, manual visibility, scoped station/ad resources,
+forbidden destinations and finite partial imports. Upstream decode evidence is
+recorded separately; short server-side samples do not establish continuous
+uptime, every rendition or playback on a customer's physical device.

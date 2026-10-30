@@ -1,10 +1,13 @@
 import {exclusiveSnapshot,exclusiveCatalogRoute} from './exclusive-catalog.mjs';
 import {inspectCatalogSource} from './catalog-source-check.mjs';
-import {OFFICIAL_CHANNELS,EXTRA_OFFICIAL_CHANNELS} from './official-live.mjs';
+import {OFFICIAL_CHANNELS,EXTRA_OFFICIAL_CHANNELS,REGIONAL_CHANNELS} from './official-live.mjs';
 const KEY='catalog-import:kansas-local-tv-20261029-v2';
 export const LOCAL_TV_REQUEST='kansas-local-tv-owner-20261029-v2';
 const EXPANSION_KEY='catalog-import:kansas-local-tv-expansion-20261030-v1';
 export const LOCAL_TV_EXPANSION_REQUEST='kansas-local-tv-expansion-owner-20261030-v1';
+const REGIONAL_KEY='catalog-import:regional-local-tv-20261030-v1';
+export const REGIONAL_TV_REQUEST='regional-local-tv-owner-20261030-v1';
+export async function regionalTvImportStatus(store){const job=await store.get(REGIONAL_KEY);return job?Object.fromEntries(['requestId','state','attempts','startedAt','finishedAt','results'].filter(k=>job[k]!==undefined).map(k=>[k,job[k]])):{requestId:REGIONAL_TV_REQUEST,state:'pending'};}
 export async function localTvImportStatus(store){
  const job=await store.get(KEY);return job?Object.fromEntries(['requestId','state','attempts','startedAt','finishedAt','results'].filter(k=>job[k]!==undefined).map(k=>[k,job[k]])):{requestId:LOCAL_TV_REQUEST,state:'pending'};
 }
@@ -12,6 +15,7 @@ export async function localTvExpansionStatus(store){const job=await store.get(EX
 // A finite owner-requested import through the existing private cron, not a public write API.
 export const runLocalTvImport=(store,leases,env,options)=>runImport(store,leases,env,{key:KEY,requestId:LOCAL_TV_REQUEST,channels:OFFICIAL_CHANNELS,actor:'owner-local-tv-import-20261029'},options);
 export const runLocalTvExpansion=(store,leases,env,options)=>runImport(store,leases,env,{key:EXPANSION_KEY,requestId:LOCAL_TV_EXPANSION_REQUEST,channels:EXTRA_OFFICIAL_CHANNELS,actor:'owner-local-tv-expansion-20261030'},options);
+export const runRegionalTvImport=(store,leases,env,options)=>runImport(store,leases,env,{key:REGIONAL_KEY,requestId:REGIONAL_TV_REQUEST,channels:REGIONAL_CHANNELS,actor:'owner-regional-local-tv-20261030'},options);
 async function runImport(store,leases,env,{key:KEY,requestId:LOCAL_TV_REQUEST,channels:OFFICIAL_CHANNELS,actor},{probe=inspectCatalogSource,now=Date.now}={}){
  if(env.ENVIRONMENT!=='production'||env.CATALOG_MAINTENANCE_ENABLED!=='true')return;
  const claim=await store.transaction(async tx=>{

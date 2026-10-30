@@ -1,0 +1,204 @@
+{
+  "reviewedAt": "2026-10-30T16:51:25.706190+00:00",
+  "requestId": "regional-local-tv-owner-20261030-v1",
+  "scope": "Official free regional web news via local external Xtream adapter and signed HLS proxy. Synthetic test session; no production customer allocation.",
+  "physicalDeviceTested": false,
+  "sample": "Four-second video and audio decode from one adaptive rendition. Not continuous uptime or all rendition verification.",
+  "candidates": 12,
+  "decodeResults": [
+    {
+      "id": "local-nbc-newyork",
+      "checkedAt": "2026-10-30T16:46:19.074Z",
+      "decodeSeconds": 4,
+      "decodeExitCode": 0,
+      "timedOut": false,
+      "outputSeconds": 3.988,
+      "requests": 5,
+      "proxyErrors": [],
+      "errorLines": [
+        "[null @ address] Application provided invalid, non monotonically increasing dts to muxer in stream 1: 960 >= 960"
+      ]
+    },
+    {
+      "id": "local-cbs-newyork",
+      "checkedAt": "2026-10-30T16:46:34.484Z",
+      "decodeSeconds": 4,
+      "decodeExitCode": 0,
+      "timedOut": false,
+      "outputSeconds": 3.998667,
+      "requests": 6,
+      "proxyErrors": [],
+      "errorLines": [
+        "[null @ address] Application provided invalid, non monotonically increasing dts to muxer in stream 1: 448 >= 448"
+      ]
+    },
+    {
+      "id": "local-telemundo-noreste",
+      "checkedAt": "2026-10-30T16:46:49.687Z",
+      "decodeSeconds": 4,
+      "decodeExitCode": 0,
+      "timedOut": false,
+      "outputSeconds": 3.982667,
+      "requests": 5,
+      "proxyErrors": [],
+      "errorLines": []
+    },
+    {
+      "id": "local-nbc-philadelphia",
+      "checkedAt": "2026-10-30T16:47:05.084Z",
+      "decodeSeconds": 4,
+      "decodeExitCode": 0,
+      "timedOut": false,
+      "outputSeconds": 3.982667,
+      "requests": 5,
+      "proxyErrors": [],
+      "errorLines": [
+        "[null @ address] Application provided invalid, non monotonically increasing dts to muxer in stream 1: 704 >= 704"
+      ]
+    },
+    {
+      "id": "local-cbs-philadelphia",
+      "checkedAt": "2026-10-30T16:49:53.648Z",
+      "decodeSeconds": 4,
+      "decodeExitCode": 0,
+      "timedOut": false,
+      "outputSeconds": 3.982667,
+      "requests": 6,
+      "proxyErrors": [],
+      "errorLines": [
+        "[null @ address] Application provided invalid, non monotonically increasing dts to muxer in stream 1: 704 >= 704"
+      ]
+    },
+    {
+      "id": "local-nbc-losangeles",
+      "checkedAt": "2026-10-30T16:47:50.818Z",
+      "decodeSeconds": 4,
+      "decodeExitCode": 0,
+      "timedOut": false,
+      "outputSeconds": 3.988,
+      "requests": 5,
+      "proxyErrors": [],
+      "errorLines": [
+        "[null @ address] Application provided invalid, non monotonically increasing dts to muxer in stream 1: 960 >= 960"
+      ]
+    },
+    {
+      "id": "local-nbc-bayarea",
+      "checkedAt": "2026-10-30T16:48:08.009Z",
+      "decodeSeconds": 4,
+      "decodeExitCode": 0,
+      "timedOut": false,
+      "outputSeconds": 3.993333,
+      "requests": 5,
+      "proxyErrors": [],
+      "errorLines": [
+        "[null @ address] Application provided invalid, non monotonically increasing dts to muxer in stream 1: 192 >= 192"
+      ]
+    },
+    {
+      "id": "local-nbc-sandiego",
+      "checkedAt": "2026-10-30T16:50:10.539Z",
+      "decodeSeconds": 4,
+      "decodeExitCode": 0,
+      "timedOut": false,
+      "outputSeconds": 3.982667,
+      "requests": 5,
+      "proxyErrors": [],
+      "errorLines": [
+        "[null @ address] Application provided invalid, non monotonically increasing dts to muxer in stream 1: 704 >= 704"
+      ]
+    },
+    {
+      "id": "local-cbs-losangeles",
+      "checkedAt": "2026-10-30T16:50:26.906Z",
+      "decodeSeconds": 4,
+      "decodeExitCode": 0,
+      "timedOut": false,
+      "outputSeconds": 3.982667,
+      "requests": 6,
+      "proxyErrors": [],
+      "errorLines": [
+        "[null @ address] Application provided invalid, non monotonically increasing dts to muxer in stream 1: 704 >= 704"
+      ]
+    },
+    {
+      "id": "local-cbs-bayarea",
+      "checkedAt": "2026-10-30T16:49:02.896Z",
+      "decodeSeconds": 4,
+      "decodeExitCode": 0,
+      "timedOut": false,
+      "outputSeconds": 3.992,
+      "requests": 6,
+      "proxyErrors": [],
+      "errorLines": [
+        "[null @ address] Application provided invalid, non monotonically increasing dts to muxer in stream 1: 128 >= 128"
+      ]
+    },
+    {
+      "id": "local-cbs-sacramento",
+      "checkedAt": "2026-10-30T16:49:18.318Z",
+      "decodeSeconds": 4,
+      "decodeExitCode": 0,
+      "timedOut": false,
+      "outputSeconds": 3.994,
+      "requests": 6,
+      "proxyErrors": [],
+      "errorLines": [
+        "[null @ address] Application provided invalid, non monotonically increasing dts to muxer in stream 1: 224 >= 224"
+      ]
+    },
+    {
+      "id": "local-telemundo-california",
+      "checkedAt": "2026-10-30T16:49:36.134Z",
+      "decodeSeconds": 4,
+      "decodeExitCode": 0,
+      "timedOut": false,
+      "outputSeconds": 3.982667,
+      "requests": 5,
+      "proxyErrors": [],
+      "errorLines": [
+        "[null @ address] Application provided invalid, non monotonically increasing dts to muxer in stream 1: 704 >= 704"
+      ]
+    }
+  ],
+  "validation": {
+    "regressionFilesPassed": 131,
+    "targetedFinalTestsPassed": true,
+    "workerdAndSqlitePlatformPassed": true,
+    "existingKansasNumericIdentitiesPreserved": true,
+    "folderOrder": [
+      "LOCAL KANSAS",
+      "LOCAL NEW YORK",
+      "LOCAL NEW JERSEY",
+      "LOCAL CALIFORNIA"
+    ],
+    "sharedSource": "Telemundo Noticias Noreste has two stable folder entries for NY/NJ and one saved source."
+  },
+  "heldSources": [
+    {
+      "name": "Univision NOW / local Univision",
+      "page": "https://www.univisionnow.com/",
+      "reason": "Public FAQ requires participating television service access and restricts local feeds to designated local markets."
+    },
+    {
+      "name": "Noticias Kansas / Univision KDCU",
+      "page": "https://noticiaskansas.com/",
+      "reason": "Official public player status returned fallback with is_local=false, not a verified local station broadcast."
+    },
+    {
+      "name": "Telemundo Kansas City",
+      "page": "https://telemundokc.com/veo-telemundo/",
+      "reason": "Reception guidance; no compatible local continuous source verified."
+    },
+    {
+      "name": "News 12 New Jersey",
+      "page": "https://newjersey.news12.com/live",
+      "reason": "Official live page requires TV-provider authentication."
+    },
+    {
+      "name": "ON New Jersey",
+      "page": "https://www.onnj.com/",
+      "reason": "Official public Amagi player source returned HTTP 403. Not proposed for publication."
+    }
+  ]
+}

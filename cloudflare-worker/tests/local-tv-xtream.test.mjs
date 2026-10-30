@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import worker,{PlaybackSession} from '../src/index.js';
-import {LOCAL_TV_CHANNELS as OFFICIAL_CHANNELS} from '../src/official-live.mjs';
+import {KANSAS_CHANNELS as OFFICIAL_CHANNELS} from '../src/official-live.mjs';
 import {LOCAL_TV_SERVER,visibleLocalTv,localTvXtreamStatus} from '../src/local-tv-xtream.mjs';
 import {openLeaseStore} from '../src/lease-store.mjs';
 
@@ -127,7 +127,7 @@ assert.equal(await count(),0);
 assert.equal((await admin('save',{...customer,status:'active',expiresAt:Date.now()+86400000})).status,200);
 env.CATALOG_MAINTENANCE_ENABLED='true';
 const health=await(await worker.fetch(new Request(origin+'/health'),env)).json();
-assert.equal(health.catalog_maintenance.localTvXtream.channels.length,8);assert.equal(health.catalog_maintenance.localTvXtream.category,'LOCAL KANSAS');assert.equal(health.catalog_maintenance.localTvXtream.afterCategory,'CANALES-NOVELAS');assert.equal(health.catalog_maintenance.localTvXtream.version,2);
+assert.equal(health.catalog_maintenance.localTvXtream.channels.length,8);assert.equal(health.catalog_maintenance.localTvXtream.category,'LOCAL KANSAS');assert.equal(health.catalog_maintenance.localTvXtream.afterCategory,'CANALES-NOVELAS');assert.equal(health.catalog_maintenance.localTvXtream.version,3);
 assert.equal(visibleLocalTv({...row,adult:true},{tv:true,adults:false}),false);
 assert.equal((await localTvXtreamStatus(new Store())).channels.length,0);
 // Standalone category fallback when an upstream panel has no matching folder.

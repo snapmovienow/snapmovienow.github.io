@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import {build} from 'esbuild';
 import {Miniflare,convertV4MiniflareOptions} from 'miniflare';
 import {fileURLToPath} from 'node:url';
-import {LOCAL_TV_CHANNELS as OFFICIAL_CHANNELS} from '../src/official-live.mjs';
+import {KANSAS_CHANNELS as OFFICIAL_CHANNELS} from '../src/official-live.mjs';
 const source=`
-import {LOCAL_TV_CHANNELS as OFFICIAL_CHANNELS} from '../src/official-live.mjs';
+import {KANSAS_CHANNELS as OFFICIAL_CHANNELS} from '../src/official-live.mjs';
 import {inspectCatalogSource} from '../src/catalog-source-check.mjs';
 export default {async fetch(){const result=[];for(const c of OFFICIAL_CHANNELS)result.push({id:c.id,...await inspectCatalogSource({mode:'gnula',page:c.page})});return Response.json(result)}};`;
 const compiled=await build({stdin:{contents:source,resolveDir:fileURLToPath(new URL('.',import.meta.url))},bundle:true,format:'esm',platform:'browser',write:false});

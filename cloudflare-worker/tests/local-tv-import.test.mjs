@@ -25,3 +25,13 @@ assert.equal((await exclusiveSnapshot(store)).items.length,8);for(const old of o
 const extra=await store.get('exclusive:item:'+EXTRA_OFFICIAL_CHANNELS[0].id);await store.put('exclusive:item:'+extra.id,{...extra,visible:false});await runLocalTvExpansion(store,leases,env,{probe:good});assert.equal((await store.get('exclusive:item:'+extra.id)).visible,false);
 const stage=new Store();await runLocalTvExpansion(stage,leases,{...env,ENVIRONMENT:'staging'},{probe:good});assert.equal((await exclusiveSnapshot(stage)).items.length,0);
 console.log('PASS: isolated finite expansion adds only verified extra stations and preserves original import, manual hides, metadata, concurrency and staging isolation.');
+const {runRegionalTvImport,regionalTvImportStatus}=await import('../src/local-tv-import.mjs');
+const {REGIONAL_CHANNELS}=await import('../src/official-live.mjs');
+const regionalStore=new Store((await exclusiveSnapshot(store)).items),priorKansas=await exclusiveSnapshot(regionalStore);let regionalCalls=0;
+await Promise.all([runRegionalTvImport(regionalStore,leases,env,{probe:async()=>{regionalCalls++;return {ok:true}}}),runRegionalTvImport(regionalStore,leases,env,{probe:good})]);
+assert.equal(regionalCalls,REGIONAL_CHANNELS.length);assert.equal((await regionalTvImportStatus(regionalStore)).state,'completed');assert.equal((await regionalTvImportStatus(regionalStore)).results.filter(r=>r.status==='added').length,REGIONAL_CHANNELS.length);
+for(const old of priorKansas.items)assert.deepEqual(await regionalStore.get('exclusive:item:'+old.id),old,'regional import preserves all Kansas metadata and manual hides');
+const first=await regionalStore.get('exclusive:item:'+REGIONAL_CHANNELS[0].id);await regionalStore.put('exclusive:item:'+first.id,{...first,visible:false});await runRegionalTvImport(regionalStore,leases,env,{probe:good});assert.equal((await regionalStore.get('exclusive:item:'+first.id)).visible,false);
+const partial=new Store();for(let n=0;n<3;n++)await runRegionalTvImport(partial,leases,env,{probe:async m=>({ok:m.page!==REGIONAL_CHANNELS.at(-1).page})});assert.equal((await regionalTvImportStatus(partial)).state,'completed');assert.equal((await regionalTvImportStatus(partial)).results.filter(r=>r.status==='unavailable').length,1);assert.equal((await exclusiveSnapshot(partial)).items.length,REGIONAL_CHANNELS.length-1,'failed video remains unpublished');
+const regionalStage=new Store();await runRegionalTvImport(regionalStage,leases,{...env,ENVIRONMENT:'staging'},{probe:good});assert.equal((await exclusiveSnapshot(regionalStage)).items.length,0);
+console.log('PASS: isolated regional publication gate, concurrency, partial availability, finite retries, staging isolation and original station preservation.');
