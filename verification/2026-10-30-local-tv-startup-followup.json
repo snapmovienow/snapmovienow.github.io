@@ -1,5 +1,5 @@
 {
-  "checkedAt": "2026-10-31T04:07:37.632278Z",
+  "checkedAt": "2026-10-31T04:10:41.206216Z",
   "baseCommit": "07da25dd83e7e2197cc26fbf089d7d4aba0665a2",
   "scope": "Local official TV HLS server startup follow-up; no APK change",
   "userReport": "First picture still takes 12–15 seconds or more; unresolved on the physical device",
@@ -7,7 +7,8 @@
     "Replace separate per-resource item RPC and serial heartbeat with one atomic current-catalog/lease transaction parallel to the uncached session check",
     "Reject hidden/revised/unauthorized content before upstream requests; failed session checks release the matching lease",
     "Bounded per-station one-hour playlist and first-video-bytes aggregates, deduplicated per lease; no viewer data or source URLs in public summaries",
-    "Preserve HLS variants, audio, captions, advertisements, cancellation and resource streaming"
+    "Preserve HLS variants, audio, captions, advertisements, cancellation and resource streaming",
+    "Require explicit atomic scope acknowledgement; older rolling-deploy instances fall back to the original authoritative item read"
   ],
   "validation": {
     "regressionSuiteFiles": 141,
@@ -17,7 +18,8 @@
     "workerDryRunBuild": "passed",
     "targetedHlsSequencing": "passed after final compact-ticket adjustment",
     "productionActive": "pending deployment confirmation",
-    "physicalDeviceFirstFrame": "not tested"
+    "physicalDeviceFirstFrame": "not tested",
+    "rollingVersionCompatibility": "passed: missing acknowledgement triggers catalog read and hidden content remains blocked"
   },
   "limitations": [
     "No measured end-to-end improvement on the user device yet",

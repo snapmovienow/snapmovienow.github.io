@@ -414,6 +414,9 @@ resource. It still checks the current account/version, session, request binding,
 item/parent/revision, visibility, TV permission and lease before fetching media.
 A rejected session releases the matching lease, so parallel renewal cannot keep
 an expired session's slot alive. VOD and other providers retain their paths.
+The directory explicitly acknowledges the atomic scope check. During rolling
+deployments, a response from an older instance without that acknowledgement
+requires the original item read before any source request.
 
 `startup.observations` contains bounded one-hour aggregates by the twenty fixed
 station IDs: playlist delivery and first video-resource bytes. Collection runs

@@ -14,7 +14,7 @@ class Store{
 const store=new Store(),channel=LOCAL_TV_CHANNELS[0],row={...channel,type:'movie',mode:'gnula',visible:true,adult:false,playbackRevision:1},user={id:'synthetic-viewer',username:'synthetic',version:1,status:'active',permissions:{tv:true}},lease={sid:'synthetic-session',uid:user.id,username:user.username,version:1,request_id:'current-request',exclusiveId:row.id,exclusiveParentId:row.id,playbackRevision:1,until:Date.now()+90000},scope={sid:lease.sid,lease_id:'lease',request_id:lease.request_id,exclusiveId:row.id,parentId:row.id,playbackRevision:1};
 const leases=await openLeaseStore(store),reset=async()=>{await store.put('user:'+user.username,user);await store.put('exclusive:item:'+row.id,row);await store.put('playback:'+lease.sid,{request_id:lease.request_id});await leases.put('lease',lease);};
 const call=async(path,body=scope)=>{const response=await accountsFetch({storage:store},{},new Request('https://private/accounts'+path,{method:'POST',body:JSON.stringify(body)}));return {status:response.status,data:await response.json()};};
-await reset();assert.equal((await call('/heartbeat')).status,200);
+await reset();assert.equal((await call('/heartbeat')).data.exclusiveScopeChecked,true);
 for(const patch of [{exclusiveId:'other'},{parentId:'other'},{playbackRevision:2},{request_id:'old-request'},{sid:'other-session'}])assert.equal((await call('/heartbeat',{...scope,...patch})).status,410);
 await store.put('exclusive:item:'+row.id,{...row,visible:false});assert.equal((await call('/heartbeat')).data.error,'title_not_allowed');
 await store.put('exclusive:item:'+row.id,{...row,playbackRevision:2});assert.equal((await call('/heartbeat')).status,410);

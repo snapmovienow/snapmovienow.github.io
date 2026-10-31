@@ -54,6 +54,12 @@ export function createExclusiveService(deps){
    heartbeat=await deps.directory(env,'/heartbeat',{sid:data.sid,lease_id:data.lease_id,request_id:data.request_id});
   }
   const checked=await heartbeat.json();if(!heartbeat.ok)throw error(checked.error==='title_not_allowed'?'title_not_allowed':'playback_expired',410);
+  if(data.officialPage&&checked.exclusiveScopeChecked!==true){
+   // An older directory instance may briefly coexist during a rolling deploy.
+   // Require its explicit scope acknowledgement or perform the original read.
+   const item=await deps.directory(env,'/exclusive-item-read',{id:data.parentId}),current=item.ok?selectExclusive([await item.json()],data.exclusiveId):null;
+   if(!current||!current.row.visible||current.row.playbackRevision!==data.playbackRevision)throw error('title_not_allowed',410);
+  }
   const report=stage=>{if(!data.officialPage||!Number.isFinite(data.localStartedAt)||!ctx?.waitUntil)return;const durationMs=Date.now()-data.localStartedAt;ctx.waitUntil(deps.directory(env,'/local-startup-observe',{...scope,stage,durationMs}).then(r=>r.body?.cancel()).catch(()=>{}));};
   const base=new URL(exclusiveURL(data.officialPage?(data.source||data.resource):data.source)),target=new URL(exclusiveURL(data.resource||data.source));const allowed=data.officialPage?url=>officialMediaAllowed(data.officialPage,url):null;if(allowed?!allowed(target):data.resource&&target.origin!==base.origin)throw error('exclusive_resource',403);
   const fetched=await mediaFetch(target.href,{range:req.headers.get('Range')||undefined,head:req.method==='HEAD',signal:req.signal,fetcher:deps.fetcher,allowed});const response=fetched.response;
