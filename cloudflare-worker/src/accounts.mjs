@@ -1,3 +1,4 @@
+import {boundedTsQuota} from './bounded-ts-route.mjs';
 import {saveCatalogReferences,readCatalogReferences} from './catalog-references.mjs';
 import {runLocalTvImport,localTvImportStatus,runLocalTvExpansion,localTvExpansionStatus,runRegionalTvImport,regionalTvImportStatus} from './local-tv-import.mjs';
 import {localTvXtreamStatus,visibleLocalTv} from './local-tv-xtream.mjs';
@@ -42,6 +43,7 @@ function expiry(value){if(value===null||value===''||value===undefined)return nul
 export async function accountsFetch(state,env,req){
  const p=new URL(req.url).pathname.replace('/accounts','');const b=await req.json();const store=state.storage;
  try{
+ if(['/bounded-ts-claim','/bounded-ts-status','/bounded-ts-result'].includes(p))return boundedTsQuota(store,p,b,env);
  if(['/reseller-portal-rotation-status','/reseller-portal-rotation-begin','/reseller-portal-rotation-finish'].includes(p))return gatewayRotationStore(store,p,b);
  const leases=await openLeaseStore(store);
  if(p==='/reseller-service-monitor')return store.transaction(tx=>readServiceMonitor(tx,leases.in(tx),b));
@@ -370,3 +372,4 @@ async function registerXtream(store,entries){
   await tx.put('xtream-next-id',next);return answer(result);
  });
 }
+
