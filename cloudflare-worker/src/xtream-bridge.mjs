@@ -128,8 +128,9 @@ export function guardXtreamResponse(response, check, release, ctx, signal, expir
       signal?.addEventListener('abort',onAbort,{once:true});
       if(Number.isFinite(expiresAt)){const remaining=expiresAt-Date.now();if(remaining<=0){void stop(Error('access_expired'));return}expiryTimer=setTimeout(()=>{const task=stop(Error('access_expired'));ctx?.waitUntil?.(task)},Math.min(remaining,2147483647));expiryTimer?.unref?.()}
       timer=setInterval(async()=>{
-        if(closed||checking)return;
+        if(closed)return;
         if(Date.now()-lastDemand>45000){await stop(Error('stream_idle'));return}
+        if(checking)return;
         checking=true;
         try{if(!await check())await stop(Error('access_revoked'))}
         catch{await stop(Error('access_unavailable'))}
