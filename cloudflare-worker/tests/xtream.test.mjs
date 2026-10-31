@@ -375,9 +375,32 @@ try{
 }
 assert.equal((await leases()).length,0,'background EOF cleanup releases the exact native TV reservation');
 
+// Actual Worker native route: a pending session read must not bypass idle cleanup.
+{
+ const get=env.PLAYBACK_SESSIONS.get,interval=setInterval,clear=clearInterval;
+ let tick,hold=false,unblock,checkStarted=false;
+ globalThis.setInterval=(fn,ms)=>ms===25000?(tick=fn,1):interval(fn,ms);
+ globalThis.clearInterval=id=>{if(id!==1)clear(id)};
+ env.PLAYBACK_SESSIONS.get=function(id){const stub=get.call(this,id);return {fetch(url,options){
+  if(hold&&String(id).startsWith('xtream:')&&new URL(url).pathname==='/check'){checkStarted=true;return new Promise(resolve=>{unblock=()=>resolve(Response.json({ok:true}))})}
+  return stub.fetch(url,options);
+ }}};
+ let pending;
+ try{
+  const response=await media('live',channels[0].stream_id,'ts');assert.equal(response.status,200);
+  const reader=response.body.getReader();await reader.read();
+  const blocked=reader.read();const rejected=assert.rejects(blocked,/stream_idle/);
+  await new Promise(resolve=>setTimeout(resolve,0));hold=true;offset+=25000;pending=tick();
+  await new Promise(resolve=>setTimeout(resolve,0));assert.equal(checkStarted,true);
+  offset+=25001;await tick();await rejected;
+  unblock();await pending;assert.equal((await leases()).length,0);
+ }finally{hold=false;unblock?.();await pending;offset=0;env.PLAYBACK_SESSIONS.get=get;globalThis.setInterval=interval;globalThis.clearInterval=clear}
+}
+
+const cancellationsBeforeRaw=cancellations.length;
 const raw = await media('live',channels[0].stream_id,'ts');
 assert.equal(raw.status,200); await raw.body.cancel();
-assert.equal(cancellations.length,1); assert.equal((await leases()).length,0, 'native player disconnect releases capacity');
+assert.equal(cancellations.length,cancellationsBeforeRaw+1); assert.equal((await leases()).length,0, 'native player disconnect releases capacity');
 const first = await media('live',channels[0].stream_id,'ts');
 const replacement = await media('live',channels[0].stream_id,'ts');
 await first.body.cancel(); assert.equal((await leases()).length,1, 'a late canceled request cannot release its replacement');
