@@ -22,6 +22,12 @@ ctx.fetch=async(url,options)=>{calls.push({url:String(url),options});return new 
 const result=await api.check('https://example.test');assert.equal(result.protectedAPI,true);assert.equal(result.version,'39');
 assert.equal(calls.length,2);assert.ok(calls.every(x=>!x.options.body&&!new URL(x.url).search));
 assert.deepEqual(calls.map(x=>new URL(x.url).pathname),['/health','/player_api.php']);
+assert.equal(result.diagnosticsComplete,null);assert.equal(result.diagnosticStatus,'unknown','legacy API response does not prove diagnostic completeness');
+for(const complete of [false,true]){
+ ctx.fetch=async url=>new URL(url).pathname==='/health'?Response.json({ok:true,service:'snapmovienow-edge',capabilities:['xtream'],diagnosticsComplete:complete,status:complete?'diagnostics_complete':'degraded'}):Response.json({error:'credentials_required'},{status:401});
+ const observed=await api.check('https://example.test');assert.equal(observed.protectedAPI,true);assert.equal(observed.diagnosticsComplete,complete);assert.equal(observed.diagnosticStatus,complete?'complete':'degraded');
+}
+assert.ok(readFileSync(new URL('../admin.js',import.meta.url),'utf8').includes('Diagnósticos internos incompletos; no confirma recuperación.'));
 await assert.rejects(api.check('http://example.test'),/invalid_api_origin/);
 await assert.rejects(api.check('https://customer:password@example.test'),/invalid_api_origin/);
 ctx.fetch=async()=>Response.json({ok:true,service:'snapmovienow-edge',version:'39',capabilities:['xtream']});

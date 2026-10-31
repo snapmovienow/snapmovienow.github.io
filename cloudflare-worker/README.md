@@ -407,3 +407,29 @@ markers, not claims of physical-device latency. Credential-free short upstream
 measurements, including the failed baseline sample and limits of the comparison,
 are in `verification/2026-10-30-local-tv-startup.json`. Native buffering, network
 conditions and upstream response time can still affect time to image.
+
+### /health: reachability versus retained diagnostics
+
+HTTP 200 and ok:true mean this API handler is reachable, preserving the existing
+connection-check contract; they do NOT assert working playback or complete
+operational diagnostic evidence. apiStatus:"reachable" makes that scope explicit.
+Check status (diagnostics_complete or degraded), diagnosticsComplete, and
+components.catalog/canary/comparison before interpreting saved diagnostics.
+Unavailable reads have state:"unknown" and reason timeout, read_error, or
+invalid_response; never recovered/healthy playback. Disabled components are
+not_configured. Complete reads can still contain failed or old playback samples:
+their original timestamps and outcomes remain unchanged. playbackValidated:false
+means this request ran no new playback test.
+
+The three existing retained-state reads run concurrently, each with a 1000 ms
+budget inside a 1500 ms overall deadline and a 256 KiB response limit. Timers,
+HTTP transport and body readers are cancelled when complete/expired; late bodies
+are discarded. These are event-loop deadlines, not CPU preemption, and aborting
+a Durable Object request cannot guarantee cancellation of storage work already
+executing there. No retries, provider calls, new jobs or waitUntil continuations.
+Failure of one read preserves other valid results without refreshing timestamps.
+
+Consumers checking only HTTP or ok measure reachability, not diagnostic
+completeness. The shipped browser connection diagnostic propagates completeness
+and its administrator UI warns about partial data. External consumers must apply
+the same distinction; their behavior is not controlled by this endpoint.
