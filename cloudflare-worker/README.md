@@ -394,19 +394,34 @@ device is reused. No device credentials enter the public metadata cache or repo.
 
 The internal live adapter reuses its just-read row; authoritative acquisition
 still rechecks the current saved identity, permissions and playback revision.
-Media session and item reads run together before heartbeat/renewal or upstream
-media requests. Every signed resource retains its own session, user/version,
+Every signed resource retains its own session, user/version,
 parent/item/revision, lease, request, expiry and official-page scope. Only
 redundant source/root fields are removed; binary resources omit the playlist-only
 anonymous heartbeat. Non-official media retains its original same-origin source
 contract. Advertisements, captions, audio and all adaptive variants remain.
 
-`localTvXtream.startup.version=1` in public health reports the active configuration;
-root official playlists also carry `X-SNAP-Local-Startup: 1`. These are deployment
+`localTvXtream.startup.version=2` in public health reports the active configuration;
+root official playlists also carry `X-SNAP-Local-Startup: 2`. These are deployment
 markers, not claims of physical-device latency. Credential-free short upstream
 measurements, including the failed baseline sample and limits of the comparison,
 are in `verification/2026-10-30-local-tv-startup.json`. Native buffering, network
 conditions and upstream response time can still affect time to image.
+
+The follow-up groups local-media catalog scope checks and lease renewal in the
+same authoritative transaction. That RPC runs alongside the uncached session
+check, replacing a separate item-read RPC and a serial renewal step on every HLS
+resource. It still checks the current account/version, session, request binding,
+item/parent/revision, visibility, TV permission and lease before fetching media.
+A rejected session releases the matching lease, so parallel renewal cannot keep
+an expired session's slot alive. VOD and other providers retain their paths.
+
+`startup.observations` contains bounded one-hour aggregates by the twenty fixed
+station IDs: playlist delivery and first video-resource bytes. Collection runs
+off the streaming path via `waitUntil`; each stage is recorded at most once per
+lease. Audio, keys and initialization maps do not count as video. Summaries keep
+counts and timings, never viewer identities, credentials, IPs, source addresses
+or tickets. These are server/request sequencing measurements, not rendered-frame
+timings, and remain empty until real playback requests reach this version.
 
 ### /health: reachability versus retained diagnostics
 

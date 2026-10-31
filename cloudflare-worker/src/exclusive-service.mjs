@@ -1,6 +1,7 @@
 import {isOfficialLivePage,resolveOfficialLive,officialMediaAllowed,officialHeartbeat,forgetOfficialLivePage} from './official-live.mjs';
 import {createLocalTvXtream,visibleLocalTv} from './local-tv-xtream.mjs';
 import {exclusiveURL,exclusiveId,exclusivePublic,visibleExclusive,selectExclusive} from './exclusive-catalog.mjs';
+import {observeFirstChunk} from './local-startup-observations.mjs';
 const error=(code,status=400)=>Object.assign(Error(code),{status});
 async function mediaFetch(url,{range,head=false,signal,fetcher=fetch,allowed}={}){
  let target=exclusiveURL(url);for(let i=0;i<4;i++){
@@ -19,6 +20,7 @@ export function createExclusiveService(deps){
  const catalog=async(env,permissions,origin,options={})=>{const data=await read(env);return {revision:data.revision,items:data.items.filter(row=>visibleExclusive(row,permissions)&&(!options.legacy||row.mode==='gnula'&&!isOfficialLivePage(row.page))).sort((a,b)=>b.createdAt-a.createdAt).map(row=>exclusivePublic(row,origin))};};
  const episodes=async(env,id,permissions,origin)=>{const data=await read(env),row=data.items.find(x=>x.id===id);if(!row||row.type!=='series'||!visibleExclusive(row,permissions))throw error('title_not_allowed',404);const grouped={};for(const ep of row.episodes){(grouped[ep.season]??=[]).push({...ep,page:undefined,exclusive_id:ep.id,container_extension:row.mode==='gnula'?'m3u8':new URL(ep.page).pathname.split('.').at(-1),smn_profile:{type:'series',id:row.id,server:row.profileServer,episodeId:ep.id}});}return {info:{name:row.name,plot:row.plot,year:row.year,cover:exclusivePublic(row,origin).cover},episodes:grouped};};
  const prepare=async(req,env,session,id,options={})=>{
+  const localStartedAt=options.localStartedAt||Date.now();
   // Reuse the internal live adapter's fresh snapshot. Acquisition still checks
   // current permission, source identity and revision in the account store.
   const selected=options.live&&options.localRow?selectExclusive([options.localRow],id):null;
@@ -30,47 +32,59 @@ export function createExclusiveService(deps){
   const {lease_id}=await allocated.json();
   try{
    const monitor=await deps.ticket(env,{kind:'playback-quality',uid:session.uid,version:session.version,sid:session.sid,lease_id,request_id,exp:session.exp});
-   const value={kind:'exclusive-media',sid:session.sid,uid:session.uid,version:session.version,exclusiveId:id,parentId:row.id,playbackRevision:row.playbackRevision,lease_id,request_id,source,...(resolved.officialPage?{officialPage:resolved.officialPage,officialHeartbeat:resolved.officialHeartbeat}:{}),monitor,type:row.type,xtream:!!session.xtream,exp:Math.min(session.exp,Date.now()+3*3600000)};
+   const value={kind:'exclusive-media',sid:session.sid,uid:session.uid,version:session.version,exclusiveId:id,parentId:row.id,playbackRevision:row.playbackRevision,lease_id,request_id,source,...(resolved.officialPage?{officialPage:resolved.officialPage,officialHeartbeat:resolved.officialHeartbeat,localStartedAt}:{}),monitor,type:row.type,xtream:!!session.xtream,exp:Math.min(session.exp,Date.now()+3*3600000)};
    const token=await deps.ticket(env,value);return {url:new URL('/exclusive-media?t='+encodeURIComponent(token),req.url).href,lease_id,request_id};
   }catch(e){await deps.directory(env,'/release',{sid:session.sid,lease_id,request_id});throw e;}
  };
  const media=async(req,env,ctx)=>{
   const data=await deps.unticket(env,new URL(req.url).searchParams.get('t')||'');
   if(data?.kind!=='exclusive-media'||!exclusiveId(data.exclusiveId))throw error('session_expired',401);
-  // Both independent reads complete before renewal or an upstream request.
-  // Authorization results are never cached.
-  const [access,itemResponse]=await Promise.all([deps.sessionCall(env,data.sid,'/check'),deps.directory(env,'/exclusive-item-read',{id:data.parentId})]);
-  if(!access.ok){await itemResponse.body?.cancel();throw error('session_expired',401);}
-  const current=itemResponse.ok?selectExclusive([await itemResponse.json()],data.exclusiveId):null;if(!current||!current.row.visible||current.row.playbackRevision!==data.playbackRevision)throw error('title_not_allowed',410);
-  const heartbeat=await deps.directory(env,'/heartbeat',{sid:data.sid,lease_id:data.lease_id,request_id:data.request_id});if(!heartbeat.ok)throw error('playback_expired',410);
+  const scope={sid:data.sid,lease_id:data.lease_id,request_id:data.request_id,exclusiveId:data.exclusiveId,parentId:data.parentId,playbackRevision:data.playbackRevision};
+  let heartbeat;
+  if(data.officialPage){
+   // Session revocation remains independent. Catalog, account, binding and lease
+   // checks now complete together, before any upstream fetch or bytes.
+   const [access,checked]=await Promise.all([deps.sessionCall(env,data.sid,'/check'),deps.directory(env,'/heartbeat',{...scope,localVideo:req.method==='GET'&&data.localVideo===true})]);
+   if(!access.ok){await checked.body?.cancel();await deps.directory(env,'/release',{sid:data.sid,lease_id:data.lease_id,request_id:data.request_id});throw error('session_expired',401);}
+   heartbeat=checked;
+  }else{
+   const [access,itemResponse]=await Promise.all([deps.sessionCall(env,data.sid,'/check'),deps.directory(env,'/exclusive-item-read',{id:data.parentId})]);
+   if(!access.ok){await itemResponse.body?.cancel();throw error('session_expired',401);}
+   const current=itemResponse.ok?selectExclusive([await itemResponse.json()],data.exclusiveId):null;if(!current||!current.row.visible||current.row.playbackRevision!==data.playbackRevision)throw error('title_not_allowed',410);
+   heartbeat=await deps.directory(env,'/heartbeat',{sid:data.sid,lease_id:data.lease_id,request_id:data.request_id});
+  }
+  const checked=await heartbeat.json();if(!heartbeat.ok)throw error(checked.error==='title_not_allowed'?'title_not_allowed':'playback_expired',410);
+  const report=stage=>{if(!data.officialPage||!Number.isFinite(data.localStartedAt)||!ctx?.waitUntil)return;const durationMs=Date.now()-data.localStartedAt;ctx.waitUntil(deps.directory(env,'/local-startup-observe',{...scope,stage,durationMs}).then(r=>r.body?.cancel()).catch(()=>{}));};
   const base=new URL(exclusiveURL(data.officialPage?(data.source||data.resource):data.source)),target=new URL(exclusiveURL(data.resource||data.source));const allowed=data.officialPage?url=>officialMediaAllowed(data.officialPage,url):null;if(allowed?!allowed(target):data.resource&&target.origin!==base.origin)throw error('exclusive_resource',403);
   const fetched=await mediaFetch(target.href,{range:req.headers.get('Range')||undefined,head:req.method==='HEAD',signal:req.signal,fetcher:deps.fetcher,allowed});const response=fetched.response;
   if(!response.ok){await response.body?.cancel();if(data.officialPage)await forgetOfficialLivePage(data.officialPage,{fetcher:deps.fetcher});throw error('media_unavailable',response.status===404?404:502);}
   if(allowed?!allowed(fetched.url):data.resource&&new URL(fetched.url).origin!==base.origin){await response.body?.cancel();throw error('exclusive_resource',403);}
   const out=new Headers({'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});for(const key of ['content-type','content-length','content-range','accept-ranges','etag','last-modified'])if(response.headers.has(key))out.set(key,response.headers.get(key));
-  if(!data.resource){out.set('X-SNAP-Playback-Quality',data.monitor);if(data.officialPage)out.set('X-SNAP-Local-Startup','1');}
+  if(!data.resource){out.set('X-SNAP-Playback-Quality',data.monitor);if(data.officialPage)out.set('X-SNAP-Local-Startup','2');}
   const playlist=/mpegurl/i.test(response.headers.get('Content-Type')||'')||new URL(fetched.url).pathname.endsWith('.m3u8');
   if(playlist&&req.method!=='HEAD'){
    if(data.officialHeartbeat)await officialHeartbeat(data.officialHeartbeat,{fetcher:deps.fetcher,signal:req.signal});
    const text=await limitedText(response);if(!text.trimStart().startsWith('#EXTM3U'))throw error('invalid_playlist',502);
-   const nextBase=new URL(fetched.url),rewritten=new Map(),rewrite=async value=>{const destination=new URL(exclusiveURL(new URL(value,nextBase).href));if(allowed?!allowed(destination):destination.origin!==nextBase.origin)throw error('exclusive_resource',403);
-    if(!rewritten.has(destination.href))rewritten.set(destination.href,(async()=>{
+   const multivariant=/#EXT-X-STREAM-INF:/.test(text),nextBase=new URL(fetched.url),rewritten=new Map(),rewrite=async(value,track=data.localTrack||'video',localVideo=false)=>{const destination=new URL(exclusiveURL(new URL(value,nextBase).href));if(allowed?!allowed(destination):destination.origin!==nextBase.origin)throw error('exclusive_resource',403);
+    const key=destination.href+'|'+track+'|'+localVideo;if(!rewritten.has(key))rewritten.set(key,(async()=>{
      const child={...data,source:data.resource?data.source:fetched.url,resource:destination.href};
      if(data.officialPage){
       // Keep access/revision/lease checks and station scope. Do not repeat the
       // master URL or root-only fields in every encrypted resource URL.
       delete child.source;delete child.monitor;delete child.type;delete child.xtream;
+      delete child.localTrack;delete child.localVideo;
+      if(track!=='video')child.localTrack=track;if(localVideo)child.localVideo=true;
       if(/\.(?:ts|m4s|mp4|aac|mp3|key|vtt|webvtt|jpg|jpeg|png)$/i.test(destination.pathname))delete child.officialHeartbeat;
      }
      const t=await deps.ticket(env,child);return new URL('/exclusive-media?t='+encodeURIComponent(t),req.url).href;
-    })());return rewritten.get(destination.href);
+    })());return rewritten.get(key);
    };
-   const lines=await Promise.all(text.split(/\r?\n/).map(async line=>{if(!line.trim())return line;if(!line.startsWith('#'))return rewrite(line.trim());for(const match of [...line.matchAll(/URI="([^"]+)"/g)])line=line.replace(match[0],'URI="'+await rewrite(match[1])+'"');return line;}));
-   out.delete('content-length');out.set('content-type','application/vnd.apple.mpegurl');return new Response(lines.join('\n'),{headers:out});
+   const lines=await Promise.all(text.split(/\r?\n/).map(async line=>{if(!line.trim())return line;if(!line.startsWith('#'))return rewrite(line.trim(),data.localTrack||'video',!multivariant&&(data.localTrack||'video')==='video');const track=line.startsWith('#EXT-X-MEDIA:')&&/TYPE=AUDIO(?:,|$)/.test(line)?'audio':line.startsWith('#EXT-X-MEDIA:')&&/TYPE=SUBTITLES(?:,|$)/.test(line)?'text':data.localTrack||'video';for(const match of [...line.matchAll(/URI="([^"]+)"/g)])line=line.replace(match[0],'URI="'+await rewrite(match[1],track,false)+'"');return line;}));
+   out.delete('content-length');out.set('content-type','application/vnd.apple.mpegurl');if(!data.resource)report('playlist');return new Response(lines.join('\n'),{headers:out});
   }
   if(!data.resource&&!playlist&&!/^(?:video\/|audio\/|application\/octet-stream)/i.test(response.headers.get('Content-Type')||'')){await response.body?.cancel();throw error('exclusive_not_video',502);}
   if(req.method==='HEAD'){await response.body?.cancel();if(!data.resource)await deps.directory(env,'/release',{sid:data.sid,lease_id:data.lease_id,request_id:data.request_id});return new Response(null,{status:response.status,headers:out});}
-  const result=new Response(response.body,{status:response.status,headers:out});
+  const result=new Response(checked.localVideoProbe?observeFirstChunk(response.body,()=>report('firstVideoBytes')):response.body,{status:response.status,headers:out});
   if(data.resource)return result;
   return deps.guardXtreamResponse(result,async()=>(await deps.sessionCall(env,data.sid,'/check')).ok&&(await deps.directory(env,'/heartbeat',{sid:data.sid,lease_id:data.lease_id,request_id:data.request_id})).ok,()=>deps.directory(env,'/release',{sid:data.sid,lease_id:data.lease_id,request_id:data.request_id}),ctx,req.signal,data.exp,{waitForRelease:data.type!=='live'});
  };

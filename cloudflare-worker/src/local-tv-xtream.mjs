@@ -1,5 +1,6 @@
 import {LOCAL_TV_CHANNELS as OFFICIAL_CHANNELS} from './official-live.mjs';
 import {isAdult} from './content-permissions.mjs';
+import {localStartupSummary} from './local-startup-observations.mjs';
 
 // A separate registry namespace keeps existing provider IDs and bookmarks intact.
 export const LOCAL_TV_SERVER='smn-official-local-tv';
@@ -21,6 +22,7 @@ const isLocal=record=>record?.server===LOCAL_TV_SERVER;
 const channelFor=record=>record?.kind==='live'?entries.find(e=>e.upstreamId===String(record.upstreamId))?.channel||null:null;
 
 export function createLocalTvXtream({read,prepare,media},env,ctx){
+ const localStartedAt=Date.now();
  let snapshot;
  const available=permissions=>(snapshot??=read(env)).then(data=>data.items.filter(row=>visibleLocalTv(row,permissions)));
  return {
@@ -54,7 +56,7 @@ export function createLocalTvXtream({read,prepare,media},env,ctx){
     const target=new URL(request.url);target.pathname=target.pathname.replace(/\.[^.\/]+$/,'.m3u8');
     return new Response(null,{status:302,headers:{Location:target.href,'Cache-Control':'no-store'}});
    }
-   const prepared=await prepare(request,env,auth.session,channel.id,{live:true,localRow:row});
+   const prepared=await prepare(request,env,auth.session,channel.id,{live:true,localRow:row,localStartedAt});
    try{return await media(new Request(prepared.url,request),env,ctx);}
    catch(error){await prepared.release();throw error;}
   }
@@ -64,5 +66,5 @@ export function createLocalTvXtream({read,prepare,media},env,ctx){
 export async function localTvXtreamStatus(store){
  const rows=await Promise.all(OFFICIAL_CHANNELS.map(channel=>store.get('exclusive:item:'+channel.id)));
  const channels=rows.filter(row=>visibleLocalTv(row,{tv:true,adults:true}));
- return {version:3,startup:{version:1,publicDescriptorCacheSeconds:60,anonymousDeviceReuseSeconds:60,compactResourceTickets:true},category:LOCAL_TV_CATEGORY,afterCategory:LOCAL_TV_AFTER,channels:channels.map(row=>({id:row.id,name:row.name})),categories:LOCAL_TV_CATEGORIES.filter(c=>entries.some(e=>e.category===c.key&&channels.some(row=>row.id===e.channel.id))).map(c=>({name:c.name,channels:entries.filter(e=>e.category===c.key&&channels.some(row=>row.id===e.channel.id)).map(e=>e.channel.id)}))};
+ return {version:3,startup:{version:2,publicDescriptorCacheSeconds:60,anonymousDeviceReuseSeconds:60,compactResourceTickets:true,atomicMediaAuthorization:true,observations:await localStartupSummary(store)},category:LOCAL_TV_CATEGORY,afterCategory:LOCAL_TV_AFTER,channels:channels.map(row=>({id:row.id,name:row.name})),categories:LOCAL_TV_CATEGORIES.filter(c=>entries.some(e=>e.category===c.key&&channels.some(row=>row.id===e.channel.id))).map(c=>({name:c.name,channels:entries.filter(e=>e.category===c.key&&channels.some(row=>row.id===e.channel.id)).map(e=>e.channel.id)}))};
 }
