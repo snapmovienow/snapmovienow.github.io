@@ -72,7 +72,7 @@ export function createExclusiveService(deps){
   if(req.method==='HEAD'){await response.body?.cancel();if(!data.resource)await deps.directory(env,'/release',{sid:data.sid,lease_id:data.lease_id,request_id:data.request_id});return new Response(null,{status:response.status,headers:out});}
   const result=new Response(response.body,{status:response.status,headers:out});
   if(data.resource)return result;
-  return deps.guardXtreamResponse(result,async()=>(await deps.sessionCall(env,data.sid,'/check')).ok&&(await deps.directory(env,'/heartbeat',{sid:data.sid,lease_id:data.lease_id,request_id:data.request_id})).ok,()=>deps.directory(env,'/release',{sid:data.sid,lease_id:data.lease_id,request_id:data.request_id}),ctx,req.signal,data.exp);
+  return deps.guardXtreamResponse(result,async()=>(await deps.sessionCall(env,data.sid,'/check')).ok&&(await deps.directory(env,'/heartbeat',{sid:data.sid,lease_id:data.lease_id,request_id:data.request_id})).ok,()=>deps.directory(env,'/release',{sid:data.sid,lease_id:data.lease_id,request_id:data.request_id}),ctx,req.signal,data.exp,{waitForRelease:data.type!=='live'});
  };
  const admin=async(req,env,body,actor)=>{
   if(body.action==='exclusive-list')return Response.json(await read(env));

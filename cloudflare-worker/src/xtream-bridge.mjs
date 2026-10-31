@@ -107,7 +107,7 @@ export function createXtreamBridge(deps) {
 
 // Native players do not send the web player's heartbeat. Keep an open media
 // response authorised and release its reservation when the client disconnects.
-export function guardXtreamResponse(response, check, release, ctx, signal, expiresAt) {
+export function guardXtreamResponse(response, check, release, ctx, signal, expiresAt, {waitForRelease=true}={}) {
   if (!response.body) return response;
   const reader=response.body.getReader();let closed=false,checking=false,controller,timer,expiryTimer,cleanupTask,lastDemand=Date.now();
   const cleanup=()=>{
@@ -138,7 +138,9 @@ export function guardXtreamResponse(response, check, release, ctx, signal, expir
     },
     async pull(c){if(closed)return;lastDemand=Date.now();try{
       const next=await reader.read();if(closed)return;
-      if(next.done){closed=true;await cleanup();c.close()}else c.enqueue(next.value);
+      // A live source ending must reach the player even if capacity release stalls.
+      // cleanup still clears timers and retains the exact release with waitUntil.
+      if(next.done){closed=true;const released=cleanup();if(waitForRelease)await released;c.close()}else c.enqueue(next.value);
     }catch(error){await stop(error)}},
     async cancel(reason){if(closed)return;closed=true;await Promise.allSettled([reader.cancel(reason),cleanup()])}
   });

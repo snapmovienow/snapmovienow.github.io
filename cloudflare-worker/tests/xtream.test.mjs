@@ -33,7 +33,7 @@ const origin = 'https://snapmovienow-edge.juancanta89.workers.dev';
 const providerOrigins = ['http://ccf.center:8444', 'https://beta.example.test'];
 const providerCalls = [], cancellations = [];
 let failProvider = false, failMedia = false, failMediaStatus = 503, failValidation = false, renewEpisode = false, signedEpisodes = 0, offset = 0, invalidLive=false;
-let rangeErrorHeaders=null,rangeErrorCancellations=0;
+let rangeErrorHeaders=null,rangeErrorCancellations=0,endLiveSource=false;
 const now = Date.now; Date.now = () => now() + offset;
 globalThis.fetch = async (url, opts = {}) => {
   const u = new URL(url), provider = providerOrigins.indexOf(u.origin);
@@ -77,7 +77,7 @@ globalThis.fetch = async (url, opts = {}) => {
     if (invalidLive&&u.pathname.endsWith('.m3u8'))return new Response(null,{status:302,headers:{location:'/not-a-playlist'}});
     if (u.pathname.endsWith('.m3u8')) return new Response('#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:1\n#EXT-X-KEY:METHOD=AES-128,URI="/key.bin"\n#EXTINF:4,\n/segment.ts\n', {headers:{'content-type':'application/vnd.apple.mpegurl'}});
     if (u.pathname.startsWith('/live/')) {
-      return new Response(new ReadableStream({start(c) {c.enqueue(new Uint8Array([0x47,1,2,3]))}, cancel() {cancellations.push(u.pathname)}}), {headers:{'content-type':'video/mp2t'}});
+      return new Response(new ReadableStream({start(c) {c.enqueue(new Uint8Array([0x47,1,2,3]));if(endLiveSource)c.close()}, cancel() {cancellations.push(u.pathname)}}), {headers:{'content-type':'video/mp2t'}});
     }
     const range = new Headers(opts.headers).get('range');
     return new Response('data', {status:range ? 206 : 200, headers:{'content-type':'video/mp4','content-length':'4','accept-ranges':'bytes',...(range ? {'content-range':'bytes 0-3/1000'} : {})}});
@@ -349,6 +349,31 @@ assert.equal((await worker.fetch(new Request(segmentUrl),env)).status,410);
 assert.equal((await post({op:'auth',...customer})).status,200, 'disabling Xtream preserves the web service');
 await admin('xtream-save',{enabled:true});
 assert.equal((await worker.fetch(new Request(segmentUrl),env)).status,410, 'reenabling does not resurrect old stream tickets');
+
+// The real native TV route must deliver source EOF before a delayed release.
+// The reservation is still released once the separate account service responds.
+const originalGet=env.PLAYBACK_SESSIONS.get,pendingReleases=[];
+let unblockRelease,eofTimer;
+const releaseGate=new Promise(resolve=>{unblockRelease=resolve;});
+env.PLAYBACK_SESSIONS.get=function(id){
+ const stub=originalGet.call(this,id);
+ return id!=='__smn_accounts_v1'?stub:{fetch(url,options){
+  if(new URL(url).pathname!=='/accounts/release')return stub.fetch(url,options);
+  const task=releaseGate.then(()=>stub.fetch(url,options));pendingReleases.push(task);return task;
+ }};
+};
+endLiveSource=true;
+try{
+ const ended=await media('live',channels[0].stream_id,'ts');assert.equal(ended.status,200);
+ const reader=ended.body.getReader();assert.deepEqual([...(await reader.read()).value],[0x47,1,2,3]);
+ const eof=await Promise.race([reader.read(),new Promise(resolve=>{eofTimer=setTimeout(()=>resolve('release_blocked_native_eof'),500);})]);
+ assert.notEqual(eof,'release_blocked_native_eof','native TV signals EOF while capacity release is still pending');
+ assert.equal(eof.done,true);assert.equal(pendingReleases.length,1);
+}finally{
+ clearTimeout(eofTimer);endLiveSource=false;unblockRelease();
+ await Promise.all(pendingReleases);env.PLAYBACK_SESSIONS.get=originalGet;
+}
+assert.equal((await leases()).length,0,'background EOF cleanup releases the exact native TV reservation');
 
 const raw = await media('live',channels[0].stream_id,'ts');
 assert.equal(raw.status,200); await raw.body.cancel();
