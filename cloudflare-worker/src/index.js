@@ -396,7 +396,7 @@ if(op==="stream_token"){
   if(b.type==='series'&&!parentId)parentId=(await (await registry(env,'/xtream-episode',{server:b.server||'ccf',id:b.id})).json())?.parentId;
   if(!await adultPolicy.allowed({kind:b.type==='series'?'episode':b.type||'movie',server:b.server||'ccf',upstreamId:b.id,parentId}))return json({error:'adult_content_disabled'},403);
  }
- return await prepareWebPlayback(b,session,req.url,env,ctx,{trace,directory,managedPlayback,ticket,serverStream,json,cleanExt,origin:ORIGIN,client:requestConnectionClient(req),activity:async item=>{
+ return await prepareWebPlayback(b,session,req.url,env,ctx,{trace,directory,managedPlayback,ticket,serverStream,json,cleanExt,catalog:rawCatalog,permissions,origin:ORIGIN,client:requestConnectionClient(req),activity:async item=>{
   if(item.type==='series'&&!item.parentId){const record=await (await registry(env,'/xtream-episode',{server:item.server,id:item.id})).json();if(record?.activity)return record.activity;item.parentId=record?.parentId}
   return cachedPlaybackActivity(rawCatalog,item);
  }});
