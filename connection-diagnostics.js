@@ -68,7 +68,7 @@
       else throw error;
     }
     if (!protectedAPI) throw failure('invalid_response', auth);
-    return {...info, origin: url.origin, version: health.version, elapsedMs: Math.round(performance.now() - started), checkedAt: new Date().toISOString(), protectedAPI};
+    return {...info, origin: url.origin, version: health.version, elapsedMs: Math.round(performance.now() - started), checkedAt: new Date().toISOString(), protectedAPI, diagnosticsComplete:typeof health.diagnosticsComplete==='boolean'?health.diagnosticsComplete:null, diagnosticStatus:health.diagnosticsComplete===false?'degraded':health.diagnosticsComplete===true?'complete':'unknown'};
   }
   root.SMNConnection = Object.freeze({readJSON, requestJSON, message, check});
 })(globalThis);
