@@ -6,6 +6,7 @@ import {timed} from './playback-timings.mjs';
 import {playbackMonitorClient,attachPlaybackQuality} from './native-playback-quality.mjs';
 import {requestConnectionClient} from './connection-monitor.mjs';
 import {handleXtream} from './xtream.mjs';
+import {createLiveVariantFallback} from './live-variants.mjs';
 
 import {createProviderCatalog,fingerprint} from './provider-catalog.mjs';
 import {createAdultPolicy} from './content-permissions.mjs';
@@ -48,7 +49,9 @@ export function createXtreamBridge(deps) {
       return ids;
     };
     const resolve = async id => (await deps.registry(env,'/xtream-resolve',{id})).json();
-    const play = async (request, session, item) => {
+    const play = async (request, session, originalItem) => {
+      let item=originalItem;
+      const nextVariant=createLiveVariantFallback(rawCatalog,originalItem,session.permissions);
       let activity=cleanPlaybackActivity(item.activity,item.type);
       const activityTask=!activity?startPlaybackActivity(()=>cachedPlaybackActivity(rawCatalog,{type:item.type,server:item.server,id:item.upstreamId,parentId:item.parentId}),ctx):null;
       const request_id=crypto.randomUUID();
@@ -74,7 +77,11 @@ export function createXtreamBridge(deps) {
           await privateCall('/release',{sid:session.sid,lease_id,request_id,reason:'upstream_failed'});await response.body?.cancel();
           const code=response.headers.get('X-SMN-Error-Code');
           if(response.status===410&&['playback_superseded','playback_expired','session_expired'].includes(code))return deps.json({error:code},410);
-          if(retryableSourceStatus(response.status)&&allocation.provider_id&&attempt<2){excluded.push(allocation.provider_id);continue}
+          if(retryableSourceStatus(response.status)&&allocation.provider_id&&attempt<2){
+            const alternative=startup.available?await nextVariant(response.status):null;
+            if(alternative){item=alternative;excluded.length=0}else excluded.push(allocation.provider_id);
+            continue
+          }
           const failed=deps.json({error:lastServiceError||'upstream_unavailable'},response.status);
           if(response.status===416){
             // Retain only bounded range metadata, never provider error bodies,
