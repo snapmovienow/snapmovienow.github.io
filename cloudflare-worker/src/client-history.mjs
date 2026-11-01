@@ -1,3 +1,4 @@
+import {cleanUsageChannel} from './channel-usage.mjs';
 import {cleanConnectionClient} from './connection-monitor.mjs';
 import {cleanPlaybackActivity} from './playback-activity.mjs';
 const DAY=86400000,RETENTION=30*DAY,MAX_ROWS=10000,PREFIX='client-history:';
@@ -8,7 +9,8 @@ export function clientHistorySchema(sql){if(sql)sql.exec(`CREATE TABLE IF NOT EX
  kind TEXT NOT NULL, started_at INTEGER NOT NULL, last_seen_at INTEGER NOT NULL, ended_at INTEGER,
  lease_id TEXT, data TEXT NOT NULL);
  CREATE INDEX IF NOT EXISTS smn_client_history_account ON smn_client_history(account_id,started_at,id);
- CREATE INDEX IF NOT EXISTS smn_client_history_lease ON smn_client_history(lease_id,ended_at);`);}
+ CREATE INDEX IF NOT EXISTS smn_client_history_lease ON smn_client_history(lease_id,ended_at);
+ CREATE INDEX IF NOT EXISTS smn_client_history_channel ON smn_client_history(account_id,kind,json_extract(data,'$.channel.id'),started_at);`);}
 export async function safelyRecord(work){try{return await work();}catch{console.error('client_history_write_failed');}}
 function scope(user){return user&&id(user.resellerBridge?.accountId)&&id(user.resellerBridge?.lineId)&&/^[a-z0-9_.@!-]{3,80}$/.test(user.username||'')?{accountId:user.resellerBridge.accountId,lineId:user.resellerBridge.lineId,username:user.username}:null;}
 async function rowsFor(store,sql,where='',args=[]){return sql?sql.exec('SELECT * FROM smn_client_history'+where,...args).toArray():[...await store.list({prefix:PREFIX})].map(([,row])=>row);}
@@ -30,7 +32,7 @@ export async function recordPlayback(store,sql,leaseId,lease,now=Date.now()){
  if(found){if(found.ended_at===null&&lease.until-90000>found.last_seen_at+15000){found.last_seen_at=Math.min(now,lease.until-90000);await save(store,sql,found);}return eventId;}
  await finishPlayback(store,sql,leaseId,'replaced',now);
  const type=String(lease.mediaKey||'').split('|')[0],activity=cleanPlaybackActivity(lease.activity,type),start=Number.isSafeInteger(lease.startedAt)&&lease.startedAt>0&&lease.startedAt<=now?lease.startedAt:now;
- await save(store,sql,{id:eventId,account_id:owner.accountId,line_id:owner.lineId,username:owner.username,kind:'playback',started_at:start,last_seen_at:now,ended_at:null,lease_id:String(leaseId),data:JSON.stringify({client:cleanConnectionClient(lease.client),access:lease.xtream?'xtream':'api',type:['live','movie','series'].includes(type)?type:null,title:activity?.title||null,seriesTitle:activity?.seriesTitle||null,season:activity?.season||null,episode:activity?.episode||null,trafficObserved:false})});await trim(store,sql,owner.accountId,now);return eventId;
+ await save(store,sql,{id:eventId,account_id:owner.accountId,line_id:owner.lineId,username:owner.username,kind:'playback',started_at:start,last_seen_at:now,ended_at:null,lease_id:String(leaseId),data:JSON.stringify({client:cleanConnectionClient(lease.client),access:lease.xtream?'xtream':'api',type:['live','movie','series'].includes(type)?type:null,title:activity?.title||null,seriesTitle:activity?.seriesTitle||null,season:activity?.season||null,episode:activity?.episode||null,trafficObserved:false,...(cleanUsageChannel(lease.channel)?{channel:cleanUsageChannel(lease.channel)}:{})})});await trim(store,sql,owner.accountId,now);return eventId;
 }
 export async function labelPlayback(store,sql,leaseId,activity){
  const rows=(await rowsFor(store,sql,' WHERE lease_id=? AND ended_at IS NULL',[String(leaseId)])).filter(row=>row.lease_id===String(leaseId)&&row.ended_at===null);

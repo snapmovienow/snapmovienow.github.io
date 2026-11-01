@@ -1,3 +1,4 @@
+import {usageChannel,readChannelUsage,observeChannelUsage} from './channel-usage.mjs';
 import {boundedTsQuota} from './bounded-ts-route.mjs';
 import {saveCatalogReferences,readCatalogReferences} from './catalog-references.mjs';
 import {runLocalTvImport,localTvImportStatus,runLocalTvExpansion,localTvExpansionStatus,runRegionalTvImport,regionalTvImportStatus} from './local-tv-import.mjs';
@@ -13,7 +14,7 @@ import {resellerPresence,resellerPlaybackSummary,resellerLiveConnections,recordC
 import {resellerAccounts} from './reseller-accounts.mjs';
 import {nativeResellerImport} from './native-reseller-import.mjs';
 import {resellerIntegrity} from './reseller-integrity.mjs';
-import {readClientHistory,recordClientAccess,safelyRecord,touchPlayback,labelPlayback} from './client-history.mjs';
+import {readClientHistory,recordClientAccess,safelyRecord,touchPlayback,labelPlayback,recordPlayback,finishPlayback} from './client-history.mjs';
 import {catalogMaintenanceRoute,runCatalogMaintenance} from './catalog-maintenance.mjs';
 import {runYagaImport,yagaImportStatus} from './yaga-import.mjs';
 import {readServiceMonitor,sampleServiceMonitor} from './service-monitor.mjs';
@@ -65,8 +66,9 @@ export async function accountsFetch(state,env,req){
  if(p==='/reseller-presence')return store.transaction(tx=>resellerPresence(tx,leases.in(tx),b));
  if(p==='/reseller-playback-summary')return store.transaction(tx=>resellerPlaybackSummary(tx,leases.in(tx),b));
  if(p==='/reseller-connection-close')return store.transaction(tx=>closeResellerConnection(tx,leases.in(tx),b));
- if(p==='/playback-quality')return store.transaction(tx=>updateConnectionQuality(tx,leases.in(tx),b));
+ if(p==='/playback-quality')return store.transaction(tx=>updateConnectionQuality(tx,leases.in(tx),b,Date.now(),store.sql));
  if(p==='/reseller-live-connections')return store.transaction(tx=>resellerLiveConnections(tx,leases.in(tx),b));
+ if(p==='/reseller-channel-usage'){await leases.prune();return store.transaction(async tx=>readChannelUsage(tx,store.sql,b,(await exclusiveSnapshot(tx)).items));}
  if(p==='/reseller-client-history'){await leases.prune();return store.transaction(tx=>readClientHistory(tx,store.sql,b));}
  if(p==='/customer-logout'){const user=await store.get('user:'+normal(b.username));if(user?.id===b.uid)await safelyRecord(()=>recordClientAccess(store,store.sql,user,'logout',b.connection));return answer({ok:true});}
  if(p==='/reseller-integrity')return resellerIntegrity(store,b);
@@ -204,6 +206,13 @@ export async function accountsFetch(state,env,req){
   old.request_id=b.request_id;old.revision=Number.isSafeInteger(b.revision)?b.revision:old.revision+1;
   await tx.put(key,pruneAffinities(old));return answer({ok:true});
  });
+ if(p==='/channel-startup-failure')return store.transaction(async tx=>{
+  const u=await tx.get('user:'+normal(b.username));if(!alive(u)||u.id!==b.uid||u.version!==b.version||!b.request_id||(await tx.get('playback:'+b.sid))?.request_id!==b.request_id)return answer({error:'playback_expired'},410);
+  const found=selectExclusive((await exclusiveSnapshot(tx)).items,b.exclusiveId),channel=usageChannel(found?.row);if(!channel||found.row.playbackRevision!==b.playbackRevision||!(b.live?visibleLocalTv(found.row,contentPermissions(u.permissions)):visibleExclusive(found.row,contentPermissions(u.permissions))))return answer({ok:true,ignored:true});
+  const now=Date.now(),id='channel-failed:'+b.request_id;
+  await safelyRecord(async()=>{await recordPlayback(tx,store.sql,id,{uid:u.id,username:u.username,request_id:b.request_id,mediaKey:'live|exclusive|'+channel.id+'|m3u8',activity:{title:channel.name},channel,client:cleanConnectionClient(b.client),startedAt:now,until:now+90000,xtream:b.xtream===true},now);await observeChannelUsage(tx,store.sql,id,{kind:'failure',code:'upstream_http'},now);await finishPlayback(tx,store.sql,id,'closed',now);});
+  return answer({ok:true});
+ });
  if(p==='/exclusive-acquire')return store.transaction(async tx=>{
   if(!b.request_id||(await tx.get('playback:'+b.sid))?.request_id!==b.request_id)return answer({error:'playback_superseded'},410);
   const user=await tx.get('user:'+normal(b.username));if(!alive(user)||user.id!==b.uid||user.version!==b.version)return answer({error:'account_inactive'},401);
@@ -211,7 +220,7 @@ export async function accountsFetch(state,env,req){
   const local=leases.in(tx);await local.prune();await local.removeFor({sid:b.sid});const used=await local.count({uid:b.uid});
   const mediaKey=found.row.type+'|'+found.row.profileServer+'|'+b.exclusiveId+'|'+(found.media.mode==='gnula'?'m3u8':new URL(found.media.page).pathname.split('.').at(-1));
   if(used>=3){await recordConnectionLimit(tx,user,{...b,mediaKey,activity:{title:found.media===found.row?found.row.name:found.row.name+' · '+found.media.title}},used);return answer({error:'user_connection_limit'},409);}
-  const id=crypto.randomUUID();await local.put(id,{sid:b.sid,uid:b.uid,username:user.username,version:user.version,request_id:b.request_id,exclusiveId:b.exclusiveId,exclusiveParentId:found.row.id,playbackRevision:b.playbackRevision,mediaKey,activity:{title:found.media===found.row?found.row.name:found.row.name+' · '+found.media.title},client:cleanConnectionClient(b.client),startedAt:Date.now(),until:Date.now()+90000,...(b.xtream?{xtream:true}:{})});await recordCustomerActivity(tx,user.id,Date.now(),b.client);return answer({lease_id:id});
+  const id=crypto.randomUUID();await local.put(id,{sid:b.sid,uid:b.uid,username:user.username,version:user.version,request_id:b.request_id,exclusiveId:b.exclusiveId,exclusiveParentId:found.row.id,playbackRevision:b.playbackRevision,mediaKey,activity:{title:found.media===found.row?found.row.name:found.row.name+' · '+found.media.title},client:cleanConnectionClient(b.client),...(usageChannel(found.row)?{channel:usageChannel(found.row)}:{}),startedAt:Date.now(),until:Date.now()+90000,...(b.xtream?{xtream:true}:{})});await recordCustomerActivity(tx,user.id,Date.now(),b.client);return answer({lease_id:id});
  });
  if(p==='/provider-health')return answer(providerHealthSummary(await store.get('provider-health')));
  if(p==='/provider-channel-observations')return answer(await store.transaction(tx=>readChannelObservations(tx,Date.now(),{prune:true})));
@@ -306,7 +315,7 @@ export async function accountsFetch(state,env,req){
   const activity=cleanPlaybackActivity(b.activity,String(lease.mediaKey||'').split('|')[0]);
   if(activity){await local.put(b.lease_id,{...lease,activity});await safelyRecord(()=>labelPlayback(tx,store.sql,b.lease_id,activity))}return answer({ok:true});
  });
- if(p==='/lease-check'||p==='/heartbeat'||p==='/release'||p==='/local-startup-observe')return store.transaction(async tx=>{
+ if(p==='/lease-check'||p==='/heartbeat'||p==='/release'||p==='/local-startup-observe'||p==='/channel-usage-observe')return store.transaction(async tx=>{
   const local=leases.in(tx),l=await local.get(b.lease_id);if(!l||l.sid!==b.sid)return answer({error:'playback_expired'},410);
   if(p==='/release'){
    if(b.request_id&&l.request_id!==b.request_id)return answer({ok:true,reused:true});
@@ -323,7 +332,7 @@ export async function accountsFetch(state,env,req){
   if(b.request_id&&(await tx.get('playback:'+b.sid))?.request_id!==b.request_id)return answer({error:'playback_superseded'},410);
   const u=await tx.get('user:'+normal(l.username));if(l.until<=Date.now()||!alive(u)||u.id!==l.uid||u.version!==l.version){await local.remove(b.lease_id);return answer({error:'playback_expired'},410)}
   let localVideoProbe=false,exclusiveScopeChecked=false;
-  if((p==='/heartbeat'&&b.exclusiveId)||p==='/local-startup-observe'){
+  if((p==='/heartbeat'&&b.exclusiveId)||p==='/local-startup-observe'||p==='/channel-usage-observe'){
    // Current catalog scope and lease renewal share one transaction/RPC. This
    // replaces a separate item read; no authorization result is cached.
    if(!l.exclusiveId||b.exclusiveId!==l.exclusiveId||b.parentId!==l.exclusiveParentId||b.playbackRevision!==l.playbackRevision)return answer({error:'title_not_allowed'},410);
@@ -332,12 +341,19 @@ export async function accountsFetch(state,env,req){
    if(!current||!current.row.visible||current.row.playbackRevision!==l.playbackRevision)return answer({error:'title_not_allowed'},410);
    if(p==='/heartbeat'&&!visibleLocalTv(current.row,contentPermissions(u.permissions)))return answer({error:'title_not_allowed'},410);
    exclusiveScopeChecked=true;
+   if(p==='/channel-usage-observe'){
+    if(!usageChannel(current.row)||!visibleExclusive(current.row,contentPermissions(u.permissions))&&!visibleLocalTv(current.row,contentPermissions(u.permissions)))return answer({error:'title_not_allowed'},410);
+    if(b.kind!=='failure'||!['upstream_http','upstream_timeout','invalid_playlist','body_error','media_empty'].includes(b.code))return answer({error:'invalid_stage'},400);
+    await safelyRecord(()=>observeChannelUsage(tx,store.sql,b.lease_id,{kind:'failure',code:b.code}));
+    l.localVideoClaimed=false;await local.put(b.lease_id,l);return answer({ok:true});
+   }
    if(p==='/local-startup-observe'){
     if(!visibleLocalTv(current.row,contentPermissions(u.permissions)))return answer({error:'title_not_allowed'},410);
     if(!['playlist','firstVideoBytes'].includes(b.stage)||b.stage==='firstVideoBytes'&&!l.localVideoClaimed)return answer({error:'invalid_stage'},400);
     if(!l.localObserved?.[b.stage]&&await recordLocalStartup(tx,l.exclusiveId,b.stage,b.durationMs)){
      l.localObserved={...l.localObserved,[b.stage]:true};await local.put(b.lease_id,l);
     }
+    if(b.stage==='firstVideoBytes')await safelyRecord(()=>observeChannelUsage(tx,store.sql,b.lease_id,{kind:'media',startupMs:Math.round(b.durationMs)}));
     return answer({ok:true});
    }
    if(b.localVideo===true&&!l.localVideoClaimed&&visibleLocalTv(current.row,contentPermissions(u.permissions))){l.localVideoClaimed=true;await local.put(b.lease_id,l);localVideoProbe=true;}

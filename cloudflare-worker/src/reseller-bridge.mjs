@@ -34,7 +34,7 @@ export function createResellerBridge(directory,trust=TRUSTED_RESELLERS,{sealConf
    const [recent,day,pool]=await Promise.all([operations.fetch('https://private/operations/monitor',{method:'POST',body:'{}'}).then(r=>r.json()),operations.fetch('https://private/operations/read',{method:'POST',body:'{}'}).then(r=>r.json()),directory(env,'/provider-dashboard',{}).then(r=>r.json())]);
    return json({ok:true,accountId:signed.accountId,presence:await presence.json(),recent,day,pool:{summary:pool.summary,stale:pool.stale}});
   }
-  if(signed.action==='history.clients'){const r=await directory(env,'/reseller-client-history',body);return json({...await r.json(),accountId:signed.accountId},r.status);}
+  if(signed.action==='history.clients'){const r=await directory(env,body.view==='channels'?'/reseller-channel-usage':'/reseller-client-history',body);return json({...await r.json(),accountId:signed.accountId},r.status);}
   if(signed.action==='presence.monitor'){const r=await directory(env,'/reseller-service-monitor',body);return json({...await r.json(),accountId:signed.accountId},r.status);}
   if(signed.action==='presence.summary'){const r=await directory(env,'/reseller-playback-summary',body);return json({...await r.json(),accountId:signed.accountId},r.status);}
   if(signed.action==='presence.close'){const r=await directory(env,'/reseller-connection-close',body);return json({...await r.json(),accountId:signed.accountId},r.status);}

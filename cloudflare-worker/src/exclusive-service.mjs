@@ -27,7 +27,9 @@ export function createExclusiveService(deps){
   if(selected&&!visibleLocalTv(selected.row,session.permissions))throw error('title_not_allowed',404);
   const {row,media}=selected||await lookup(env,id,session.permissions,options),request_id=options.request_id||crypto.randomUUID();
   const begun=await deps.directory(env,'/playback-begin',{sid:session.sid,request_id,...(Number.isSafeInteger(options.revision)?{revision:options.revision}:{})});if(!begun.ok)throw error('playback_superseded',begun.status);
-  const resolved=await resolve(media,session),source=exclusiveURL(resolved.url);
+  let resolved;
+  try{resolved=await resolve(media,session);}catch(e){if(!req.signal.aborted)await deps.directory(env,'/channel-startup-failure',{...session,request_id,exclusiveId:id,playbackRevision:row.playbackRevision,live:options.live===true,client:deps.requestConnectionClient(req)}).then(r=>r.body?.cancel()).catch(()=>{});throw e;}
+  const source=exclusiveURL(resolved.url);
   const allocated=await deps.directory(env,'/exclusive-acquire',{...session,request_id,exclusiveId:id,playbackRevision:row.playbackRevision,...(options.live?{live:true}:{}),client:deps.requestConnectionClient(req)});if(!allocated.ok){const b=await allocated.json();throw error(b.error||'exclusive_capacity',allocated.status);}
   const {lease_id}=await allocated.json();
   try{
@@ -61,6 +63,8 @@ export function createExclusiveService(deps){
    if(!current||!current.row.visible||current.row.playbackRevision!==data.playbackRevision)throw error('title_not_allowed',410);
   }
   const report=stage=>{if(!data.officialPage||!Number.isFinite(data.localStartedAt)||!ctx?.waitUntil)return;const durationMs=Date.now()-data.localStartedAt;ctx.waitUntil(deps.directory(env,'/local-startup-observe',{...scope,stage,durationMs}).then(r=>r.body?.cancel()).catch(()=>{}));};
+  const usageFailure=code=>deps.directory(env,'/channel-usage-observe',{...scope,kind:'failure',code}).then(r=>r.body?.cancel()).catch(()=>{});
+  try{
   const base=new URL(exclusiveURL(data.officialPage?(data.source||data.resource):data.source)),target=new URL(exclusiveURL(data.resource||data.source));const allowed=data.officialPage?url=>officialMediaAllowed(data.officialPage,url):null;if(allowed?!allowed(target):data.resource&&target.origin!==base.origin)throw error('exclusive_resource',403);
   const fetched=await mediaFetch(target.href,{range:req.headers.get('Range')||undefined,head:req.method==='HEAD',signal:req.signal,fetcher:deps.fetcher,allowed});const response=fetched.response;
   if(!response.ok){await response.body?.cancel();if(data.officialPage)await forgetOfficialLivePage(data.officialPage,{fetcher:deps.fetcher});throw error('media_unavailable',response.status===404?404:502);}
@@ -90,9 +94,10 @@ export function createExclusiveService(deps){
   }
   if(!data.resource&&!playlist&&!/^(?:video\/|audio\/|application\/octet-stream)/i.test(response.headers.get('Content-Type')||'')){await response.body?.cancel();throw error('exclusive_not_video',502);}
   if(req.method==='HEAD'){await response.body?.cancel();if(!data.resource)await deps.directory(env,'/release',{sid:data.sid,lease_id:data.lease_id,request_id:data.request_id});return new Response(null,{status:response.status,headers:out});}
-  const result=new Response(checked.localVideoProbe?observeFirstChunk(response.body,()=>report('firstVideoBytes')):response.body,{status:response.status,headers:out});
+  const result=new Response(checked.localVideoProbe?observeFirstChunk(response.body,()=>report('firstVideoBytes'),code=>{if(!req.signal.aborted&&ctx?.waitUntil)ctx.waitUntil(usageFailure(code==='media_empty'?'media_empty':'body_error'));}):response.body,{status:response.status,headers:out});
   if(data.resource)return result;
   return deps.guardXtreamResponse(result,async()=>(await deps.sessionCall(env,data.sid,'/check')).ok&&(await deps.directory(env,'/heartbeat',{sid:data.sid,lease_id:data.lease_id,request_id:data.request_id})).ok,()=>deps.directory(env,'/release',{sid:data.sid,lease_id:data.lease_id,request_id:data.request_id}),ctx,req.signal,data.exp,{waitForRelease:data.type!=='live'});
+  }catch(e){if(!req.signal.aborted&&(e.status===undefined||e.status>=500||e.status===404))await usageFailure(e.message==='invalid_playlist'?'invalid_playlist':e.name==='TimeoutError'?'upstream_timeout':'upstream_http');throw e;}
  };
  const admin=async(req,env,body,actor)=>{
   if(body.action==='exclusive-list')return Response.json(await read(env));

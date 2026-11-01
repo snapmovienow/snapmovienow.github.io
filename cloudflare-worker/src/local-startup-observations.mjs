@@ -15,7 +15,7 @@ export async function localStartupSummary(store,now=Date.now()){
  return {windowSeconds:WINDOW/1000,measurement:'server_start_to_playlist_or_first_video_bytes_not_rendered_frame',channels};
 }
 // Preserve streaming and cancellation; the report never delays a video chunk.
-export function observeFirstChunk(body,report){
+export function observeFirstChunk(body,report,onError){
  if(!body)return body;const reader=body.getReader();let observed=false;
- return new ReadableStream({async pull(controller){try{const {done,value}=await reader.read();if(done){controller.close();reader.releaseLock();return;}if(value?.byteLength&&!observed){observed=true;try{report()}catch{}}controller.enqueue(value);}catch(error){controller.error(error);reader.releaseLock();}},async cancel(reason){try{await reader.cancel(reason)}finally{reader.releaseLock()}}},{highWaterMark:0});
+ return new ReadableStream({async pull(controller){try{const {done,value}=await reader.read();if(done){if(!observed){try{onError?.('media_empty')}catch{}}controller.close();reader.releaseLock();return;}if(value?.byteLength&&!observed){observed=true;try{report()}catch{}}controller.enqueue(value);}catch(error){try{onError?.('body_error')}catch{}controller.error(error);reader.releaseLock();}},async cancel(reason){try{await reader.cancel(reason)}finally{reader.releaseLock()}}},{highWaterMark:0});
 }
