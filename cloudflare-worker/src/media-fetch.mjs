@@ -1,11 +1,17 @@
 // Connection deadlines must not abort a healthy, long-running media body.
 export async function fetchMedia(url, options = {}, headerTimeout = 12000, idleTimeout = 20000) {
   const abort = new AbortController();
+  const caller = options.signal;
+  const onAbort = () => abort.abort(caller.reason);
+  const cleanup = () => caller?.removeEventListener('abort', onAbort);
+  if (caller?.aborted) throw caller.reason ?? new DOMException('Aborted', 'AbortError');
+  caller?.addEventListener('abort', onAbort, {once:true});
   const headerTimer = setTimeout(() => abort.abort(Error('media_timeout')), headerTimeout);
   let response;
   try {response = await fetch(url, {...options, signal:abort.signal})}
+  catch (error) {cleanup(); throw error}
   finally {clearTimeout(headerTimer)}
-  if (!response.body) return response;
+  if (!response.body) {cleanup(); return response;}
   const reader = response.body.getReader(); let closed = false, idleTimer;
   const body = new ReadableStream({
     async pull(controller) {
@@ -15,14 +21,14 @@ export async function fetchMedia(url, options = {}, headerTimeout = 12000, idleT
           idleTimer = setTimeout(() => {const error = Error('media_idle_timeout'); abort.abort(error); reject(error)}, idleTimeout);
         })]); clearTimeout(idleTimer);
         if (closed) return;
-        if (next.done) {closed = true; controller.close()}
+        if (next.done) {closed = true; cleanup(); controller.close()}
         else controller.enqueue(next.value);
       } catch (error) {
         clearTimeout(idleTimer); if (closed) return;
-        closed = true; abort.abort(error); reader.cancel(error).catch(() => {}); controller.error(error);
+        closed = true; cleanup(); abort.abort(error); reader.cancel(error).catch(() => {}); controller.error(error);
       }
     },
-    async cancel(reason) {closed = true; clearTimeout(idleTimer); abort.abort(reason); await reader.cancel(reason).catch(() => {})}
+    async cancel(reason) {closed = true; clearTimeout(idleTimer); cleanup(); abort.abort(reason); await reader.cancel(reason).catch(() => {})}
   });
   return new Response(body, {status:response.status, statusText:response.statusText, headers:response.headers});
 }
