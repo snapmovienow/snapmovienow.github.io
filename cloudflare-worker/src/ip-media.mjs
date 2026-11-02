@@ -24,20 +24,37 @@ export function isApprovedMediaIP(u,sourceOrigin){
  if(['192.101.68.144','23.153.217.88','194.147.150.141'].includes(u.hostname)&&(!u.port||u.port==='80'))return true;
  return sourceOrigin===CCF_MEDIA_ORIGIN&&u.port!=='25'&&isPublicMediaIPv4(u.hostname);
 }
-export async function fetchApprovedMediaIP(value,headers,connectSocket,nativeStreamFactory,sourceOrigin,deadline=null,startupBudget=LIVE_STARTUP_MS){
+export async function fetchApprovedMediaIP(value,headers,connectSocket,nativeStreamFactory,sourceOrigin,deadline=null,startupBudget=LIVE_STARTUP_MS,signal){
  const url=new URL(value);if(!isApprovedMediaIP(url,sourceOrigin)&&!isCcfMediaEntry(url,sourceOrigin))throw Error('invalid_media_origin');
+ const cancelledReason=()=>signal?.reason ?? new DOMException('Aborted','AbortError');
+ if(signal?.aborted)throw cancelledReason();
  const connect=connectSocket||(await import('cloudflare:sockets')).connect;
+ if(signal?.aborted)throw cancelledReason();
  const socket=connect({hostname:url.hostname,port:Number(url.port||80)},{secureTransport:'off'});
  socket.closed.catch(()=>{});
+ let reader,nativeReader,socketWriter,bodyWriter,bodyError,socketClosed=false,bodyAborted=false,headersComplete=false;
+ const disposed=new WeakSet();
+ const disposeReader=(r,reason)=>{if(!r||disposed.has(r))return;disposed.add(r);void r.cancel(reason).catch(()=>{});try{r.releaseLock()}catch{}};
+ const closeSocket=(reason)=>{if(socketClosed)return;socketClosed=true;signal?.removeEventListener('abort',onAbort);disposeReader(nativeReader||reader,reason);try{socketWriter?.releaseLock()}catch{};void socket.close().catch(()=>{})};
+ const abortBody=reason=>{if(bodyWriter&&!bodyAborted){bodyAborted=true;void bodyWriter.abort(reason).catch(()=>{})}};
+ const onAbort=()=>{const reason=cancelledReason();bodyError?.(reason);abortBody(reason);closeSocket(reason)};
+ signal?.addEventListener('abort',onAbort,{once:true});if(signal?.aborted)onAbort();
+ const abortable=async promise=>{
+  if(!signal)return promise;
+  if(signal.aborted){void Promise.resolve(promise).catch(()=>{});throw cancelledReason()}
+  let listener;
+  try{const result=await Promise.race([promise,new Promise((_,reject)=>{listener=()=>reject(cancelledReason());signal.addEventListener('abort',listener,{once:true})})]);if(signal.aborted)throw cancelledReason();return result}
+  finally{signal.removeEventListener('abort',listener)}
+ };
  const maximum=startupBudget===VOD_STARTUP_MS?VOD_STARTUP_MS:LIVE_STARTUP_MS;
- const timed=async promise=>{let timer;try{return await Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('media_timeout')),headersComplete?20000:startupTimeout(deadline,deadline===null?20000:maximum))})])}finally{clearTimeout(timer)}};
- let reader,headersComplete=false;
+ const timed=async promise=>{let timer;try{return await abortable(Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('media_timeout')),headersComplete?20000:startupTimeout(deadline,deadline===null?20000:maximum))})]))}finally{clearTimeout(timer)}};
  try{
  await timed(socket.opened);
- const writer=socket.writable.getWriter();
+ if(signal?.aborted)throw cancelledReason();
+ const writer=socketWriter=socket.writable.getWriter();
  const lines=['GET '+url.pathname+url.search+' HTTP/1.0','Host: '+url.host,'User-Agent: SnapMovieNow/1.0','Accept: */*','Accept-Encoding: identity','Connection: close'];
  for(const name of ['range','if-range'])if(headers.has(name)){const value=headers.get(name);if(/[\r\n]/.test(value))throw Error('invalid_header');lines.push(name+': '+value)}
- await timed(writer.write(new TextEncoder().encode(lines.join('\r\n')+'\r\n\r\n')));writer.releaseLock();
+ await timed(writer.write(new TextEncoder().encode(lines.join('\r\n')+'\r\n\r\n')));writer.releaseLock();socketWriter=null;
  reader=socket.readable.getReader();let buffer=new Uint8Array(0),ended=false;
  async function more(){const r=await timed(reader.read());if(r.done){ended=true;return false}const b=new Uint8Array(buffer.length+r.value.length);b.set(buffer);b.set(r.value,buffer.length);buffer=b;return true}
  async function line(){for(;;){for(let i=0;i+1<buffer.length;i++)if(buffer[i]===13&&buffer[i+1]===10){const result=new TextDecoder().decode(buffer.subarray(0,i));buffer=buffer.subarray(i+2);return result}if(buffer.length>65536||ended)throw Error('invalid_http_response');await more()}}
@@ -64,33 +81,34 @@ export async function fetchApprovedMediaIP(value,headers,connectSocket,nativeStr
   const range=responseHeaders.get('content-range')?.match(/^bytes (\d+)-(\d+)\/(\d+)$/);
   const length=remaining??(range?Number(range[2])-Number(range[1])+1:null);
   if(length!==null&&(!Number.isSafeInteger(length)||length<0||buffer.length>length))throw Error('invalid_http_response');
-  if([204,205,304].includes(status)||length===0){void reader.cancel().catch(()=>{});void socket.close().catch(()=>{});return new Response(length===0&&![204,205,304].includes(status)?'':null,{status,headers:responseHeaders})}
-  const stream=factory(length),prefix=buffer;reader.releaseLock();
+  if([204,205,304].includes(status)||length===0){closeSocket();return new Response(length===0&&![204,205,304].includes(status)?'':null,{status,headers:responseHeaders})}
+  const stream=factory(length),prefix=buffer;reader.releaseLock();reader=null;
   // Read native byte streams in larger blocks, but finish finite HTTP bodies
   // at Content-Length. Waiting for socket EOF can hang a complete playlist or
   // segment when the upstream keeps the TCP connection open.
-  let nativeReader,readBlock;
+  let readBlock;
   try{nativeReader=socket.readable.getReader({mode:'byob'});readBlock=size=>typeof nativeReader.readAtLeast==='function'?nativeReader.readAtLeast(size,new Uint8Array(size)):nativeReader.read(new Uint8Array(size))}
   catch{nativeReader=socket.readable.getReader();readBlock=()=>nativeReader.read()}
-  const writer=stream.writable.getWriter();
-  writer.closed.catch(error=>{nativeReader.cancel(error).catch(()=>{});socket.close().catch(()=>{})});
+  const writer=bodyWriter=stream.writable.getWriter();
+  writer.closed.catch(error=>closeSocket(error));
   (async()=>{try{
-   let received=prefix.length,initial=prefix.length===0;if(prefix.length)await writer.write(prefix);
+   let received=prefix.length,initial=prefix.length===0;if(prefix.length)await abortable(writer.write(prefix));
    while(length===null||received<length){
     const size=length===null?65536:Math.min(65536,length-received),chunk=await timed(readBlock(initial?1:size));initial=false;
     if(chunk.done){if(length!==null&&received<length)throw Error('truncated_http_body');break}
     const bytes=length===null?chunk.value:chunk.value.subarray(0,length-received);
-    received+=bytes.length;await writer.write(bytes);
+    received+=bytes.length;await abortable(writer.write(bytes));
    }
-   await writer.close();
-  }catch(error){await writer.abort(error).catch(()=>{})}
-  finally{nativeReader.cancel().catch(()=>{});socket.close().catch(()=>{})}})();
+   closeSocket();await writer.close();
+  }catch(error){abortBody(error)}
+  finally{closeSocket();try{writer.releaseLock()}catch{}}})();
   return new Response(stream.readable,{status,headers:responseHeaders});
  }
  let chunkRemaining=0,chunkCRLF=false,finished=false;
- const close=()=>{finished=true;socket.close().catch(()=>{})};
+ const close=reason=>{finished=true;closeSocket(reason)};
  if([204,205,304].includes(status)){close();return new Response(null,{status,headers:responseHeaders})}
  const body=new ReadableStream({
+ start(controller){bodyError=reason=>{if(!finished){close(reason);controller.error(reason)}};if(signal?.aborted)bodyError(cancelledReason())},
  async pull(controller){try{
  if(finished){controller.close();return}
  if(chunked){
@@ -102,10 +120,10 @@ export async function fetchApprovedMediaIP(value,headers,connectSocket,nativeStr
  if(remaining===0){close();controller.close();return}
  if(!buffer.length&&!await more()){if(remaining!==null&&remaining>0)throw Error('truncated_http_body');close();controller.close();return}
  const n=remaining===null?buffer.length:Math.min(buffer.length,remaining);controller.enqueue(buffer.slice(0,n));buffer=buffer.subarray(n);if(remaining!==null)remaining-=n;
- }catch(e){close();controller.error(e)}},
- cancel(){close()}
+ }catch(e){if(!finished){close(e);controller.error(e)}}},
+ cancel(reason){close(reason)}
  });
  return new Response(body,{status,headers:responseHeaders});
- }catch(e){socket.close().catch(()=>{});throw e}
+ }catch(e){closeSocket(e);throw e}
 }
 

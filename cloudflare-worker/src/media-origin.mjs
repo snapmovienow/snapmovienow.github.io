@@ -25,7 +25,7 @@ export async function fetchValidatedMedia(start,headers,type,sourceOrigin,{fetch
   // Spend the shared startup budget rather than cutting a responding source at
   // a second, unrelated four-second deadline. Every redirect keeps that budget.
   const response=isApprovedMediaIP(target,sourceOrigin)||directCcfEntry&&isCcfMediaEntry(target,sourceOrigin)?
-   await fetchIP(next,headers,undefined,undefined,sourceOrigin,deadline,startupBudget):
+   await fetchIP(next,headers,undefined,undefined,sourceOrigin,deadline,startupBudget,signal):
    await fetchHost(next,{headers,redirect:'manual',signal},deadline===null?(type==='live'?12000:25000):startupTimeout(deadline,startupBudget));
   if(signal?.aborted){void response.body?.cancel().catch(()=>{});throw signal.reason ?? new DOMException('Aborted','AbortError')}
   if(![301,302,303,307,308].includes(response.status))return {response,url:next};
