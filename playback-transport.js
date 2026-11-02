@@ -2,6 +2,8 @@
 // The caller owns authorization, leases and selection; every asynchronous
 // boundary must validate that the same playback attempt is still authorized.
 (function(root){
+ const STARTUP_TIMEOUT_MS=20000;
+ const startupNow=()=>root.performance?.now?.()??Date.now();
  let hlsLoading;
  function loadHls(){
   return hlsLoading ||= new Promise((resolve,reject)=>{
@@ -24,6 +26,20 @@
     timeoutRetry:{maxNumRetry:2,retryDelayMs:1000,maxRetryDelayMs:4000},
     errorRetry:{maxNumRetry:3,retryDelayMs:1000,maxRetryDelayMs:8000}}}};
  }
+ // Cancel only this startup waiter; shared script loading belongs to all attempts.
+ function awaitStartup(operation,signal,deadline){
+  return new Promise((resolve,reject)=>{
+   let settled=false,timer;
+   const finish=(ok,value)=>{if(settled)return;settled=true;clearTimeout(timer);signal.removeEventListener('abort',onAbort);ok?resolve(value):reject(value)};
+   const onAbort=()=>finish(false,Error('playback_superseded'));
+   signal.addEventListener('abort',onAbort,{once:true});
+   if(signal.aborted){onAbort();return}
+   const remaining=deadline-startupNow();
+   if(remaining<=0){finish(false,Error('load_timeout'));return}
+   timer=setTimeout(()=>finish(false,Error('load_timeout')),remaining);
+   try{Promise.resolve(operation()).then(value=>startupNow()>=deadline?finish(false,Error('load_timeout')):finish(true,value),error=>finish(false,error))}catch(error){finish(false,error)}
+  });
+ }
  async function playWithTimeout(video,signal,startup){
   let timer,onAbort,onBuffered;
   try{
@@ -41,7 +57,7 @@
     }else play();
    });
    await Promise.race([playing,new Promise((_,reject)=>{
-    timer=setTimeout(()=>reject(Error('load_timeout')),20000);
+    timer=setTimeout(()=>reject(Error('load_timeout')),STARTUP_TIMEOUT_MS);
     onAbort=()=>reject(Error('playback_superseded'));
     signal?.addEventListener('abort',onAbort,{once:true});
    })]);
@@ -61,7 +77,7 @@
    moviePlayer.style.display='none';hlsPlayer.style.display='none';
   }
   async function start({url,resumeAt=0,external=false,type,attempt}){
-   const startingRevision=revision;
+   const startingRevision=revision,initializationDeadline=startupNow()+STARTUP_TIMEOUT_MS;
    const controller=new AbortController(),signal=controller.signal;startController=controller;
    const onCancel=()=>controller.abort();
    attempt.controller.signal.addEventListener('abort',onCancel,{once:true});
@@ -73,7 +89,7 @@
    const video=external?hlsPlayer:moviePlayer;
    if(external){
     options.onPlayer?.(video,attempt);video.style.display='block';
-    const Hls=await (options.loadHls||loadHls)();check();
+    const Hls=await awaitStartup(options.loadHls||loadHls,signal,initializationDeadline);check();
     if(!Hls.isSupported()&&video.canPlayType('application/vnd.apple.mpegurl')){
      options.onDiagnostics?.(null,attempt);video.src=url;await playWithTimeout(video,signal);
     }else{
@@ -101,7 +117,7 @@
       const onAbort=()=>finish(Error('playback_superseded'));
       const onReady=()=>{ready=true;finish()};
       const onFailure=(_,data)=>{if(!data.fatal)return;const missing=data.details==='manifestLoadError'&&data.response?.code===404;finish(missing?Object.assign(Error('media_not_found'),{status:404}):Error('stream_failed'))};
-      timer=setTimeout(()=>finish(Error('load_timeout')),20000);
+      timer=setTimeout(()=>finish(Error('load_timeout')),STARTUP_TIMEOUT_MS);
       currentEngine.on(events.MANIFEST_PARSED,onReady);currentEngine.on(events.ERROR,onFailure);
       signal.addEventListener('abort',onAbort,{once:true});
       try{check();currentEngine.loadSource(url);currentEngine.attachMedia(video)}catch(error){finish(error)}
@@ -113,8 +129,8 @@
      await playWithTimeout(video,signal,type==='live'?{engine:currentEngine,event:events.FRAG_BUFFERED}:null);
     }
    }else{
-    await (options.loadMoviePlayer||root.ensureMoviePlayer)();
-    await (options.whenMovieDefined||(()=>root.customElements.whenDefined('movi-player')))();check();
+    await awaitStartup(options.loadMoviePlayer||root.ensureMoviePlayer,signal,initializationDeadline);check();
+    await awaitStartup(options.whenMovieDefined||(()=>root.customElements.whenDefined('movi-player')),signal,initializationDeadline);check();
     options.onPlayer?.(video,attempt);video.style.display='block';video.onloadedmetadata=null;
     video.setAttribute('startat',String(resumeAt>5?resumeAt:0));video.src=url;
     await playWithTimeout(video,signal);
