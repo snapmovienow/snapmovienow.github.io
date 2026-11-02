@@ -1,15 +1,16 @@
-import {LOCAL_TV_CHANNELS,isOfficialLivePage} from './official-live.mjs';
+import {ALL_TV_CHANNELS as LOCAL_TV_CHANNELS,isOfficialLivePage} from './official-live.mjs';
+import {PUBLIC_TV_FOLDERS} from './public-tv-channels.mjs';
 const DAY=86400000,RETENTION=30*DAY,MAX_ROWS=10000,PREFIX='client-history:';
 const identifier=v=>typeof v==='string'&&/^[A-Za-z0-9_.:-]{1,151}$/.test(v);
 const text=(v,n)=>typeof v==='string'&&!/https?:\/\/|password=|authorization|bearer /i.test(v)?v.replace(/[\u0000-\u001f\u007f]/g,' ').trim().slice(0,n):'';
-const FOLDERS={'kansas':'LOCAL KANSAS','new-york':'LOCAL NEW YORK','new-jersey':'LOCAL NEW JERSEY',california:'LOCAL CALIFORNIA'};
+const FOLDERS={'kansas':'LOCAL KANSAS','new-york':'LOCAL NEW YORK','new-jersey':'LOCAL NEW JERSEY',california:'LOCAL CALIFORNIA',...Object.fromEntries(PUBLIC_TV_FOLDERS.map(c=>[c.key,c.name]))};
 export function cleanUsageChannel(value){
  if(!value||!identifier(value.id)||!text(value.name,180))return null;
  return {id:value.id,name:text(value.name,180),folders:[...new Set((Array.isArray(value.folders)?value.folders:[]).map(v=>text(v,80)).filter(Boolean))].slice(0,4)};
 }
 export function usageChannel(row){
  if(row?.type!=='movie'||!(row.usageKind==='channel'||isOfficialLivePage(row.page)))return null;
- const official=LOCAL_TV_CHANNELS.find(c=>c.id===row.id&&c.page===row.page);
+ const official=LOCAL_TV_CHANNELS.find(c=>c.page===row.page&&(c.id===row.id||c.adapter==='public-hls'));
  return cleanUsageChannel({id:row.id,name:row.name,folders:official?(official.categories||['kansas']).map(k=>FOLDERS[k]).filter(Boolean):['CANALES AGREGADOS']});
 }
 const readRows=async(store,sql,leaseId)=>sql?sql.exec('SELECT * FROM smn_client_history WHERE lease_id=? AND ended_at IS NULL',String(leaseId)).toArray():[...await store.list({prefix:PREFIX})].map(([,r])=>r).filter(r=>r.lease_id===String(leaseId)&&r.ended_at===null);

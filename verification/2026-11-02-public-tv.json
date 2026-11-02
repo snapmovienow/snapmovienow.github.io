@@ -1,0 +1,135 @@
+{
+  "phase": "predeployment",
+  "checkedAt": "2026-11-02T16:39:48.242001+00:00",
+  "requestId": "public-tv-owner-20261102-7eae448c",
+  "sourcePolicy": "stable_public_hls_entry_points_only",
+  "checks": [
+    {
+      "id": "public-euronews-es",
+      "name": "Euronews Español",
+      "ok": true,
+      "check": "playlist_and_segment"
+    },
+    {
+      "id": "public-dw-es",
+      "name": "DW Español",
+      "ok": true,
+      "check": "playlist_and_segment"
+    },
+    {
+      "id": "public-adn40",
+      "name": "ADN 40",
+      "ok": true,
+      "check": "playlist_and_segment"
+    },
+    {
+      "id": "public-milenio",
+      "name": "Milenio TV",
+      "ok": true,
+      "check": "playlist_and_segment"
+    },
+    {
+      "id": "public-rtve-24h",
+      "name": "RTVE 24 Horas",
+      "ok": true,
+      "check": "playlist_and_segment"
+    },
+    {
+      "id": "public-canal26",
+      "name": "Canal 26",
+      "ok": true,
+      "check": "playlist_and_segment"
+    },
+    {
+      "id": "public-telesur",
+      "name": "teleSUR",
+      "ok": true,
+      "check": "playlist_and_segment"
+    },
+    {
+      "id": "public-senal-colombia",
+      "name": "Señal Colombia",
+      "ok": true,
+      "check": "playlist_and_segment"
+    },
+    {
+      "id": "public-xite-siempre-latino",
+      "name": "XITE Siempre Latino",
+      "ok": true,
+      "check": "playlist_and_segment"
+    },
+    {
+      "id": "public-xite-nuevo-latino",
+      "name": "XITE Nuevo Latino",
+      "ok": true,
+      "check": "playlist_and_segment"
+    },
+    {
+      "id": "public-sol-musica",
+      "name": "Sol Música",
+      "ok": true,
+      "check": "playlist_and_segment"
+    },
+    {
+      "id": "public-enlace",
+      "name": "Enlace",
+      "ok": true,
+      "check": "playlist_and_segment"
+    },
+    {
+      "id": "public-nhk-world",
+      "name": "NHK WORLD-JAPAN",
+      "ok": true,
+      "check": "playlist_and_segment"
+    },
+    {
+      "id": "public-redbull",
+      "name": "Red Bull TV",
+      "ok": true,
+      "check": "playlist_and_segment"
+    },
+    {
+      "id": "public-bloomberg",
+      "name": "Bloomberg TV",
+      "ok": true,
+      "check": "playlist_and_segment"
+    },
+    {
+      "id": "public-pbs-kids",
+      "name": "PBS Kids",
+      "ok": true,
+      "check": "playlist_and_segment"
+    },
+    {
+      "id": "public-ejtv",
+      "name": "Enlace Juvenil",
+      "ok": true,
+      "check": "playlist_and_segment"
+    },
+    {
+      "id": "public-classic-arts",
+      "name": "Classic Arts Showcase",
+      "ok": true,
+      "check": "playlist_and_segment"
+    },
+    {
+      "id": "public-vevo-pop",
+      "name": "Vevo Pop",
+      "ok": true,
+      "check": "playlist_and_segment"
+    },
+    {
+      "id": "public-nbc-news-now",
+      "name": "NBC News NOW",
+      "ok": true,
+      "check": "playlist_and_segment"
+    }
+  ],
+  "validation": [
+    "155 regression files and frontend syntax",
+    "full Worker signed Xtream public-channel playback, audio and initialization resources",
+    "existing category identity reuse and filtering",
+    "scoped usage monitoring with zero-use entries and real lease observations"
+  ],
+  "devicePlaybackTested": false
+}

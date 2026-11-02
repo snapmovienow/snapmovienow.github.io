@@ -1,4 +1,4 @@
-import {LOCAL_TV_CHANNELS} from './official-live.mjs';
+import {ALL_TV_CHANNELS as LOCAL_TV_CHANNELS} from './official-live.mjs';
 const KEY='local-tv-startup-observations-v1',WINDOW=3600000;
 // Fixed channel/stage cardinality. Never persist viewer identifiers, source
 // addresses, tickets or individual request traces in the public summary.
