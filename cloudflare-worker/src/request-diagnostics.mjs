@@ -1,3 +1,4 @@
+import {takeFailureCorrelation} from './failure-correlation.mjs';
 import {setGatewayReference,takeGatewayFailure} from './portal-gateway-diagnostics.mjs';
 import {PlaybackTimings} from './playback-timings.mjs';
 import {playbackErrorCode} from './playback-outcomes.mjs';
@@ -30,13 +31,14 @@ export async function traceRequest(req, handler, {logger = console.error, now = 
   const exposed = new Set((headers.get('Access-Control-Expose-Headers') || '').split(',').map(x => x.trim()).filter(Boolean));
   for (const name of ['X-SMN-Request-ID', 'X-SMN-Version', 'CF-Ray','Server-Timing']) exposed.add(name);
   headers.set('Access-Control-Expose-Headers', [...exposed].join(', '));
+  const mediaFailure=takeFailureCorrelation(trace,response.status);
   if (response.status === 403 || response.status >= 500 || elapsedMs>=2500) {
     try {
       logger({event: response.status===403||response.status>=500?'request_failed':'request_slow', time: new Date(started).toISOString(),
         request_id: requestId, ray_id: rayId(req.headers.get('CF-Ray')),
         route: routeGroup(new URL(req.url).pathname),
         method: ['GET', 'HEAD', 'POST', 'OPTIONS'].includes(req.method) ? req.method : 'other',
-        status: response.status,...(portalFailure?{portal:portalFailure}:{}), elapsed_ms: elapsedMs, version: SERVICE_VERSION,...(trace.type?{playback:trace.snapshot(response.status,errorCode)}:{})});
+        status: response.status,...(mediaFailure?{media_failure:mediaFailure}:{}),...(portalFailure?{portal:portalFailure}:{}), elapsed_ms: elapsedMs, version: SERVICE_VERSION,...(trace.type?{playback:trace.snapshot(response.status,errorCode)}:{})});
     } catch { /* Diagnostics cannot interrupt a response. */ }
   }
   if(trace.type&&onTiming)try{onTiming(trace.snapshot(response.status,errorCode))}catch{} // Optional, off the playback path.
