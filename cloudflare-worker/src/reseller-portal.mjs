@@ -1,3 +1,4 @@
+import {portalReadDeadline} from './portal-read-deadline.mjs';
 import {gatewayDiagnostic} from './portal-gateway-diagnostics.mjs';
 import {boxpanelAsset} from './boxpanel-portal.mjs';
 import {PORTAL_SCRIPT,PORTAL_CSS,PORTAL_ICON} from './reseller-panel-assets.mjs';
@@ -38,6 +39,7 @@ export function createResellerPortal({getConfig,fetcher=fetch,boxpanel,catalog})
  if(!['GET','POST'].includes(req.method)||((path!=='/api/panel')&&req.method!=='POST'))return json({error:'portal_method'},405);
  if(req.method==='POST'&&(req.headers.get('Origin')!==u.origin||req.headers.get('Sec-Fetch-Site')==='cross-site'))return json({error:'portal_origin',message:'Abre el formulario desde este panel.'},403);
  if(req.method==='POST'&&req.headers.get('content-type')?.split(';')[0].trim().toLowerCase()!=='application/json')return json({error:'portal_format'},415);
+ let readDeadline;
  const diagnostic=gatewayDiagnostic('reseller',req);
  try{
   if(path==='/api/boxpanel'){
@@ -57,7 +59,8 @@ export function createResellerPortal({getConfig,fetcher=fetch,boxpanel,catalog})
   else if(req.method==='GET'){const allowed=new Set(['lineId','requestId','view','q','filter','page','pageSize','version','sort','direction','paid','lineType','slug','mode','stream','connectionLine','player','connectionSort','connectionDirection','connectionAccount','usageChannel','usageFolder','usageUser','logAccount','logKind','logFrom','logTo']);if(u.search.length>4000||[...u.searchParams.keys()].some(k=>!allowed.has(k)))return json({error:'portal_query'},400);body={action:'read',token:session,query:Object.fromEntries(u.searchParams)};}
   else body={action:'write',token:session,input:await readPortalInput(req)};
   diagnostic.action(body);diagnostic.phase('fetch');
-  const response=await fetcher(PORTAL_SOURCE+'/api/portal',{method:'POST',redirect:'manual',headers:{'Content-Type':'application/json','OAI-Sites-Authorization':'Bearer '+cfg.siteToken,'X-SNAP-Portal-Gateway-Token':cfg.gatewaySecret},body:JSON.stringify({...body,accountId:PORTAL_ACCOUNT,...(unified?{mode:'unified'}:{})}),signal:AbortSignal.timeout(16000)});
+  readDeadline=portalReadDeadline(req,path,body.action);readDeadline.signal.throwIfAborted();
+  const response=await fetcher(PORTAL_SOURCE+'/api/portal',{method:'POST',redirect:'manual',headers:{'Content-Type':'application/json','OAI-Sites-Authorization':'Bearer '+cfg.siteToken,'X-SNAP-Portal-Gateway-Token':cfg.gatewaySecret},body:JSON.stringify({...body,accountId:PORTAL_ACCOUNT,...(unified?{mode:'unified'}:{})}),signal:readDeadline.signal});
   diagnostic.status(response.status);diagnostic.phase('body');const raw=await response.text();if(raw.length>1048576||response.status>=300&&response.status<400)throw Error('gateway_reply');let result=JSON.parse(raw);diagnostic.phase('scope');
   if(path==='/api/portal/login'&&response.ok){if(result.ok!==true||(!unified&&result.accountId!==PORTAL_ACCOUNT)||typeof result.accountId!=='string'||!/^[A-Za-z0-9_.:-]{1,80}$/.test(result.accountId)||!/^[a-f0-9]{64}$/.test(result.token))throw Error('login_reply');return json({ok:true},200,{'Set-Cookie':cookie(result.token,28800,cookieName)});}
   if(path==='/api/portal/logout')return json({ok:true},200,{'Set-Cookie':cookie('',0,cookieName)});
@@ -65,5 +68,5 @@ export function createResellerPortal({getConfig,fetcher=fetch,boxpanel,catalog})
   diagnostic.phase('response');if(response.status>=500)result=diagnostic.failure(result,response.status,undefined,'upstream_http');
   const retryAfter=Number(response.headers.get('Retry-After')||0),extra={...([401,403].includes(response.status)&&['portal_session','portal_suspended'].includes(result?.error)?{'Set-Cookie':cookie('',0,cookieName)}:{}),...(response.status===429&&Number.isInteger(retryAfter)&&retryAfter>0&&retryAfter<=120?{'Retry-After':String(retryAfter)}:{})};
   return json(result,response.status,extra);
- }catch(error){if(path==='/api/boxpanel')return json({error:'portal_unavailable',message:'No se pudo comprobar el resultado. Conserva la operación pendiente.',final:false},503);return json(diagnostic.failure({error:'portal_unavailable',message:'No se pudo comprobar el resultado. Conserva la operación pendiente.',final:false},503,error),503);}
+ }catch(error){if(path==='/api/boxpanel')return json({error:'portal_unavailable',message:'No se pudo comprobar el resultado. Conserva la operación pendiente.',final:false},503);return json(diagnostic.failure({error:'portal_unavailable',message:'No se pudo comprobar el resultado. Conserva la operación pendiente.',final:false},503,error),503);}finally{readDeadline?.cleanup();}
 };return handle;}
