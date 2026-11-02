@@ -15,9 +15,10 @@ export function validatedMediaTarget(value,sourceOrigin){
 
 // Preserve the authorised source across redirects and Range retries. HLS
 // playlists use the same target check before issuing encrypted resource URLs.
-export async function fetchValidatedMedia(start,headers,type,sourceOrigin,{fetchIP=fetchApprovedMediaIP,fetchHost=fetchMedia,onOrigin,deadline=null,directCcfEntry=false}={}){
+export async function fetchValidatedMedia(start,headers,type,sourceOrigin,{fetchIP=fetchApprovedMediaIP,fetchHost=fetchMedia,onOrigin,deadline=null,directCcfEntry=false,signal}={}){
  let next=start;const startupBudget=type==='live'?LIVE_STARTUP_MS:VOD_STARTUP_MS;
  for(let redirects=0;redirects<6;redirects++){
+  if(signal?.aborted)throw signal.reason ?? new DOMException('Aborted','AbortError');
   const target=validatedMediaTarget(next,sourceOrigin);next=target.href;
   // Private diagnostics may observe origins, never credential-bearing paths.
   if(onOrigin)onOrigin(target.origin);
@@ -25,7 +26,8 @@ export async function fetchValidatedMedia(start,headers,type,sourceOrigin,{fetch
   // a second, unrelated four-second deadline. Every redirect keeps that budget.
   const response=isApprovedMediaIP(target,sourceOrigin)||directCcfEntry&&isCcfMediaEntry(target,sourceOrigin)?
    await fetchIP(next,headers,undefined,undefined,sourceOrigin,deadline,startupBudget):
-   await fetchHost(next,{headers,redirect:'manual'},deadline===null?(type==='live'?12000:25000):startupTimeout(deadline,startupBudget));
+   await fetchHost(next,{headers,redirect:'manual',signal},deadline===null?(type==='live'?12000:25000):startupTimeout(deadline,startupBudget));
+  if(signal?.aborted){void response.body?.cancel().catch(()=>{});throw signal.reason ?? new DOMException('Aborted','AbortError')}
   if(![301,302,303,307,308].includes(response.status))return {response,url:next};
   const location=response.headers.get('location');void response.body?.cancel().catch(()=>{});
   if(!location||redirects===5)throw Error('invalid_redirect');
