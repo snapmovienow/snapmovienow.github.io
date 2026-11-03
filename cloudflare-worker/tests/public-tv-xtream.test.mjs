@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import worker,{PlaybackSession} from '../src/index.js';
-import {PUBLIC_TV_CHANNELS,PUBLIC_TV_FOLDERS} from '../src/public-tv-channels.mjs';
+import {PUBLIC_TV_CHANNELS,PUBLIC_TV_FOLDERS,UNIVISION_NY_CHANNEL} from '../src/public-tv-channels.mjs';
 import {runPublicTvImport} from '../src/public-tv-import.mjs';
+import {runUnivisionNyImport} from '../src/univision-ny-import.mjs';
 import {exclusiveSnapshot} from '../src/exclusive-catalog.mjs';
 import {inspectCatalogSource} from '../src/catalog-source-check.mjs';
 import {readChannelUsage} from '../src/channel-usage.mjs';
@@ -57,6 +58,13 @@ for(const folder of PUBLIC_TV_FOLDERS){
  const filtered=await(await api('get_live_streams',{category_id:category.category_id},'POST')).json();assert.deepEqual(filtered.map(c=>c.stream_id),expected.map(c=>c.stream_id));
  for(const c of PUBLIC_TV_CHANNELS.filter(c=>c.categories.includes(folder.key)))assert.ok(expected.some(r=>r.name===c.name));
 }
+await runUnivisionNyImport(store,{}, {ENVIRONMENT:'production',CATALOG_MAINTENANCE_ENABLED:'true'},{probe:media=>inspectCatalogSource(media,{fetcher:globalThis.fetch})});
+const expanded=await(await api('get_live_streams')).json(),nyCategories=await(await api('get_live_categories')).json(),nyCategory=nyCategories.find(c=>c.category_name==='LOCAL NEW YORK');
+assert.ok(nyCategory);assert.equal(nyCategories.filter(c=>c.category_name==='LOCAL NEW YORK').length,1);
+assert.deepEqual(expanded.slice(0,rows.length),rows,'adding WXTV preserves every original provider/public numeric identity');
+const ny=expanded.find(c=>c.name===UNIVISION_NY_CHANNEL.name);assert.ok(ny);assert.equal(ny.category_id,nyCategory.category_id);
+assert.deepEqual((await(await api('get_live_streams',{category_id:nyCategory.category_id},'POST')).json()).map(c=>c.stream_id),[ny.stream_id]);
+rows.push(ny);added.push(ny);assert.deepEqual(await(await api('get_live_streams')).json(),rows);
 for(const row of added){
  assert.equal(row.stream_type,'live');assert.equal(row.container_extension,'m3u8');assert.equal(new URL(row.direct_source).origin,origin);assert.ok(!JSON.stringify(row).includes('akamaized.net'));
  const allocations=providerAllocations,response=await worker.fetch(new Request(row.direct_source,{headers:{'CF-Connecting-IP':'198.51.100.22','User-Agent':'Public-TV-External-Fixture'}}),env,ctx);
@@ -71,11 +79,12 @@ for(const row of added){
  await drain();
 }
 const catalog=(await exclusiveSnapshot(store)).items,usage=await(await readChannelUsage(store,null,{accountId},catalog)).json();
-assert.equal(usage.channels.length,20);assert.equal(usage.summary.channelsUsed,20,'actual signed Xtream plays are recorded for every new channel');assert.equal(usage.summary.users,1);assert.ok(usage.rows.every(s=>s.username===customer.username&&s.mediaObserved));
+assert.equal(usage.channels.length,21);assert.equal(usage.summary.channelsUsed,21,'actual signed Xtream plays are recorded for every new channel');assert.equal(usage.summary.users,1);assert.ok(usage.rows.every(s=>s.username===customer.username&&s.mediaObserved));
+assert.deepEqual(usage.channels.find(c=>c.id===UNIVISION_NY_CHANNEL.id).folders,['LOCAL NEW YORK']);
 const foreign=await(await readChannelUsage(store,null,{accountId:'foreign-account'},catalog)).json();assert.equal(foreign.summary.sessions,0);assert.ok(!JSON.stringify(foreign).includes(customer.username));
 const first=PUBLIC_TV_CHANNELS[0],saved=await store.get('exclusive:item:'+first.id);await store.put('exclusive:item:'+first.id,{...saved,visible:false});assert.equal((await worker.fetch(new Request(added[0].direct_source),env)).status,404);await store.put('exclusive:item:'+first.id,saved);
 assert.equal((await admin('save',{...customer,status:'active',expiresAt:Date.now()+86400000,permissions:{tv:true,movies:false,series:false,adults:false}})).status,200);
 assert.equal((await(await api('get_live_streams')).json()).length,rows.length);assert.equal((await(await api('get_exclusive_catalog')).json()).items.length,0);
 assert.equal((await admin('save',{...customer,status:'active',expiresAt:Date.now()+86400000,permissions:{tv:false,movies:true,series:true,adults:false}})).status,200);assert.deepEqual(await(await api('get_live_streams')).json(),[]);assert.equal((await worker.fetch(new Request(added[0].direct_source),env)).status,403);
 assert.ok(sourceCalls>0);assert.ok(providerCategoryCalls<10,'category mapping reuses retained catalogs rather than fetching once per channel');
-console.log('PASS: full Worker public-channel publication, existing-folder merging/filters, twenty signed video/audio/init paths, stable IDs, scoped usage/first bytes, provider capacity isolation, TV permissions and manual hide revocation.');
+console.log('PASS: full Worker public channels plus WXTV in LOCAL NEW YORK, existing-folder merging/filters, signed video/audio/init paths, original stable IDs, scoped usage/first bytes, provider capacity isolation, TV permissions and manual hide revocation.');

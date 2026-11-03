@@ -1,4 +1,4 @@
-import {PUBLIC_TV_CHANNELS} from '../src/public-tv-channels.mjs';
+import {PUBLIC_TV_CHANNELS,UNIVISION_NY_CHANNEL} from '../src/public-tv-channels.mjs';
 const hls=text=>new Response(text,{headers:{'Content-Type':'application/vnd.apple.mpegurl'}});
 export function publicTvFixtureUrls(c){
  const root=new URL(c.page);let variant=new URL('fixture.m3u8',root).href,media=new URL('fixture.ts',root).href;
@@ -13,7 +13,7 @@ export function publicTvFixtureUrls(c){
 }
 export function publicTvFixture(value){
  const url=typeof value==='object'?value.url:value;
- for(const c of PUBLIC_TV_CHANNELS){
+ for(const c of [...PUBLIC_TV_CHANNELS,UNIVISION_NY_CHANNEL]){
   const {variant,media,init,audio}=publicTvFixtureUrls(c);
   if(url===c.page)return hls('#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",NAME="Original",URI="'+audio+'"\n#EXT-X-STREAM-INF:BANDWIDTH=600000,AUDIO="audio"\n'+variant+'\n');
   if(url===variant||url===audio)return hls('#EXTM3U\n#EXT-X-TARGETDURATION:6\n#EXT-X-MAP:URI="'+init+'"\n#EXTINF:6,\n'+media+'\n');

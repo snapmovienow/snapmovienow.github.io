@@ -34,6 +34,9 @@ export const PUBLIC_TV_CHANNELS=[
  {"id":"public-vevo-pop","name":"Vevo Pop","page":"https://amg00056-amg00056c6-rakuten-uk-3235.playouts.now.amagi.tv/playlist.m3u8","adapter":"public-hls","categories":["musica"],"xtreamId":"2000019","poster":"https://i.imgur.com/dZHktKR.png","plot":"Videoclips pop, principalmente en inglés. Señal gratuita con publicidad."},
  {"id":"public-nbc-news-now","name":"NBC News NOW","page":"https://d1bl6tskrpq9ze.cloudfront.net/hls/master.m3u8?ads.xumo_channelId=99984003","adapter":"public-hls","categories":["noticias"],"xtreamId":"2000020","poster":"https://i.imgur.com/JZt2qh5.png","plot":"Noticias nacionales e internacionales en inglés. No es la señal completa de NBC ni una estación local."}
 ];
+// Separate owner-approved regional addition: keep the original twenty-channel
+// import and every previous numeric identity unchanged.
+export const UNIVISION_NY_CHANNEL={id:'local-univision-newyork',name:'Univision 41 · Nueva York · EN VIVO',page:'https://streaming-live-fcdn.api.prd.univisionnow.com/wxtv/wxtv.isml/hls/wxtv.m3u8',adapter:'public-hls',categories:['new-york'],xtreamId:'2000021',poster:'https://uvn-brightspot.s3.amazonaws.com/f1/55/003e5aa0491dbaf03067ee6a83d8/desktop-univision-41-nueva-york-298x168.jpg',plot:'WXTV Univision 41 de Nueva York, en español. Señal por internet del operador; disponibilidad y programación sujetas al proveedor.'};
 const begins=(u,host,prefix)=>u.hostname===host&&u.pathname.startsWith(prefix);
 const path=(u,host,pattern)=>u.hostname===host&&pattern.test(u.pathname);
 // Hosts and channel paths were checked against each public master and its media,
@@ -42,6 +45,7 @@ export function publicTvMediaAllowed(channel,u){
  if(u.protocol!=='https:'||u.username||u.password||u.port&&u.port!=='443'||u.hash||/%(?:2e|2f|5c)/i.test(u.pathname))return false;
  const root=new URL(channel.page);if(u.href===root.href)return true;
  switch(channel.id){
+ case 'local-univision-newyork':return begins(u,'streaming-live-fcdn.api.prd.univisionnow.com','/wxtv/wxtv.isml/hls/');
  case 'public-dw-es':return path(u,'dwamdstream104.akamaized.net',/^\/hls\/live\/2015530(?:-b)?\/dwstream104\//);
  case 'public-euronews-es':return begins(u,'cdn-euronews.akamaized.net','/live/eds/euronews-es/25053/');
  case 'public-rtve-24h':return begins(u,'rtvelivestream.rtve.es','/rtvesec/24h/')||begins(u,'rtvelivestream.rtve.es','/proxy_subtitulos/');

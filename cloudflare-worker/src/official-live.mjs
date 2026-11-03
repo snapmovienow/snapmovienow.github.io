@@ -1,5 +1,5 @@
 import {publicLiveDescriptor,forgetPublicLiveDescriptor,readPublicLiveDescriptor} from './public-live-descriptor.mjs';
-import {PUBLIC_TV_CHANNELS,publicTvMediaAllowed} from './public-tv-channels.mjs';
+import {PUBLIC_TV_CHANNELS,UNIVISION_NY_CHANNEL,publicTvMediaAllowed} from './public-tv-channels.mjs';
 import {REGIONAL_CHANNELS,regionalMediaAllowed,resolveRegionalLive,forgetRegionalLive} from './regional-live.mjs';
 export {REGIONAL_CHANNELS} from './regional-live.mjs';
 // Public station players only. No subscriber accounts, geo overrides or stored CDN URLs.
@@ -19,7 +19,7 @@ export const EXTRA_OFFICIAL_CHANNELS=[
 // Append only: array positions are stable Xtream identities, including the original four.
 export const KANSAS_CHANNELS=[...OFFICIAL_CHANNELS,...EXTRA_OFFICIAL_CHANNELS];
 export const LOCAL_TV_CHANNELS=[...KANSAS_CHANNELS,...REGIONAL_CHANNELS];
-export const ALL_TV_CHANNELS=[...LOCAL_TV_CHANNELS,...PUBLIC_TV_CHANNELS];
+export const ALL_TV_CHANNELS=[...LOCAL_TV_CHANNELS,...PUBLIC_TV_CHANNELS,UNIVISION_NY_CHANNEL];
 const channelFor=value=>{try{const u=new URL(value);if(u.protocol!=='https:'||u.username||u.password||u.port||u.hash)return null;return ALL_TV_CHANNELS.find(c=>c.page===u.href)||null;}catch{return null}};
 export const isOfficialLivePage=value=>!!channelFor(value instanceof URL?value.href:value);
 const fail=status=>{throw Object.assign(Error('official_live_unavailable'),Number.isInteger(status)?{upstreamStatus:status}:{})};

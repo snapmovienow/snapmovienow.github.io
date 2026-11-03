@@ -1,0 +1,39 @@
+{
+  "requestId": "univision-ny-owner-20261103-dba5fdfd",
+  "channelId": "local-univision-newyork",
+  "name": "Univision 41 · Nueva York · EN VIVO",
+  "folder": "LOCAL NEW YORK",
+  "officialPage": "https://www.univision.com/local/nueva-york-wxtv/nueva-york/wxtv/en-vivo-nueva-york-24-7-livestream",
+  "source": "https://streaming-live-fcdn.api.prd.univisionnow.com/wxtv/wxtv.isml/hls/wxtv.m3u8",
+  "sourceCheckedAt": "2026-11-03T01:23:12.868801+00:00",
+  "sourceEvidence": {
+    "ok": true,
+    "live": true,
+    "sampleBytes": 900000,
+    "selectedHeight": 720,
+    "streams": [
+      {
+        "codec_name": "aac",
+        "codec_type": "audio"
+      },
+      {
+        "codec_name": "h264",
+        "codec_type": "video",
+        "width": 1280,
+        "height": 720
+      },
+      {
+        "codec_name": "timed_id3",
+        "codec_type": "data"
+      }
+    ],
+    "frameDecoded": true
+  },
+  "integration": {
+    "newApkRequired": false,
+    "monitoring": "Uso de canales",
+    "scope": "Only the owner-approved WXTV station; original local and public IDs and import claims preserved",
+    "publicationGate": "Private production cron checks required HLS resources and video bytes before publishing",
+    "tests": "Scoped source, private finite publication, manual hide and duplicate preservation, signed Xtream HLS and monitoring integration passed"
+  }
+}
