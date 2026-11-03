@@ -1,16 +1,19 @@
 import {runBoundedTs} from './bounded-ts-core.mjs';
 import {contentPermissions,createAdultPolicy} from './content-permissions.mjs';
 export const TS_CASE='movistar8461-v1';
+export const MATCH_TS_CASE='barcelona233328-20261103-v1';
+const caseId=env=>env.BOUNDED_TS_CASE===TS_CASE?'8461':env.BOUNDED_TS_CASE===MATCH_TS_CASE?'233328':null;
 const result=(value,status=200)=>Response.json(value,{status,headers:{'Cache-Control':'no-store'}});
 const safeId=x=>/^\d{1,14}$/.test(String(x));
 // Private account-DO storage, not an externally reachable route. The fixed key
 // intentionally survives new browser sessions and reloads; no automatic reset.
 export async function boundedTsQuota(store,path,b,env){
- if(env.BOUNDED_TS_CASE!==TS_CASE||b.username!=='dieguito2026'||!b.uid||!b.sid)return result({error:'diagnostic_disabled'},403);
+ const publicId=caseId(env);
+ if(!publicId||b.username!=='dieguito2026'||!b.uid||!b.sid)return result({error:'diagnostic_disabled'},403);
  return store.transaction(async tx=>{
   const u=await tx.get('user:dieguito2026');
   if(u?.id!==b.uid||u.version!==b.version||u.status!=='active'||u.expiresAt&&u.expiresAt<=Date.now())return result({error:'session_required'},401);
-  const key='bounded-ts:'+TS_CASE,old=await tx.get(key);
+  const key='bounded-ts:'+env.BOUNDED_TS_CASE,old=await tx.get(key);
   if(path==='/bounded-ts-status')return result({state:old?.state||'ready',requestId:old?.requestId||null,result:old?.result||null});
   if(path==='/bounded-ts-claim'){
    if(old)return result({error:'diagnostic_consumed',state:old.state,requestId:old.requestId},409);
@@ -20,7 +23,7 @@ export async function boundedTsQuota(store,path,b,env){
   if(path==='/bounded-ts-result'&&old?.requestId===b.requestId){
    // Caller is the private route, but still store only a schema-controlled report.
    const x=b.result||{},m=x.mapping;
-   const report={httpStatus:Number.isInteger(x.httpStatus)?x.httpStatus:null,contentType:['video/mp2t','application/octet-stream','other'].includes(x.contentType)?x.contentType:null,bytesRead:Math.max(0,Math.min(4000000,Number(x.bytesRead)||0)),elapsedMs:Math.max(0,Number(x.elapsedMs)||0),stopReason:['deadline','cancelled','not_enabled','unauthorized','mapping_unverified','http_error','unexpected_content_type','byte_reader_required','byte_limit','eof','operation_failed','unavailable'].includes(x.stopReason)?x.stopReason:'unavailable',mapping:m&&safeId(m.channelId)&&m.publicId==='8461'&&/^[a-z0-9_-]{1,32}$/.test(m.server)?{publicId:'8461',channelId:m.channelId,server:m.server}:null,source:'requested_resource_selected_provider',originalOrAlternative:'unknown',fallbackAttempted:false,videoValidated:false,audioValidated:false,leaseReleaseRequested:x.leaseReleaseRequested===true,readerCancelRequested:x.readerCancelRequested===true,leaseReleased:x.leaseReleased===true};
+   const report={httpStatus:Number.isInteger(x.httpStatus)?x.httpStatus:null,contentType:['video/mp2t','application/octet-stream','other'].includes(x.contentType)?x.contentType:null,bytesRead:Math.max(0,Math.min(4000000,Number(x.bytesRead)||0)),elapsedMs:Math.max(0,Number(x.elapsedMs)||0),stopReason:['deadline','cancelled','not_enabled','unauthorized','mapping_unverified','http_error','unexpected_content_type','byte_reader_required','byte_limit','eof','operation_failed','unavailable'].includes(x.stopReason)?x.stopReason:'unavailable',mapping:m&&safeId(m.channelId)&&m.publicId===publicId&&/^[a-z0-9_-]{1,32}$/.test(m.server)?{publicId,channelId:m.channelId,server:m.server}:null,source:'requested_resource_selected_provider',originalOrAlternative:'unknown',fallbackAttempted:false,videoValidated:false,audioValidated:false,leaseReleaseRequested:x.leaseReleaseRequested===true,readerCancelRequested:x.readerCancelRequested===true,leaseReleased:x.leaseReleased===true};
    await tx.put(key,{...old,state:'complete',result:report});return result({ok:true});
   }
   return result({error:'diagnostic_request_mismatch'},409);
@@ -30,7 +33,8 @@ export async function boundedTsQuota(store,path,b,env){
 // Dedicated route only. Existing browser cookie and origin checks are retained
 // at dispatch; no access token export, login, or provider credentials in output.
 export async function boundedTsRoute(req,env,ctx,deps){
- if(env.BOUNDED_TS_CASE!==TS_CASE)return result({error:'diagnostic_disabled'},403);
+ const publicId=caseId(env);
+ if(!publicId)return result({error:'diagnostic_disabled'},403);
  const timing=deps.timing||{now:()=>performance.now(),setTimeout,clearTimeout};
  const started=timing.now(),abort=new AbortController(),requestId=crypto.randomUUID();
  let timer,expired=false,session,claimed=false,report,releaseConfirmed=false;const cleanups=[];
@@ -51,7 +55,7 @@ export async function boundedTsRoute(req,env,ctx,deps){
   const claim=await stage(()=>deps.directory(env,'/bounded-ts-claim',{...identity,requestId}));if(!claim.ok)return claim;claimed=true;
   const permissions=contentPermissions(await (await stage(()=>deps.directory(env,'/permissions',{username:session.username}))).json());
   if(!permissions.tv)throw Error('content_disabled');
-  const record=await (await stage(()=>deps.registry(env,'/xtream-resolve',{id:'8461'}))).json();
+  const record=await (await stage(()=>deps.registry(env,'/xtream-resolve',{id:publicId}))).json();
   if(record?.kind!=='live'||!safeId(record.upstreamId)||!/^[a-z0-9_-]{1,32}$/.test(record.server||''))throw Error('mapping');
   const catalog=deps.catalog(env,ctx),rows=await stage(()=>catalog('get_live_streams',record.server));
   const allowed=permissions.adults?rows:await stage(()=>createAdultPolicy(catalog).filter('get_live_streams',rows));
@@ -59,7 +63,7 @@ export async function boundedTsRoute(req,env,ctx,deps){
   const selection={channelId:String(record.upstreamId),server:record.server};
   report=await runBoundedTs({session,selection,enabled:true,signal:abort.signal},{
    authorize:async()=>!expired,
-   resolveAuthorizedChannel:async()=>({...selection,publicId:'8461'}),
+   resolveAuthorizedChannel:async()=>({...selection,publicId}),
    allocateOnce:async(_s,_channel,signal)=>{
     if(signal.aborted)throw Error('cancelled');
     const begun=await deps.directory(env,'/playback-begin',{sid:session.sid,request_id:requestId});if(!begun.ok||signal.aborted)throw Error('cancelled');
