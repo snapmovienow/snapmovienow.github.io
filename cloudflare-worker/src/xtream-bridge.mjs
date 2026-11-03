@@ -1,3 +1,4 @@
+import {setResolvedMedia,resetMediaPhase,recordInitialMediaResponse} from './failure-correlation.mjs';
 import {playbackStartup,reportLiveResult,deferPlaybackReport} from './live-startup.mjs';
 import {initialMediaEvidence} from './initial-media-evidence.mjs';
 import {responseMediaFailure} from './media-failure-cause.mjs';
@@ -60,6 +61,7 @@ export function createXtreamBridge(deps) {
       const startup=playbackStartup(item.type,request.signal);startup.trace=trace;
       const excluded=[];let lastFailure=null,lastServiceError=null;
       for(let attempt=0;attempt<3&&(attempt===0||!startup||startup.available);attempt++){
+      resetMediaPhase(trace);
       const mediaSession={...session,request_id,client:requestConnectionClient(request),mediaKey:item.type+'|'+item.server+'|'+item.upstreamId+'|'+item.ext,...(activity?{activity}:{})};
       const allocation=await deps.managedPlayback(env,mediaSession,item.server,ctx,excluded,startup);
       if(!allocation.r.ok){if(lastFailure&&allocation.r.status===409)return deps.json({error:lastServiceError||'upstream_unavailable'},lastFailure);return deps.json(await allocation.r.json(),allocation.r.status)}
@@ -70,6 +72,7 @@ export function createXtreamBridge(deps) {
       try{
         const prepared=startup?startup.prepare(request):new Request(request);
         const response=await deps.serverStream(prepared,env,target,ctx,trace);
+        recordInitialMediaResponse(trace,request,response);
         if(!response.ok){
           lastFailure=response.status;
           const cause=responseMediaFailure(response);lastServiceError=cause.serviceError||null;
@@ -107,7 +110,7 @@ export function createXtreamBridge(deps) {
       }
       return deps.json({error:lastServiceError||'live_signal_unavailable'},lastFailure||504);
     };
-    try { const special=deps.exclusives?await deps.exclusives.xtream(req,env,ctx,authenticate):null;return special||await handleXtream(req,{authenticate,catalog,register,resolve,play,localLive:deps.exclusives?.liveXtream?.(env,ctx),adultPolicy:createAdultPolicy(catalog,rawCatalog.inspect),json:deps.json}); }
+    try { const special=deps.exclusives?await deps.exclusives.xtream(req,env,ctx,authenticate):null;return special||await handleXtream(req,{onResolvedMedia:(type,id)=>setResolvedMedia(trace,type,id),authenticate,catalog,register,resolve,play,localLive:deps.exclusives?.liveXtream?.(env,ctx),adultPolicy:createAdultPolicy(catalog,rawCatalog.inspect),json:deps.json}); }
     catch(error) { if(req.signal.aborted||['playback_superseded','playback_expired'].includes(error.message))return deps.json({error:'playback_superseded'},410);if(error.status)return deps.json({error:error.message},error.status);return deps.json({error:['media_origin_unapproved','provider_unavailable','provider_inactive','panel_unavailable'].includes(error.message)?error.message:'xtream_unavailable'},502); }
   };
 }

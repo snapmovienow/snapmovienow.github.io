@@ -135,6 +135,7 @@ export async function handleXtream(req, deps) {
     if (!record || record.kind !== expected) return deps.json({error: 'not_found'}, 404);
     if (deps.localLive?.matches(record)) return kind==='live'?deps.localLive.play(req,auth,{...record,ext:ext.toLowerCase()}):deps.json({error:'not_found'},404);
     if (auth.user.permissions.adults === false && !await deps.adultPolicy.allowed(record)) return deps.json({error:'adult_content_disabled'},403);
+    deps.onResolvedMedia?.(kind,publicId);
     return deps.play(req, auth.session, {...record, type: kind, ext: ext.toLowerCase()});
   }
   if (url.pathname !== '/player_api.php') return deps.json({error: 'not_found'}, 404);
