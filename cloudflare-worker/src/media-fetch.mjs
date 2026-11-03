@@ -56,13 +56,13 @@ export function recoverMedia(response, fetchRange, authorized, attempts = 2, idl
     async pull(controller) {
       while (!closed) {
         try {
-          if(received===length){closed=true;await reader.cancel().catch(()=>{});controller.close();return}
+          if(received===length){closed=true;void reader.cancel().catch(()=>{});controller.close();return}
           let idleTimer, next;
           try {next=await Promise.race([reader.read(length-received),new Promise((_,reject)=>{idleTimer=setTimeout(()=>reject(Error('media_idle_timeout')),idleTimeout)})])}
           finally {clearTimeout(idleTimer)}
           if (closed) return;
           if (next.done) {if (received !== length) throw Error('truncated_http_body'); closed = true; controller.close(); return}
-          if (received + next.value.byteLength > length) {closed = true; await reader.cancel(); controller.error(Error('invalid_media_length')); return}
+          if (received + next.value.byteLength > length) {closed = true; void reader.cancel().catch(() => {}); controller.error(Error('invalid_media_length')); return}
           received += next.value.byteLength; controller.enqueue(next.value); return;
         } catch (error) {
           await reader.cancel().catch(() => {}); if (closed) return;
