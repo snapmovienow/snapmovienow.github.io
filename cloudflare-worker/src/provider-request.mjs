@@ -13,7 +13,7 @@ export async function readProviderJSON(value,{timeoutMs=2500,signal,directCcfEnt
  try{
   const headers=new Headers({'User-Agent':'SnapMovieNow/1.0','Accept-Encoding':'identity'});
   const requestSignal=AbortSignal.any([controller.signal,AbortSignal.timeout(budgetMs),...(signal?[signal]:[])]);
-  const request=directCcfEntry&&isCcfMediaEntry(url,CCF_MEDIA_ORIGIN)?fetchSocket(url.href,headers,undefined,undefined,CCF_MEDIA_ORIGIN,deadline):fetchHost(url.href,{headers,signal:requestSignal});
+  const request=directCcfEntry&&isCcfMediaEntry(url,CCF_MEDIA_ORIGIN)?fetchSocket(url.href,headers,undefined,undefined,CCF_MEDIA_ORIGIN,deadline,undefined,requestSignal):fetchHost(url.href,{headers,signal:requestSignal});
   Promise.resolve(request).then(r=>{if(controller.signal.aborted)void r?.body?.cancel().catch(()=>{})},()=>{});
   response=await within(request);if(!response.ok)throw failure('http_error');
   reader=response.body?.getReader();if(!reader)throw failure('invalid_reply');
