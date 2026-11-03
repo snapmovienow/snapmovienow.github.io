@@ -6,6 +6,10 @@ import {createLiveVariantFallback} from './live-variants.mjs';
 // One client request owns every attempt. Release a failed allocation before
 // choosing another authorised account; a cancelled request cannot restart.
 export async function prepareWebPlayback(body,session,requestUrl,env,ctx,deps){
+ const signal=deps.signal;let cancelledLease=null;
+ const checkCancelled=()=>{if(signal?.aborted)throw Error('playback_superseded')};
+ try{
+ checkCancelled();
  const type=String(body.type||'movie'),ext=deps.cleanExt(body.ext),server=String(body.server||'ccf');
  const diagnostic=targetedSession(session,env);
  if(session.targetedCase&&(!diagnostic||!diagnostic.ext||diagnostic.type!==type||diagnostic.id!==String(body.id)||diagnostic.server!==server||!targetExtension(ext)||diagnostic.ext!==ext))return deps.json({error:'playback_expired'},410);
@@ -13,9 +17,10 @@ export async function prepareWebPlayback(body,session,requestUrl,env,ctx,deps){
  const activityTask=session.managed&&!diagnostic?startPlaybackActivity(deps.activity&&(()=>deps.activity({type,server,id:body.id,parentId:body.series_id})),ctx):null;
  if(session.managed){
   const begun=await deps.directory(env,'/playback-begin',{sid:session.sid,request_id,revision:body.revision});
+  checkCancelled();
   if(!begun.ok)return deps.json(await begun.json(),begun.status);
  }
- const startup=session.managed?playbackStartup(type):null;if(startup)startup.trace=deps.trace;
+ const startup=session.managed?playbackStartup(type,signal):null;if(startup)startup.trace=deps.trace;
  let mediaId=String(body.id);
  const nextVariant=!session.canary?createLiveVariantFallback(deps.catalog,{type,server,upstreamId:mediaId},deps.permissions||session.permissions):async()=>null;
  if(diagnostic&&startup)startup.attempts=2; // One remaining allocation/validation claim, never fallback.
@@ -24,22 +29,30 @@ export async function prepareWebPlayback(body,session,requestUrl,env,ctx,deps){
   let credentials=session,lease_id,provider_id,allocation;
   if(session.managed){
    try{allocation=await deps.managedPlayback(env,{...session,request_id,client:deps.client,mediaKey:type+'|'+server+'|'+mediaId+'|'+ext},server,ctx,excluded,startup)}
-   catch(error){const failed=preparationFailure(error);return deps.json({error:failed.error},failed.status)}
+   catch(error){checkCancelled();const failed=preparationFailure(error);return deps.json({error:failed.error},failed.status)}
+   if(!allocation.r.ok)checkCancelled();
    if(!allocation.r.ok)return deps.json(await allocation.r.json(),allocation.r.status);
    credentials=allocation.credentials;provider_id=allocation.provider_id;lease_id=(await allocation.r.json()).lease_id;allocation.lease_id=lease_id;
+   cancelledLease=lease_id?{sid:session.sid,lease_id,request_id}:null;checkCancelled();
   }
+  checkCancelled();
   const data={sid:session.sid,username:credentials.username,password:credentials.password,origin:credentials.origin||deps.origin,lease_id,provider_id,request_id,type,id:mediaId,ext,exp:session.exp,...(session.canary?{canary:true,...(session.comparison?{comparison:true}:{})}:{}) ,...(diagnostic?{targetedCase:diagnostic.key,caseDeadline:session.caseDeadline}:{})};
   const url=new URL(requestUrl).origin+'/stream?t='+await deps.ticket(env,data);
+  checkCancelled();
   if(type==='live'&&ext==='m3u8'){
    const signalAt=Date.now(),mediaSession={...session,request_id};let sourceHttpStatus;
    try{
-    const checked=await deps.serverStream(startup?startup.prepare(new Request(url)):new Request(url,{headers:{'X-SMN-Prepare':'1'}}),env,new URL(url),ctx,deps.trace);
+    const checked=await deps.serverStream(startup?startup.prepare(new Request(url,{signal})):new Request(url,{signal,headers:{'X-SMN-Prepare':'1'}}),env,new URL(url),ctx,deps.trace);
+    if(signal?.aborted){void checked.body?.cancel().catch(()=>{});checkCancelled();}
     if(!checked.ok){sourceHttpStatus=checked.status;await checked.body?.cancel();throw Error(checked.status===410?'playback_superseded':'live_signal_unavailable')}
-    if(!(await checked.text()).startsWith('#EXTM3U'))throw Error('live_signal_unavailable');
+    const manifest=await checked.text();checkCancelled();
+    if(!manifest.startsWith('#EXTM3U'))throw Error('live_signal_unavailable');
     if(startup){const elapsed=Date.now()-signalAt;deferPlaybackReport(ctx,()=>reportLiveResult(deps.directory,env,mediaSession,allocation,true,elapsed,'signal',{evidence:'manifest'}));}
    }catch(error){
+    checkCancelled();
     if(startup&&!['media_origin_unapproved','playback_superseded'].includes(error.message))await reportLiveResult(deps.directory,env,mediaSession,allocation,false,Date.now()-signalAt,'signal',{httpStatus:sourceHttpStatus});
-    if(lease_id)await deps.directory(env,'/release',{sid:session.sid,lease_id,request_id,reason:'upstream_failed'});
+    if(lease_id){cancelledLease=null;await deps.directory(env,'/release',{sid:session.sid,lease_id,request_id,reason:'upstream_failed'});}
+    checkCancelled();
     if(error.message==='playback_superseded')return deps.json({error:'playback_superseded'},410);
     if(error.message==='media_origin_unapproved')return deps.json({error:error.message},502);
     if(provider_id&&attempt+1<attempts){const alternative=startup.available?await nextVariant(sourceHttpStatus):null;if(alternative){mediaId=alternative.upstreamId;excluded.length=0}else excluded.push(provider_id);continue}
@@ -47,8 +60,11 @@ export async function prepareWebPlayback(body,session,requestUrl,env,ctx,deps){
    }
   }
   if(lease_id&&!(await deps.directory(env,'/lease-check',{sid:session.sid,lease_id,request_id})).ok)return deps.json({error:'playback_superseded'},410);
+  checkCancelled();
   if(lease_id)attachPlaybackActivity(activityTask,{env,ctx,directory:deps.directory,session:{...session,request_id},lease_id,mediaKey:type+'|'+server+'|'+mediaId+'|'+ext});
   return deps.json({url,lease_id,request_id});
  }
  return deps.json({error:'live_signal_unavailable'},504);
+ }catch(error){if(signal?.aborted)return deps.json({error:'playback_superseded'},410);throw error}
+ finally{if(signal?.aborted&&cancelledLease){const lease=cancelledLease;cancelledLease=null;try{await deps.directory(env,'/release',lease)}catch{ /* Cancellation stays cancelled even when cleanup fails. No retry. */ }}}
 }
