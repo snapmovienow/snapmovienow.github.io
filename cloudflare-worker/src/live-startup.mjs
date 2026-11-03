@@ -50,7 +50,7 @@ export async function readLivePlaylist(response,deadline){
  const reader=response.body?.getReader();if(!reader)throw Error('invalid_playlist');let text='',size=0;const decoder=new TextDecoder();
  try{for(;;){let timer;const next=await Promise.race([reader.read(),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('live_startup_timeout')),startupTimeout(deadline,12000));})]).finally(()=>clearTimeout(timer));
   if(next.done)return text+decoder.decode();size+=next.value.length;if(size>262144)throw Error('invalid_playlist');text+=decoder.decode(next.value,{stream:true});
- }}finally{void reader.cancel().catch(()=>{});}
+ }}finally{try{void reader.cancel().catch(()=>{});}finally{reader.releaseLock();}}
 }
 export async function reportLiveResult(directory,env,session,allocation,ok,elapsedMs,stage='signal',detail={}){
  if(!allocation.provider_id)return;

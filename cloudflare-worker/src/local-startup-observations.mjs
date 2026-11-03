@@ -16,6 +16,7 @@ export async function localStartupSummary(store,now=Date.now()){
 }
 // Preserve streaming and cancellation; the report never delays a video chunk.
 export function observeFirstChunk(body,report,onError){
- if(!body)return body;const reader=body.getReader();let observed=false;
- return new ReadableStream({async pull(controller){try{const {done,value}=await reader.read();if(done){if(!observed){try{onError?.('media_empty')}catch{}}controller.close();reader.releaseLock();return;}if(value?.byteLength&&!observed){observed=true;try{report()}catch{}}controller.enqueue(value);}catch(error){try{onError?.('body_error')}catch{}controller.error(error);reader.releaseLock();}},async cancel(reason){try{await reader.cancel(reason)}finally{reader.releaseLock()}}},{highWaterMark:0});
+ if(!body)return body;const reader=body.getReader();let observed=false,closed=false,released=false;
+ const release=()=>{if(!released){reader.releaseLock();released=true}};
+ return new ReadableStream({async pull(controller){if(closed)return;try{const {done,value}=await reader.read();if(closed)return;if(done){closed=true;if(!observed){try{onError?.('media_empty')}catch{}}controller.close();release();return;}if(value?.byteLength&&!observed){observed=true;try{report()}catch{}}controller.enqueue(value);}catch(error){if(closed)return;closed=true;try{onError?.('body_error')}catch{}controller.error(error);release();}},cancel(reason){closed=true;try{return reader.cancel(reason)}finally{release()}}},{highWaterMark:0});
 }
