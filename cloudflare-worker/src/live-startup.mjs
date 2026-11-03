@@ -31,12 +31,15 @@ export async function readInitialMedia(response,deadline){
  let reader,read;
  try{reader=response.body.getReader({mode:'byob'});read=()=>reader.read(new Uint8Array(65536));}
  catch{reader=response.body.getReader();read=()=>reader.read();}
+ let released=false;
+ const release=()=>{if(!released){reader.releaseLock();released=true}};
+ const cancel=reason=>{if(released)return Promise.resolve();try{return reader.cancel(reason)}finally{release()}};
  let timer,first;
  try{const timeout=startupTimeout(deadline,VOD_STARTUP_MS);first=await Promise.race([read(),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('live_startup_timeout')),timeout)})]);if(first.done||!first.value?.byteLength)throw Error('media_empty')}
- catch(error){void reader.cancel(error).catch(()=>{});throw error}
+ catch(error){void cancel(error).catch(()=>{});throw error}
  finally{clearTimeout(timer)}
  let prefix=first.value;
- const body=new ReadableStream({async pull(controller){try{if(prefix){controller.enqueue(prefix);prefix=null;return}const next=await read();if(next.done)controller.close();else controller.enqueue(next.value)}catch(error){controller.error(error)}},cancel:reason=>reader.cancel(reason)});
+ const body=new ReadableStream({async pull(controller){try{if(prefix){controller.enqueue(prefix);prefix=null;return}const next=await read();if(next.done){release();controller.close();}else controller.enqueue(next.value)}catch(error){void cancel(error).catch(()=>{});controller.error(error)}},cancel});
  return new Response(body,{status:response.status,statusText:response.statusText,headers:response.headers});
 }
 export function startupTimeout(deadline,cap,now=Date.now()){
