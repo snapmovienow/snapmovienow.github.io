@@ -33,3 +33,14 @@ test('response contracts stay unchanged across final error and success paths',as
   const x=await run(opts);assert.equal(x.res.status,status);assert.equal(await x.res.text(),body);assert.ok(x.timings.every(v=>!Object.hasOwn(v,'media_failure')));
  }
 });
+
+test('actual native bridge fast404 and416 correlate only with explicit budget',async()=>{
+ for(const status of[404,416]){
+  const api={...m,traceRequest:(req,handler,options)=>m.traceRequest(req,handler,{...options,fastMediaFailureBudget:{take:()=>true}})};
+  const x=await run({status,api});assert.equal(x.logs.length,1);assert.equal(x.calls,1);assert.equal(x.res.status,status);assert.equal(x.logs[0].request_id,x.res.headers.get('X-SMN-Request-ID'));assert.equal(x.logs[0].media_failure.content_public_id,'123');assert.ok(!JSON.stringify(x.logs).includes('PRIVATE'));
+ }
+});
+test('actual unresolved404 never spends fast budget',async()=>{
+ let n=0;const api={...m,traceRequest:(req,handler,options)=>m.traceRequest(req,handler,{...options,fastMediaFailureBudget:{take(){n++;return true}}})};
+ const x=await run({missing:true,status:404,api});assert.equal(x.calls,0);assert.equal(x.logs.length,0);assert.equal(n,0);
+});
