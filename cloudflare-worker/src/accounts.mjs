@@ -2,6 +2,7 @@ import {usageChannel,readChannelUsage,observeChannelUsage} from './channel-usage
 import {runPublicTvImport,publicTvImportStatus} from './public-tv-import.mjs';
 import {runEmpressImport,empressImportStatus} from './empress-import.mjs';
 import {runOwnedMediaMigration,ownedMediaMigrationStatus} from './owned-media-migration.mjs';
+import {isOwnedMediaSeries,OWNED_MEDIA_SERIES} from './owned-media-source.mjs';
 import {runUnivisionNyImport,univisionNyImportStatus} from './univision-ny-import.mjs';
 import {boundedTsQuota} from './bounded-ts-route.mjs';
 import {saveCatalogReferences,readCatalogReferences} from './catalog-references.mjs';
@@ -51,6 +52,8 @@ export async function accountsFetch(state,env,req){
  if(['/bounded-ts-claim','/bounded-ts-status','/bounded-ts-result'].includes(p))return boundedTsQuota(store,p,b,env);
  if(['/reseller-portal-rotation-status','/reseller-portal-rotation-begin','/reseller-portal-rotation-finish'].includes(p))return gatewayRotationStore(store,p,b);
  const leases=await openLeaseStore(store);
+ if(p==='/owned-media-status'){const row=await store.get('exclusive:item:'+OWNED_MEDIA_SERIES);return answer({connected:isOwnedMediaSeries(row),options:isOwnedMediaSeries(row)?8:0});}
+ if(p==='/owned-media-connect'){await runOwnedMediaMigration(store,leases,env);return answer(await ownedMediaMigrationStatus(store));}
  if(p==='/reseller-service-monitor')return store.transaction(tx=>readServiceMonitor(tx,leases.in(tx),b));
  if(p==='/service-monitor-sample'){await store.transaction(tx=>sampleServiceMonitor(tx,leases.in(tx),TRUSTED_RESELLERS.map(r=>r.accountId)));return answer({ok:true});}
  if(p==='/catalog-maintenance-tick'){

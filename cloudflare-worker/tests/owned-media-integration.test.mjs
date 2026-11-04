@@ -16,6 +16,7 @@ const objects=new Map();env.PLAYBACK_SESSIONS={idFromName:name=>name,get(id){if(
 const origin='https://api.snaptvnow.com',customer={username:'owned-media-client',password:'owned-media-customer-fixture-password'},body=new Uint8Array([0,0,0,16,102,116,121,112,105,115,111,109,0,0,0,0]);
 const post=async(value,path='/')=>{const response=await worker.fetch(new Request(origin+path,{method:'POST',body:JSON.stringify(value)}),env);return{status:response.status,data:await response.json()};};
 const call=(path,value)=>env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_xtream_catalog_v1')).fetch('https://private/accounts'+path,{method:'POST',body:JSON.stringify(value)});
+const originalNow=Date.now;Date.now=()=>Date.parse('2026-11-04T19:00:00Z');
 const originalFetch=globalThis.fetch,served=[];let savedTicket;
 globalThis.fetch=async(target,init={})=>{
  const url=new URL(target);assert.equal(url.origin,OWNED_MEDIA_ORIGIN);assert.equal(init.redirect,'error');
@@ -56,4 +57,4 @@ try{
  assert.equal((await admin('exclusive-save',{item:{...item,visible:false},revision:1})).status,200);
  const hidden=await worker.fetch(new Request(origin+'/series/'+customer.username+'/'+customer.password+'/'+ids[0]+'.mp4'),env);assert.equal(hidden.status,404);
  console.log('PASS: eight DNS routes and eight app playback routes use private copies with scoped tickets, exact episode selection, no credential exposure, bounded authorization, seeking, lease cleanup and immediate hide revocation.');
-}finally{globalThis.fetch=originalFetch;}
+}finally{globalThis.fetch=originalFetch;Date.now=originalNow;}
