@@ -27,6 +27,7 @@ import {probeProviders} from './provider-monitor.mjs';
 export {OperationsMonitor} from './monitor.mjs';
 import {allowedOrigins,canUseCookie,cookieToken,withSessionCookie,browserResponse} from './browser-sessions.mjs';
 import {traceRequest, SERVICE_VERSION} from './request-diagnostics.mjs';
+import {validateLiveFlowDiagnostic,createLiveFlowMonitor} from './live-flow-diagnostics.mjs';
 import {createFastMediaFailureBudget} from './fast-media-failure-budget.mjs';
 import {playbackErrorHeaders} from './playback-outcomes.mjs';
 import {PlaybackTimings,timed,playbackTimingsRoute} from './playback-timings.mjs';
@@ -278,13 +279,24 @@ async function ownPlaybackControl(env,session,target,{signal,deadline}){
 async function serverStreamDirect(req,env,u,ctx,trace){
  const d=await unticket(env,u.searchParams.get('t')||'');if(!d||!['movie','series','live'].includes(d.type)||!/^\d+$/.test(String(d.id)))return new Response('Expired',{status:410,headers:cors});
  const diagnostic=targetedTicket(d,env);if(d.targetedCase&&!diagnostic)return new Response('Expired',{status:410,headers:cors});
+ // The selector runs after subscriber authentication. Only its encrypted ticket
+ // can carry the private case into this relay; public headers cannot enable it.
+ const selected=d.xtream&&d.type==='live'&&d.ext==='ts'&&!d.resource&&req.method==='GET'?validateLiveFlowDiagnostic(env,d.liveFlow):null;
+ const flow=selected?createLiveFlowMonitor(selected):null;
+ let flowPhase='access';
+ const leaseReason=async response=>{if(response.status>=500)return 'access_unavailable';let reason='lease_denied';try{const code=(await response.json()).error;if(['playback_superseded','playback_expired'].includes(code))reason=code}catch{}return reason};
+ try{
  const [access,lease]=await timed(trace,'auth',()=>Promise.all([sessionCall(env,d.sid,'/check'),d.lease_id?directory(env,d.xtream?'/heartbeat':'/lease-check',{lease_id:d.lease_id,sid:d.sid,request_id:d.request_id}):Promise.resolve({ok:true})]));
- if(!access.ok)return new Response('Expired',{status:410,headers:cors});if(!lease.ok)return json({error:'playback_expired'},410);
- const warm=liveStarts.get(u.href);if(warm){liveStarts.delete(u.href);if(warm.until>Date.now()&&req.method==='GET')return new Response(warm.body,{headers:{...cors,'content-type':'application/vnd.apple.mpegurl',[INITIAL_EVIDENCE_HEADER]:'manifest'}})}
+ if(!access.ok){flow?.finish(access.status>=500?'access_unavailable':'session_denied',{status:410});return new Response('Expired',{status:410,headers:cors})}if(!lease.ok){if(flow)flow.finish(await leaseReason(lease),{status:410});return json({error:'playback_expired'},410)}
+ const warm=liveStarts.get(u.href);if(warm){liveStarts.delete(u.href);if(warm.until>Date.now()&&req.method==='GET'){flow?.finish('playlist_response',{status:200});return new Response(warm.body,{headers:{...cors,'content-type':'application/vnd.apple.mpegurl',[INITIAL_EVIDENCE_HEADER]:'manifest'}})}}
  const folder=d.type==='series'?'series':d.type==='live'?'live':'movie',start=d.resource||(d.origin||ORIGIN)+'/'+folder+'/'+encodeURIComponent(d.username)+'/'+encodeURIComponent(d.password)+'/'+d.id+'.'+cleanExt(d.ext);
  const sourceOrigin=d.origin||ORIGIN;
- const headers=new Headers({'User-Agent':'SnapMovieNow/1.0','Accept-Encoding':'identity'});for(const n of ['range','if-range'])if(req.headers.has(n))headers.set(n,req.headers.get(n));if(req.method==='HEAD')headers.set('range','bytes=0-0');const maximum=diagnostic?8000:d.type==='live'?8000:VOD_STARTUP_MS,deadline=diagnostic?Math.min(d.caseDeadline||d.exp,Date.now()+maximum):!d.resource?(startupDeadline(req,Date.now(),maximum)??Date.now()+maximum):null;const fetched=await timed(trace,'origin',()=>fetchValidatedMedia(start,headers,d.type,sourceOrigin,{deadline,directCcfEntry:env.CCF_ENTRY_TRANSPORT==='tcp',signal:req.signal}));let response=fetched.response;const next=fetched.url;
- if(d.lease_id&&!(await directory(env,"/lease-check",{sid:d.sid,lease_id:d.lease_id,request_id:d.request_id})).ok){await response.body?.cancel().catch(()=>{});return json({error:"playback_expired"},410)}
+ flowPhase='origin';
+ const headers=new Headers({'User-Agent':'SnapMovieNow/1.0','Accept-Encoding':'identity'});for(const n of ['range','if-range'])if(req.headers.has(n))headers.set(n,req.headers.get(n));if(req.method==='HEAD')headers.set('range','bytes=0-0');const maximum=diagnostic?8000:d.type==='live'?8000:VOD_STARTUP_MS,deadline=diagnostic?Math.min(d.caseDeadline||d.exp,Date.now()+maximum):!d.resource?(startupDeadline(req,Date.now(),maximum)??Date.now()+maximum):null;const fetched=await timed(trace,'origin',()=>fetchValidatedMedia(start,headers,d.type,sourceOrigin,{deadline,directCcfEntry:env.CCF_ENTRY_TRANSPORT==='tcp',signal:req.signal,...(flow?{flowMonitor:flow}:{})}));let response=fetched.response;const next=fetched.url;
+ flow?.setStatus(response.status);
+ flowPhase='lease';const checkedLease=d.lease_id?await directory(env,"/lease-check",{sid:d.sid,lease_id:d.lease_id,request_id:d.request_id}):null;
+ if(checkedLease&&!checkedLease.ok){if(flow)flow.finish(await leaseReason(checkedLease),{status:410});await response.body?.cancel().catch(()=>{});return json({error:"playback_expired"},410)}
+ flowPhase='origin';
  if(diagnostic)response=await attachCaseObservation(response,{caseKey:diagnostic.key,method:req.method,incomingRange:req.headers.get('range'),outgoingRange:headers.get('range'),ifRangePresent:headers.has('if-range'),transport:isApprovedMediaIP(new URL(next),sourceOrigin)||env.CCF_ENTRY_TRANSPORT==='tcp'?'tcp':'hostname',sourceURL:next,secret:env.TICKET_SECRET});
  const playlist=response.ok&&(/mpegurl/i.test(response.headers.get('content-type')||'')||new URL(next).pathname.endsWith('.m3u8'));
  if(response.ok&&!playlist&&deadline!==null)response=await timed(trace,'first_byte',()=>readInitialMedia(response,deadline));
@@ -308,10 +320,19 @@ async function serverStreamDirect(req,env,u,ctx,trace){
   await response.body?.cancel();return new Response(null,{status:response.status===206?200:response.status,headers:out})
  }
  if(playlist){const text=await timed(trace,'first_byte',()=>readLivePlaylist(response,deadline));if(!text.startsWith('#EXTM3U'))throw Error('invalid_playlist');const proxy=async value=>{const target=validatedMediaTarget(new URL(value,next),sourceOrigin);return u.origin+'/stream?t='+await ticket(env,{...d,resource:target.href})};
- const lines=await Promise.all(text.split(/\r?\n/).map(async line=>{if(!line.trim())return line;if(!line.startsWith('#'))return proxy(line.trim());const matches=[...line.matchAll(/URI="([^"]+)"/g)];for(const m of matches)line=line.replace(m[0],'URI="'+await proxy(m[1])+'"');return line}));const body=lines.join('\n');if(req.headers.get('X-SMN-Prepare')==='1'&&!d.resource)rememberLiveStart(u.href,body);out.delete('content-length');out.set('content-type','application/vnd.apple.mpegurl');if(!d.resource)out.set(INITIAL_EVIDENCE_HEADER,'manifest');return new Response(body,{headers:out})}
+ const lines=await Promise.all(text.split(/\r?\n/).map(async line=>{if(!line.trim())return line;if(!line.startsWith('#'))return proxy(line.trim());const matches=[...line.matchAll(/URI="([^"]+)"/g)];for(const m of matches)line=line.replace(m[0],'URI="'+await proxy(m[1])+'"');return line}));const body=lines.join('\n');if(req.headers.get('X-SMN-Prepare')==='1'&&!d.resource)rememberLiveStart(u.href,body);out.delete('content-length');out.set('content-type','application/vnd.apple.mpegurl');if(!d.resource)out.set(INITIAL_EVIDENCE_HEADER,'manifest');flow?.finish('playlist_response');return new Response(body,{headers:out})}
  const result=new Response(response.body,{status:response.status,headers:out});
- if(d.xtream&&!d.resource&&d.ext!=='m3u8')return guardXtreamResponse(result,async()=>(await sessionCall(env,d.sid,'/check')).ok&&(await directory(env,'/heartbeat',{sid:d.sid,lease_id:d.lease_id,request_id:d.request_id})).ok,()=>directory(env,'/release',{sid:d.sid,lease_id:d.lease_id,request_id:d.request_id}),ctx,req.signal,d.exp,{waitForRelease:d.type!=='live'});
+ if(flow&&!response.ok)flow.finish('startup_failed',{status:response.status});
+ if(d.xtream&&!d.resource&&d.ext!=='m3u8')return guardXtreamResponse(result,async()=>{
+  const session=await sessionCall(env,d.sid,'/check');if(!session.ok)return flow?{ok:false,reason:session.status>=500?'access_unavailable':'session_denied'}:false;
+  const heartbeat=await directory(env,'/heartbeat',{sid:d.sid,lease_id:d.lease_id,request_id:d.request_id});
+  if(!flow||heartbeat.ok)return heartbeat.ok;
+  // This internal response is bounded by our own heartbeat contract. Only two
+  // allowlisted codes are recorded; no response/error text enters the log.
+  return {ok:false,reason:await leaseReason(heartbeat)};
+ },()=>directory(env,'/release',{sid:d.sid,lease_id:d.lease_id,request_id:d.request_id}),ctx,req.signal,d.exp,{waitForRelease:d.type!=='live',...(flow?{flowMonitor:flow}:{})});
  return guardPlaybackExpiry(result,d.exp,req.signal,()=>directory(env,"/release-session",{sid:d.sid}),ctx);
+ }catch(error){flow?.finish(req.signal.aborted?'client_abort':['access','lease'].includes(flowPhase)?'access_unavailable':error?.message==='media_timeout'?'origin_silence':error?.message==='truncated_http_body'?'origin_truncated':'startup_failed');throw error}
 }
 
 const exclusives=createExclusiveService({directory,sessionCall,ticket,unticket,resolveGnula,requestConnectionClient,guardXtreamResponse});
