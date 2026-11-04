@@ -22,7 +22,7 @@ const nuploadMasterPath=path=>/^\/[a-f0-9]{2}\/[a-f0-9]{2}\/[a-f0-9]{8,64}\.m3u8
 const voeHost=host=>/^ugc-cdn-caching-[a-z0-9]{1,80}\.cloudwindow-route\.com$/.test(host||'');
 function validContext(page,context){
  const d=definition(page);if(!d||!context||context.provider!==d.provider||context.episode!==d.episode)return null;
- if(d.provider==='nupload')return wrapperAllowed(context.wrapper)&&nuploadHost(context.host)&&/^\/files\/\d{1,8}\/[a-f0-9]{8,64}\/$/.test(context.prefix||'')&&(!context.masterPath||context.masterPath==='/'||nuploadMasterPath(context.masterPath))?d:null;
+ if(d.provider==='nupload')return wrapperAllowed(context.wrapper)&&nuploadHost(context.host)&&/^\/(?:st1\/)?files\/\d{1,8}\/[a-f0-9]{8,64}\/$/.test(context.prefix||'')&&(!context.masterPath||context.masterPath==='/'||nuploadMasterPath(context.masterPath))?d:null;
  const id=VOE_IDS[d.episode-1],prefix=new RegExp('^/engine/hls2-c/\\d{2}/\\d{1,10}/'+id+'_[a-z0-9_,.-]{1,40}\\.urlset/$');
  return voeHost(context.host)&&prefix.test(context.prefix||'')?d:null;
 }
@@ -101,7 +101,7 @@ export async function resolveEmpressSource(page,{fetcher=fetch,signal}={}){
   const host=new URL(url).hostname;let resolvedUrl=url;
   const text=await read(url,u=>u.hostname===host&&(u.href===url||nuploadMasterPath(u.pathname)&&!u.search),{...options,headers:{Referer:wrapper[0],Origin:'https://nupload.my'},onResolved:value=>{resolvedUrl=value;}});
   const child=hls(text)[0];if(!child)fail();const destination=safe(new URL(child,resolvedUrl).href);
-  const prefix=destination.pathname.match(/^\/files\/\d{1,8}\/[a-f0-9]{8,64}\//)?.[0];
+  const prefix=destination.pathname.match(/^\/(?:st1\/)?files\/\d{1,8}\/[a-f0-9]{8,64}\//)?.[0];
   const context={provider:d.provider,episode:d.episode,wrapper:wrapper[0],host,prefix,masterPath:new URL(resolvedUrl).pathname};
   if(destination.hostname!==host||!validContext(d.page,context)||!empressMediaAllowed(d.page,destination,context))fail();
   return {url:resolvedUrl,empressPage:d.page,empressContext:context};

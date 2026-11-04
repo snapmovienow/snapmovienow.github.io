@@ -86,7 +86,7 @@ globalThis.fetch=async(value,options={})=>{
    episode=sessions.get(url.searchParams.get('s'));assert.ok(episode);assert.equal(headers.get('referer'),wrapper(episode));assert.equal(headers.get('origin'),'https://nupload.my');
    return new Response(null,{status:301,headers:{location:'/da/'+(167+episode).toString(16)+'/'+hash(episode)+'.m3u8'}});
   }
-  const redirected=url.pathname.match(/^\/da\/([a-f0-9]{2})\//);episode=redirected?parseInt(redirected[1],16)-167:Number(url.pathname.match(/^\/files\/(\d+)\//)?.[1]);assert.ok(episode>=1&&episode<=4);prefix='/files/'+episode+'/'+hash(episode)+'/';
+  const redirected=url.pathname.match(/^\/da\/([a-f0-9]{2})\//);episode=redirected?parseInt(redirected[1],16)-167:Number(url.pathname.match(/^\/(?:st1\/)?files\/(\d+)\//)?.[1]);assert.ok(episode>=1&&episode<=4);prefix=(episode%2===0?'/st1':'')+'/files/'+episode+'/'+hash(episode)+'/';
   assert.equal(headers.get('referer'),wrapper(episode));assert.equal(headers.get('origin'),'https://nupload.my');
  }else if(url.hostname===cdn){
   option=2;episode=voeIds.findIndex(id=>url.pathname.includes('/'+id+'_'))+1;assert.ok(episode);prefix='/engine/hls2-c/01/18734/'+voeIds[episode-1]+'_,n,.urlset/';

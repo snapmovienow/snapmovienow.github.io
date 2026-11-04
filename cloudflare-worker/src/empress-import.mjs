@@ -2,8 +2,10 @@ import {exclusiveSnapshot,exclusiveCatalogRoute} from './exclusive-catalog.mjs';
 import {inspectCatalogSource} from './catalog-source-check.mjs';
 import {EMPRESS_SERIES_ID,EMPRESS_SERIES_META,EMPRESS_SERIES_PAGES,EMPRESS_EPISODES} from './empress-catalog.mjs';
 
-const KEY='catalog-import:empress-disney-owner-20261103-v1';
-export const EMPRESS_IMPORT_REQUEST='empress-disney-owner-20261104-0333-f948d125';
+// A new bounded attempt follows the reviewed /st1/files/ resolver correction.
+// Keep the earlier failed job as evidence and preserve any owner-saved series.
+const KEY='catalog-import:empress-disney-owner-20261104-st1-v2';
+export const EMPRESS_IMPORT_REQUEST='empress-disney-owner-20261104-st1-fix';
 const matches=row=>row.type==='series'&&(row.id===EMPRESS_SERIES_ID||EMPRESS_SERIES_PAGES.includes(row.page)||row.year===2026&&String(row.name).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim().replace(/ 2026$/,'')==='la emperatriz divorciada');
 export async function empressImportStatus(store){
  const job=await store.get(KEY);return job?Object.fromEntries(['requestId','state','attempts','startedAt','finishedAt','seriesId','visible','reason','results'].filter(key=>job[key]!==undefined).map(key=>[key,job[key]])):{requestId:EMPRESS_IMPORT_REQUEST,state:'pending'};

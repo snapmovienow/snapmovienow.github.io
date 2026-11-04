@@ -31,7 +31,7 @@ const fetcher=async(url,options)=>{
   if(mode==='forbidden')return new Response('Forbidden',{status:403});
   if(mode==='not-hls')return new Response('<h1>video not available</h1>');
   if(mode==='master-redirect'&&new URL(url).pathname==='/')return new Response(null,{status:301,headers:{location:redirect||'/da/a8/abcdef123456.m3u8'}});
-  const child=mode==='foreign-resource'?'https://127.0.0.1/secret':'https://sv2.ibra.lat/files/7/abcdef123456/video0.ts?m=fixture';
+  const child=mode==='foreign-resource'?'https://127.0.0.1/secret':'https://sv2.ibra.lat/'+(mode==='st1-path'?'st1/':'')+'files/7/abcdef123456/video0.ts?m=fixture';
   return new Response('#EXTM3U\n#EXT-X-TARGETDURATION:7\n#EXTINF:7,\n'+child+'\n#EXT-X-ENDLIST');
  }
  if(url===tudu(pageNumber))return new Response('<h1>La emperatriz divorciada</h1><a href="https://cdn.tudorama.com/sub/download-6.php?id='+ids[pageNumber-1]+'">VOE</a>');
@@ -65,6 +65,11 @@ for(const page of [peli(5),tudu(0),peli(1)+'?',peli(1)+'?redirect=private',tudu(
  assert.equal(isEmpressPage(page),false);await assert.rejects(resolveEmpressSource(page,{fetcher}),/empress_source_unavailable/);
 }
 pageNumber=1;
+mode='st1-path';redirect='';
+const storagePath=await resolveEmpressSource(peli(1),{fetcher});
+assert.equal(storagePath.empressContext.prefix,'/st1/files/7/abcdef123456/');
+for(const name of ['index.m3u8','video0.ts','init.mp4','audio.aac','key.key','captions.vtt'])assert.equal(empressMediaAllowed(peli(1),root+'st1/files/7/abcdef123456/'+name,storagePath.empressContext),true);
+for(const path of ['files/7/abcdef123456/video0.ts','st2/files/7/abcdef123456/video0.ts','st1/files/8/abcdef123456/video0.ts','st1/files/7/abcdef654321/video0.ts','st1/files/7/abcdef123456/%2e%2e/private.ts'])assert.equal(empressMediaAllowed(peli(1),root+path,storagePath.empressContext),false);
 mode='master-redirect';redirect='';const redirected=await resolveEmpressSource(peli(1),{fetcher});assert.equal(redirected.url,root+'da/a8/abcdef123456.m3u8');assert.equal(empressMediaAllowed(peli(1),redirected.url,redirected.empressContext),true);assert.equal(empressMediaAllowed(peli(1),root+'da/a8/abcdef987654.m3u8',redirected.empressContext),false,'a sibling file master cannot reuse this episode scope');
 for(const path of ['/e1/17/abcdef123456.m3u8','/af/be/abcdef123456.m3u8']){redirect=path;const result=await resolveEmpressSource(peli(1),{fetcher});assert.equal(result.url,new URL(path,root).href);}
 for(const path of ['/d/a8/abcdef123456.m3u8','/da/a88/abcdef123456.m3u8','/zz/a8/abcdef123456.m3u8','/da/gg/abcdef123456.m3u8']){redirect=path;const count=calls.length;await assert.rejects(resolveEmpressSource(peli(1),{fetcher}),/empress_source_unavailable/);assert.ok(!calls.slice(count).includes(new URL(path,root).href));}
