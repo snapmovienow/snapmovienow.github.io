@@ -28,18 +28,21 @@ test('fragmented multi-megabyte native body uses bounded timers and abort subscr
  const fixture=wire(),abort=new AbortController(),signal=abort.signal;
  const add=signal.addEventListener.bind(signal),remove=signal.removeEventListener.bind(signal);let adds=0,removes=0;
  signal.addEventListener=(...args)=>{adds++;return add(...args)};signal.removeEventListener=(...args)=>{removes++;return remove(...args)};
- const response=await fetchApprovedMediaIP(target,new Headers(),fixture.connect,nativeFactory,CCF_MEDIA_ORIGIN,null,8000,signal);
+ let observedBytes=0;const endings=[];
+ const response=await fetchApprovedMediaIP(target,new Headers(),fixture.connect,nativeFactory,CCF_MEDIA_ORIGIN,null,8000,signal,{originBytes:n=>observedBytes+=n,originReadWait(){},originWriteWait(){},originEnd:reason=>endings.push(reason)});
  const bytes=new Uint8Array(await response.arrayBuffer());
  assert.equal(bytes.length,2*1024*1024);assert.ok(bytes.every(byte=>byte===7));assert.ok(fixture.state.reads>1000);
  assert.ok(clock.created<=8,'one body watchdog replaces per-packet timeout creation');
  assert.ok(adds<=8,'body packets must not add request abort listeners');assert.equal(adds,removes);
  assert.equal(clock.active.length,0);assert.equal(fixture.state.closes,1);assert.equal(fixture.state.cancels,1);
+ assert.equal(observedBytes,2*1024*1024);assert.deepEqual(endings,['origin_complete']);
  console.log(JSON.stringify({transport:'fragmented-2MiB',reads:fixture.state.reads,timers:clock.created,abortSubscriptions:adds}));
 }));
 
 for(const mode of ['idle','request-abort','downstream-cancel'])test('native pending read closes exactly once: '+mode,async()=>controlledClock(async clock=>{
  const fixture=wire({length:100,stall:true}),abort=new AbortController();
- const response=await fetchApprovedMediaIP(target,new Headers(),fixture.connect,nativeFactory,CCF_MEDIA_ORIGIN,null,8000,abort.signal);
+ const endings=[];
+ const response=await fetchApprovedMediaIP(target,new Headers(),fixture.connect,nativeFactory,CCF_MEDIA_ORIGIN,null,8000,abort.signal,{originEnd:reason=>endings.push(reason)});
  const reader=response.body.getReader(),reading=reader.read();
  const rejected=mode==='downstream-cancel'?null:assert.rejects(reading,mode==='idle'?/media_timeout/:/viewer closed/);
  await tick();assert.equal(clock.active.length,1);
@@ -48,6 +51,7 @@ for(const mode of ['idle','request-abort','downstream-cancel'])test('native pend
  else {await reader.cancel('viewer closed');assert.equal((await reading).done,true)}
  await rejected;await tick();
  assert.equal(clock.active.length,0);assert.equal(fixture.state.closes,1);assert.equal(fixture.state.cancels,1);assert.equal(fixture.state.releases,2);
+ assert.deepEqual(endings,mode==='idle'?['origin_silence']:[]);
 }));
 
 test('watchdog does not treat downstream backpressure as upstream silence',async()=>controlledClock(async clock=>{

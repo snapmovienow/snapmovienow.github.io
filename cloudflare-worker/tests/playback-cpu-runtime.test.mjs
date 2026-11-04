@@ -38,22 +38,28 @@ import {fetchApprovedMediaIP} from './cloudflare-worker/src/ip-media.mjs';
 import {readInitialMedia} from './cloudflare-worker/src/live-startup.mjs';
 import {recoverMedia} from './cloudflare-worker/src/media-fetch.mjs';
 import {guardXtreamResponse} from './cloudflare-worker/src/xtream-bridge.mjs';
+import {selectLiveFlowDiagnostic,createLiveFlowMonitor} from './cloudflare-worker/src/live-flow-diagnostics.mjs';
 const ensure=(ok,message)=>{if(!ok)throw Error(message)};
 const deadline=async(promise,message)=>{let timer;try{return await Promise.race([promise,new Promise((_,reject)=>timer=setTimeout(()=>reject(Error(message)),1000))])}finally{clearTimeout(timer)}};
-async function run(env,kind,fragment,mode='transfer'){
+async function run(env,kind,fragment,mode='transfer',diagnosticEnabled=false){
  const path='/'+kind+'-'+fragment+'.ts',signal=new AbortController();
+ const records=[],at=Date.now(),diagnosticConfig={LIVE_FLOW_DIAGNOSTIC_USERNAME:'runtime-fixture',LIVE_FLOW_DIAGNOSTIC_CASE:'11111111-1111-4111-8111-111111111111',LIVE_FLOW_DIAGNOSTIC_FROM:at-1000,LIVE_FLOW_DIAGNOSTIC_UNTIL:at+3600000};
+ const selected=diagnosticEnabled?selectLiveFlowDiagnostic(diagnosticConfig,{username:'runtime-fixture',type:'live',ext:'ts',method:'GET',requestId:crypto.randomUUID(),publicId:'1'},at):null;
+ if(diagnosticEnabled)ensure(selected!==null,'diagnostic fixture was not selected');
+ const flowMonitor=selected?createLiveFlowMonitor(selected,{logger:record=>records.push(record)}):undefined;
  let bodyTimers=0,abortListeners=0,releases=0,resumes=0,tick;
  const realTimeout=globalThis.setTimeout,realInterval=globalThis.setInterval,add=signal.signal.addEventListener.bind(signal.signal);
  globalThis.setTimeout=(fn,ms,...args)=>{if(ms===20000)bodyTimers++;return realTimeout(fn,ms,...args)};
  signal.signal.addEventListener=(type,...args)=>{if(type==='abort')abortListeners++;return add(type,...args)};
  try{
-  const raw=await fetchApprovedMediaIP('http://192.101.68.144'+path,new Headers(),()=>connect({hostname:'127.0.0.1',port:PORT}),undefined,undefined,null,8000,signal.signal);
+  const raw=await fetchApprovedMediaIP('http://192.101.68.144'+path,new Headers(),()=>connect({hostname:'127.0.0.1',port:PORT}),undefined,undefined,null,8000,signal.signal,flowMonitor);
+  flowMonitor?.setStatus(raw.status);
   let response=await readInitialMedia(raw,Date.now()+500);
   if(kind==='vod')response=recoverMedia(response,()=>{resumes++;throw Error('unexpected resume')},async()=>true);
   const background=[];
   globalThis.setInterval=(fn,ms)=>{tick=fn;return realInterval(()=>{},ms)};
   let guarded;
-  try{guarded=guardXtreamResponse(response,async()=>false,async()=>{releases++},{waitUntil:p=>background.push(p)},signal.signal,mode==='expiry'?Date.now()+20:undefined)}finally{globalThis.setInterval=realInterval}
+  try{guarded=guardXtreamResponse(response,async()=>false,async()=>{releases++},{waitUntil:p=>background.push(p)},signal.signal,mode==='expiry'?Date.now()+20:undefined,{flowMonitor})}finally{globalThis.setInterval=realInterval}
   ensure(guarded.status===(kind==='vod'?206:200),'HTTP status changed');
   if(kind==='vod')ensure(guarded.headers.get('content-range')==='bytes 77-'+(SIZE+76)+'/'+(SIZE+1000),'Range changed');
   const reader=guarded.body.getReader();let received=0,playerChunks=0;
@@ -83,13 +89,34 @@ async function run(env,kind,fragment,mode='transfer'){
    ensure(status.closed,'upstream TCP socket remained open after '+mode);
   }
   await deadline(Promise.all(background),'capacity cleanup blocked');ensure(releases===1,'reservation was not released exactly once');
-  return {kind,fragmentBytes:fragment,mode,bytes:received,playerChunks,bodyTimers,abortListeners,releases};
+  let diagnostic;
+  if(diagnosticEnabled){
+   const starts=records.filter(record=>record.event==='live_flow_start'),ends=records.filter(record=>record.event==='live_flow_end');
+   ensure(starts.length===1&&ends.length===1,'flow lifecycle was not recorded exactly once');
+   const ended=ends[0];ensure(ended.scope==='server_relay_not_client','measurement scope changed');
+   ensure(ended.relay_bytes===received,'relay diagnostic byte count changed');
+   ensure(bodyTimers<=8,'enabled diagnostics added idle timers: '+bodyTimers);ensure(abortListeners<=8,'enabled diagnostics added abort listeners: '+abortListeners);
+   if(mode==='transfer'){
+    ensure(ended.origin_observed===true&&ended.origin_bytes===SIZE,'origin diagnostic byte count changed');
+    ensure(ended.origin_reason==='origin_eof','real socket EOF was not distinguished');
+    ensure(ended.reason==='relay_complete','relay completion was not distinguished');
+   }else{
+    const expected=mode==='cancel'?'client_cancel':mode==='abort'?'client_abort':mode==='expiry'?'access_expired':'session_denied';
+    ensure(ended.reason===expected,'downstream stop diagnostic changed: '+ended.reason);
+    ensure(ended.origin_reason!=='origin_error'&&ended.origin_reason!=='origin_silence','downstream stop was attributed to the origin');
+   }
+   const serialized=JSON.stringify(records);ensure(!serialized.includes('runtime-fixture')&&!serialized.includes('http:')&&!serialized.includes('192.101.68.144'),'diagnostic record leaked fixture identity or URL');
+   diagnostic={events:records.length,ends:ends.length,originBytes:ended.origin_bytes,relayBytes:ended.relay_bytes,originReason:ended.origin_reason,reason:ended.reason};
+  }else ensure(records.length===0,'disabled diagnostics recorded events');
+  return {kind,fragmentBytes:fragment,mode,bytes:received,playerChunks,bodyTimers,abortListeners,releases,...(diagnostic?{diagnostic}: {})};
  }finally{globalThis.setTimeout=realTimeout;globalThis.setInterval=realInterval}
 }
 export default {async fetch(request,env){try{
  const transfers=[];for(const kind of ['live','vod'])for(const fragment of [1024,65536])transfers.push(await run(env,kind,fragment));
  const stops=[];for(const mode of ['cancel','abort','expiry','revoke'])stops.push(await run(env,mode,1024,mode));
- return Response.json({ok:true,transfers,stops});
+ const diagnosticTransfers=[];for(const fragment of [1024,65536])diagnosticTransfers.push(await run(env,'live',fragment,'transfer',true));
+ const diagnosticStops=[];for(const mode of ['cancel','abort'])diagnosticStops.push(await run(env,mode,1024,mode,true));
+ return Response.json({ok:true,transfers,stops,diagnosticTransfers,diagnosticStops});
 }catch(error){return Response.json({ok:false,error:error.message,stack:error.stack},{status:500})}}};
 `;
 const bundled=await build({stdin:{contents:fixture.replaceAll('PORT',String(port)).replaceAll('SIZE',String(size)),resolveDir:process.cwd(),sourcefile:'playback-cpu-fixture.mjs'},bundle:true,format:'esm',platform:'browser',external:['cloudflare:sockets'],write:false});
@@ -105,7 +132,7 @@ try{
  const response=await Promise.race([mf.dispatchFetch('https://synthetic.invalid/stream-regressions'),new Promise((_,reject)=>timer=setTimeout(()=>reject(Error('TCP stream regression exceeded 20 seconds')),20000))]);
  const result=await response.json();assert.equal(response.status,200,JSON.stringify(result));assert.equal(result.ok,true,JSON.stringify(result));
  console.log(JSON.stringify(result,null,2));
- console.log('PASS: real workerd TCP live/VOD bytes, first payload, Range, bounded timers/listeners, cancellation, expiry and revocation.');
+ console.log('PASS: real workerd TCP live/VOD bytes, first payload, Range, bounded timers/listeners, cancellation, expiry and revocation, with enabled flow observation on real EOF/cancel/abort.');
 }finally{
  clearTimeout(timer);for(const entry of cases.values())entry.resume();for(const socket of sockets)socket.destroy();
  await mf.dispose();await new Promise(resolve=>server.close(resolve));

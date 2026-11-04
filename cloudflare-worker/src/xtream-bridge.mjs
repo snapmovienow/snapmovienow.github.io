@@ -6,6 +6,7 @@ import {initialRangeEvidence} from './initial-range-evidence.mjs';
 import {timed} from './playback-timings.mjs';
 import {playbackMonitorClient,attachPlaybackQuality} from './native-playback-quality.mjs';
 import {requestConnectionClient} from './connection-monitor.mjs';
+import {selectLiveFlowDiagnostic,createLiveFlowMonitor} from './live-flow-diagnostics.mjs';
 import {handleXtream} from './xtream.mjs';
 import {createLiveVariantFallback} from './live-variants.mjs';
 
@@ -19,6 +20,7 @@ const retryableSourceStatus=status=>[401,403,404,408,429].includes(status)||stat
 
 export function createXtreamBridge(deps) {
   return async function xtreamRequest(req, env, ctx,trace) {
+    let flowPublicId;
     const privateCall = (path, body) => deps.directory(env, path, body);
     const client = req.headers.get('CF-Connecting-IP') || 'unknown';
     const authenticate = async (username, password) => timed(trace,'auth',async()=>{
@@ -56,7 +58,9 @@ export function createXtreamBridge(deps) {
       let activity=cleanPlaybackActivity(item.activity,item.type);
       const activityTask=!activity?startPlaybackActivity(()=>cachedPlaybackActivity(rawCatalog,{type:item.type,server:item.server,id:item.upstreamId,parentId:item.parentId}),ctx):null;
       const request_id=crypto.randomUUID();
-      const begun=await privateCall('/playback-begin',{sid:session.sid,request_id});if(!begun.ok)return deps.json(await begun.json(),begun.status);
+      const selectFlow=attempt=>typeof env.LIVE_FLOW_DIAGNOSTIC_USERNAME==='string'&&env.LIVE_FLOW_DIAGNOSTIC_USERNAME.trim().toLowerCase()===session.username?.toLowerCase()?selectLiveFlowDiagnostic(env,{username:session.username,type:item.type,ext:item.ext,method:request.method,requestId:crypto.randomUUID(),publicId:flowPublicId,attempt}):null;
+      const failedBeforeRelay=(reason,status,attempt=1)=>{const selected=selectFlow(attempt);if(selected)createLiveFlowMonitor(selected).finish(reason,{status});};
+      const begun=await privateCall('/playback-begin',{sid:session.sid,request_id});if(!begun.ok){failedBeforeRelay('startup_failed',begun.status);return deps.json(await begun.json(),begun.status)}
       trace?.identify(item.type,playbackMonitorClient(request)?'android':'other');
       const startup=playbackStartup(item.type,request.signal);startup.trace=trace;
       const excluded=[];let lastFailure=null,lastServiceError=null;
@@ -64,10 +68,11 @@ export function createXtreamBridge(deps) {
       resetMediaPhase(trace);
       const mediaSession={...session,request_id,client:requestConnectionClient(request),mediaKey:item.type+'|'+item.server+'|'+item.upstreamId+'|'+item.ext,...(activity?{activity}:{})};
       const allocation=await deps.managedPlayback(env,mediaSession,item.server,ctx,excluded,startup);
-      if(!allocation.r.ok){if(lastFailure&&allocation.r.status===409)return deps.json({error:lastServiceError||'upstream_unavailable'},lastFailure);return deps.json(await allocation.r.json(),allocation.r.status)}
+      if(!allocation.r.ok){failedBeforeRelay('startup_failed',allocation.r.status,attempt+1);if(lastFailure&&allocation.r.status===409)return deps.json({error:lastServiceError||'upstream_unavailable'},lastFailure);return deps.json(await allocation.r.json(),allocation.r.status)}
       const {lease_id}=await allocation.r.json(),credentials=allocation.credentials;allocation.lease_id=lease_id;const signalAt=Date.now();
       const monitored=response=>attachPlaybackQuality(response,request,session,{lease_id,request_id},value=>deps.ticket(env,value));
-      const encrypted=await deps.ticket(env,{sid:session.sid,username:credentials.username,password:credentials.password,origin:credentials.origin,lease_id,request_id,xtream:true,type:item.type,id:item.upstreamId,ext:item.ext,exp:session.exp});
+      const liveFlow=selectFlow(attempt+1);
+      const encrypted=await deps.ticket(env,{sid:session.sid,username:credentials.username,password:credentials.password,origin:credentials.origin,lease_id,request_id,xtream:true,type:item.type,id:item.upstreamId,ext:item.ext,exp:session.exp,...(liveFlow?{liveFlow}:{})});
       const target=new URL('/stream',request.url);target.searchParams.set('t',encrypted);
       try{
         const prepared=startup?startup.prepare(request):new Request(request);
@@ -110,50 +115,56 @@ export function createXtreamBridge(deps) {
       }
       return deps.json({error:lastServiceError||'live_signal_unavailable'},lastFailure||504);
     };
-    try { const special=deps.exclusives?await deps.exclusives.xtream(req,env,ctx,authenticate):null;return special||await handleXtream(req,{onResolvedMedia:(type,id)=>setResolvedMedia(trace,type,id),authenticate,catalog,register,resolve,play,localLive:deps.exclusives?.liveXtream?.(env,ctx),localSeries:deps.exclusives?.seriesXtream?.(env,ctx),adultPolicy:createAdultPolicy(catalog,rawCatalog.inspect),json:deps.json}); }
+    try { const special=deps.exclusives?await deps.exclusives.xtream(req,env,ctx,authenticate):null;return special||await handleXtream(req,{onResolvedMedia:(type,id)=>{setResolvedMedia(trace,type,id);flowPublicId=id;},authenticate,catalog,register,resolve,play,localLive:deps.exclusives?.liveXtream?.(env,ctx),localSeries:deps.exclusives?.seriesXtream?.(env,ctx),adultPolicy:createAdultPolicy(catalog,rawCatalog.inspect),json:deps.json}); }
     catch(error) { if(req.signal.aborted||['playback_superseded','playback_expired'].includes(error.message))return deps.json({error:'playback_superseded'},410);if(error.status)return deps.json({error:error.message},error.status);return deps.json({error:['media_origin_unapproved','provider_unavailable','provider_inactive','panel_unavailable'].includes(error.message)?error.message:'xtream_unavailable'},502); }
   };
 }
 
 // Native players do not send the web player's heartbeat. Keep an open media
 // response authorised and release its reservation when the client disconnects.
-export function guardXtreamResponse(response, check, release, ctx, signal, expiresAt, {waitForRelease=true}={}) {
+export function guardXtreamResponse(response, check, release, ctx, signal, expiresAt, {waitForRelease=true,flowMonitor}={}) {
   if (!response.body) return response;
   const reader=response.body.getReader();let closed=false,checking=false,controller,timer,expiryTimer,cleanupTask,lastDemand=Date.now();
+  let deliveredAt=null;
+  const observe=(method,...args)=>{if(flowMonitor)try{flowMonitor[method]?.(...args)}catch{}};
+  const failureReason=error=>error?.message==='media_timeout'?'origin_silence':error?.message==='truncated_http_body'?'origin_truncated':'relay_error';
   const cleanup=()=>{
     if(cleanupTask)return cleanupTask;
     clearInterval(timer);clearTimeout(expiryTimer);signal?.removeEventListener('abort',onAbort);
     cleanupTask=Promise.resolve().then(release).catch(()=>{});ctx?.waitUntil?.(cleanupTask);return cleanupTask;
   };
-  const stop=async(reason)=>{
+  const stop=async(reason,flowReason)=>{
     if(closed)return;closed=true;
+    observe('finish',flowReason||failureReason(reason));
     try{controller.error(reason instanceof Error?reason:Error('client_disconnected'))}catch{}
     // Release independently: upstream cancellation must not delay capacity cleanup.
     await Promise.allSettled([reader.cancel(reason),cleanup()]);
   };
-  const onAbort=()=>{const task=stop(Error('client_disconnected'));ctx?.waitUntil?.(task)};
+  const onAbort=()=>{const task=stop(Error('client_disconnected'),'client_abort');ctx?.waitUntil?.(task)};
   const body=new ReadableStream({
     start(c){controller=c;
       if(signal?.aborted){onAbort();return}
       signal?.addEventListener('abort',onAbort,{once:true});
-      if(Number.isFinite(expiresAt)){const remaining=expiresAt-Date.now();if(remaining<=0){void stop(Error('access_expired'));return}expiryTimer=setTimeout(()=>{const task=stop(Error('access_expired'));ctx?.waitUntil?.(task)},Math.min(remaining,2147483647));expiryTimer?.unref?.()}
+      if(Number.isFinite(expiresAt)){const remaining=expiresAt-Date.now();if(remaining<=0){void stop(Error('access_expired'),'access_expired');return}expiryTimer=setTimeout(()=>{const task=stop(Error('access_expired'),'access_expired');ctx?.waitUntil?.(task)},Math.min(remaining,2147483647));expiryTimer?.unref?.()}
       timer=setInterval(async()=>{
         if(closed)return;
-        if(Date.now()-lastDemand>45000){await stop(Error('stream_idle'));return}
+        observe('checkpoint');
+        if(Date.now()-lastDemand>45000){await stop(Error('stream_idle'),'stream_idle');return}
         if(checking)return;
         checking=true;
-        try{if(!await check())await stop(Error('access_revoked'))}
-        catch{await stop(Error('access_unavailable'))}
+        try{const checked=await check();const allowed=flowMonitor?checked===true||checked?.ok===true:!!checked;if(!allowed)await stop(Error('access_revoked'),checked?.reason||'session_denied')}
+        catch{await stop(Error('access_unavailable'),'access_unavailable')}
         finally{checking=false}
       },25000);
     },
-    async pull(c){if(closed)return;lastDemand=Date.now();try{
+    async pull(c){if(closed)return;lastDemand=Date.now();if(flowMonitor&&deliveredAt!==null)observe('consumerPause',lastDemand-deliveredAt);const readAt=flowMonitor?Date.now():0;try{
       const next=await reader.read();if(closed)return;
+      if(flowMonitor)observe('relayReadWait',Date.now()-readAt);
       // A live source ending must reach the player even if capacity release stalls.
       // cleanup still clears timers and retains the exact release with waitUntil.
-      if(next.done){closed=true;const released=cleanup();if(waitForRelease)await released;c.close()}else c.enqueue(next.value);
+      if(next.done){closed=true;observe('finish','relay_complete');const released=cleanup();if(waitForRelease)await released;c.close()}else{observe('relayChunk',next.value?.byteLength);c.enqueue(next.value);if(flowMonitor)deliveredAt=Date.now()}
     }catch(error){await stop(error)}},
-    async cancel(reason){if(closed)return;closed=true;await Promise.allSettled([reader.cancel(reason),cleanup()])}
+    async cancel(reason){if(closed)return;closed=true;observe('finish','client_cancel');await Promise.allSettled([reader.cancel(reason),cleanup()])}
   });
   return new Response(body,{status:response.status,statusText:response.statusText,headers:response.headers});
 }
