@@ -12,6 +12,17 @@ The existing Android 1.0.26 telemetry measures the actual rendered first frame f
 
 Five-minute operational checks evaluate recent real playback, server timings, provider metadata and the own-account playback test. Missing/sparse samples are unknown, not recovery. New server-start incidents need at least five requests; their p95 limits are 8 seconds for TV and 12 seconds for movies/series. Existing rendered-frame warnings remain independent.
 
+Fast 404/416 responses from authorized, resolved Xtream media routes now enter
+bounded failure correlation when production explicitly enables
+`FAST_MEDIA_FAILURE_LOGS_ENABLED=true`. A shared isolate-local budget permits at
+most ten additional events per sixty seconds; this is not a global account cap.
+These events carry `diagnostic: fast_media_failure` and the response request ID,
+validated public catalog ID and bounded initial Range evidence where applicable.
+Unresolved or unauthorized resources, signed direct streams and internal canary
+calls do not gain this correlation. No extra provider calls or media-body reads
+are made. Existing slow/error logging is unaffected when the budget is exhausted;
+the diagnostic record does not establish that our service caused the HTTP error.
+
 ## Containment and recovery
 
 Long-running media relays have an explicit 120,000 ms active-CPU ceiling. This
