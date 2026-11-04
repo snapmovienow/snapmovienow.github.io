@@ -1,6 +1,7 @@
 import {isOfficialLivePage,resolveOfficialLive,officialMediaAllowed} from './official-live.mjs';
 import {exclusiveURL} from './exclusive-catalog.mjs';
 import {resolveGnula} from './gnula-source.mjs';
+import {isEmpressPage,resolveEmpressSource,empressMediaAllowed,empressMediaHeaders} from './empress-source.mjs';
 
 // Check the same-origin HLS resources the player actually needs, without
 // downloading a complete film or reserving a customer's playback connection.
@@ -8,7 +9,7 @@ async function request(url,origin,options,range){
  let target=new URL(exclusiveURL(url));
  for(let hop=0;hop<4;hop++){
   if(options.allowed?!options.allowed(target):target.origin!==origin)throw Error('media_origin_changed');
-  const fetcher=options.fetcher,response=await fetcher(target.href,{redirect:'manual',headers:{'User-Agent':'Mozilla/5.0',...(range?{Range:range}:{})},signal:options.signal});
+  const fetcher=options.fetcher,response=await fetcher(target.href,{redirect:'manual',headers:{'User-Agent':'Mozilla/5.0',...options.headers||{},...(range?{Range:range}:{})},signal:options.signal});
   if(response.status<300||response.status>=400){if(!response.ok){await response.body?.cancel();throw Error('media_unavailable');}return {response,url:target.href};}
   const location=response.headers.get('location');await response.body?.cancel();if(!location)throw Error('media_redirect');target=new URL(exclusiveURL(new URL(location,target).href));
  }throw Error('media_redirect');
@@ -20,9 +21,9 @@ async function readSmall(response,max){
 }
 export async function inspectCatalogSource(media,{fetcher=fetch,resolver=resolveGnula,signal=AbortSignal.timeout(40000)}={}){
  try{
-  const official=isOfficialLivePage(media.page);
-  let source=official?(await resolveOfficialLive(media.page,{fetcher,signal})).url:media.mode==='gnula'?await resolver(media.page,media.preferredEmbed||null,{fetcher,signal:AbortSignal.any([signal,AbortSignal.timeout(35000)])}):exclusiveURL(media.page);
-  const origin=new URL(source).origin,options={fetcher,signal,...(official?{allowed:url=>officialMediaAllowed(media.page,url)}:{})};
+  const official=isOfficialLivePage(media.page),empress=isEmpressPage(media.page)?await resolveEmpressSource(media.page,{fetcher,signal}):null;
+  let source=empress?empress.url:official?(await resolveOfficialLive(media.page,{fetcher,signal})).url:media.mode==='gnula'?await resolver(media.page,media.preferredEmbed||null,{fetcher,signal:AbortSignal.any([signal,AbortSignal.timeout(35000)])}):exclusiveURL(media.page);
+  const origin=new URL(source).origin,options={fetcher,signal,...(empress?{allowed:url=>empressMediaAllowed(media.page,url,empress.empressContext),headers:empressMediaHeaders(media.page,empress.empressContext)}:official?{allowed:url=>officialMediaAllowed(media.page,url)}:{})};
   for(let depth=0;depth<4;depth++){
    const fetched=await request(source,origin,options,'bytes=0-1048575');source=fetched.url;const response=fetched.response,type=response.headers.get('content-type')||'';
    if(!/mpegurl/i.test(type)&&!new URL(source).pathname.endsWith('.m3u8')){

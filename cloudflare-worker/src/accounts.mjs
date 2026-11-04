@@ -1,5 +1,6 @@
 import {usageChannel,readChannelUsage,observeChannelUsage} from './channel-usage.mjs';
 import {runPublicTvImport,publicTvImportStatus} from './public-tv-import.mjs';
+import {runEmpressImport,empressImportStatus} from './empress-import.mjs';
 import {runUnivisionNyImport,univisionNyImportStatus} from './univision-ny-import.mjs';
 import {boundedTsQuota} from './bounded-ts-route.mjs';
 import {saveCatalogReferences,readCatalogReferences} from './catalog-references.mjs';
@@ -57,10 +58,11 @@ export async function accountsFetch(state,env,req){
   await runLocalTvExpansion(store,leases,env);
   await runRegionalTvImport(store,leases,env);
   await runPublicTvImport(store,leases,env);
+  await runEmpressImport(store,leases,env);
   await runUnivisionNyImport(store,leases,env);
   await runCatalogMaintenance(env,{directory:(env,path,body={})=>env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_accounts_v1')).fetch('https://private/accounts'+path,{method:'POST',body:JSON.stringify(body)})});return answer({ok:true});
  }
- if(p==='/catalog-maintenance-status'){const response=await catalogMaintenanceRoute(store,leases,p,b);return answer({...await response.json(),exclusiveImport:await yagaImportStatus(store),localTvImport:await localTvImportStatus(store),localTvExpansion:await localTvExpansionStatus(store),regionalTvImport:await regionalTvImportStatus(store),publicTvImport:await publicTvImportStatus(store),univisionNyImport:await univisionNyImportStatus(store),localTvXtream:await localTvXtreamStatus(store)});}
+ if(p==='/catalog-maintenance-status'){const response=await catalogMaintenanceRoute(store,leases,p,b);return answer({...await response.json(),exclusiveImport:await yagaImportStatus(store),localTvImport:await localTvImportStatus(store),localTvExpansion:await localTvExpansionStatus(store),regionalTvImport:await regionalTvImportStatus(store),publicTvImport:await publicTvImportStatus(store),empressImport:await empressImportStatus(store),univisionNyImport:await univisionNyImportStatus(store),localTvXtream:await localTvXtreamStatus(store)});}
  if(['/catalog-maintenance-status','/catalog-maintenance-start','/catalog-maintenance-probe','/catalog-maintenance-observe'].includes(p))return await catalogMaintenanceRoute(store,leases,p,b);
  if(['/exclusive-read','/exclusive-item-read','/exclusive-save','/exclusive-cover-save','/exclusive-cover-read'].includes(p))return store.transaction(async tx=>{
   const response=await exclusiveCatalogRoute(tx,p,b);

@@ -16,13 +16,24 @@ export function exclusiveURL(value,{poster=false}={}){
 }
 function address(value,mode){const url=exclusiveURL(value);if(mode==='gnula'&&!supportedSourcePage(new URL(url)))fail('exclusive_source');if(mode==='direct'&&!/\.(?:m3u8|mp4|mkv|webm|m4v|mov)$/i.test(new URL(url).pathname))fail('exclusive_source');return url;}
 const plain=(value,max,required=false)=>{if(typeof value!=='string'||value.length>max||/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(value)||required&&!value.trim())fail();return value.trim()};
+const mediaIds=row=>[row.id,...(row.episodes||[]).flatMap(ep=>[ep.id,...(ep.alternatives||[]).map(option=>option.id)])];
+function episodeMetadata(value){
+ const result={};if(value.plot!==undefined)result.plot=plain(value.plot,3000);if(value.poster!==undefined)result.poster=value.poster?exclusiveURL(value.poster):'';
+ if(value.durationSeconds!==undefined){if(!Number.isSafeInteger(value.durationSeconds)||value.durationSeconds<1||value.durationSeconds>21600)fail();result.durationSeconds=value.durationSeconds;}
+ return result;
+}
 function clean(input,old){
  if(!input||!exclusiveId(input.id)||!['movie','series'].includes(input.type)||!['gnula','direct'].includes(input.mode)||typeof input.visible!=='boolean'||typeof input.adult!=='boolean')fail();
  const name=plain(input.name,180,true),source=plain(input.source,60,true),plot=plain(input.plot??'',3000),poster=input.poster?exclusiveURL(input.poster,{poster:true}):'';
  const year=input.year===null||input.year===''?null:Number(input.year);if(year!==null&&(!Number.isInteger(year)||year<1880||year>2200))fail();
  const episodes=input.episodes??[];if(!Array.isArray(episodes)||episodes.length>100||input.type==='movie'&&episodes.length)fail();
  const ids=new Set([input.id]),numbers=new Set();
- const parsed=episodes.map(ep=>{if(!ep||!exclusiveId(ep.id)||ids.has(ep.id)||!Number.isInteger(ep.season)||ep.season<1||ep.season>100||!Number.isInteger(ep.episode_num)||ep.episode_num<1||ep.episode_num>1000||numbers.has(ep.season+':'+ep.episode_num))fail();ids.add(ep.id);numbers.add(ep.season+':'+ep.episode_num);return {id:ep.id,title:plain(ep.title,180,true),season:ep.season,episode_num:ep.episode_num,page:address(ep.page,input.mode)};}).sort((a,b)=>a.season-b.season||a.episode_num-b.episode_num);
+ const parsed=episodes.map(ep=>{
+  if(!ep||!exclusiveId(ep.id)||ids.has(ep.id)||!Number.isInteger(ep.season)||ep.season<1||ep.season>100||!Number.isInteger(ep.episode_num)||ep.episode_num<1||ep.episode_num>1000||numbers.has(ep.season+':'+ep.episode_num))fail();ids.add(ep.id);numbers.add(ep.season+':'+ep.episode_num);
+  const page=address(ep.page,input.mode),alternatives=ep.alternatives??[];if(!Array.isArray(alternatives)||alternatives.length>1)fail();
+  const options=alternatives.map(option=>{if(!option||!exclusiveId(option.id)||ids.has(option.id))fail();ids.add(option.id);const next=address(option.page,input.mode);if(next===page)fail();return {id:option.id,title:plain(option.title,180,true),page:next,...episodeMetadata(option)};});
+  return {id:ep.id,title:plain(ep.title,180,true),season:ep.season,episode_num:ep.episode_num,page,...episodeMetadata(ep),...(options.length?{alternatives:options}:{})};
+ }).sort((a,b)=>a.season-b.season||a.episode_num-b.episode_num);
  const page=input.type==='movie'?address(input.page,input.mode):input.page?address(input.page,input.mode):'';
  if(input.type==='series'&&input.visible&&!parsed.length)fail('exclusive_episodes');
  const usageKind=input.usageKind===undefined?old?.usageKind:input.usageKind;if(usageKind!==undefined&&usageKind!==null&&usageKind!==''&&usageKind!=='channel'||usageKind==='channel'&&input.type!=='movie')fail();
@@ -36,7 +47,7 @@ export function exclusivePublic(row,origin=''){
  return {exclusive:true,exclusive_id:row.id,...(row.type==='movie'?{stream_id:row.id,stream_icon:poster}:{series_id:row.id,cover:poster}),source:'gnula',_server:row.profileServer,_adult:row.adult||isAdult(row),type:row.type,name:row.name,year:row.year,plot:row.plot,container_extension:row.mode==='gnula'||row.type==='series'?'m3u8':new URL(row.page).pathname.split('.').at(-1),smn_profile:{type:row.type,id:row.id,server:row.profileServer}};
 }
 export function visibleExclusive(row,permissions){return row?.visible&&(!isOfficialLivePage(row.page)||permissions.tv)&&permissions[row.type==='movie'?'movies':'series']&&(permissions.adults||!row.adult&&!isAdult(row));}
-export function selectExclusive(rows,id){for(const row of rows){if(row.id===id)return {row,media:row};for(const episode of row.episodes||[])if(episode.id===id)return {row,media:{...episode,mode:row.mode,type:'series'}};}return null;}
+export function selectExclusive(rows,id){for(const row of rows){if(row.id===id)return {row,media:row};for(const episode of row.episodes||[]){if(episode.id===id)return {row,media:{...episode,mode:row.mode,type:'series'}};const option=episode.alternatives?.find(value=>value.id===id);if(option)return {row,media:{...episode,...option,alternatives:undefined,season:episode.season,episode_num:episode.episode_num,mode:row.mode,type:'series'}};}}return null;}
 function coverData(data){
  if(typeof data!=='string'||data.length>33000)fail('exclusive_cover');const match=data.match(/^data:image\/(jpeg|png);base64,([A-Za-z0-9+/]+={0,2})$/);if(!match)fail('exclusive_cover');
  let bytes;try{bytes=Uint8Array.from(atob(match[2]),c=>c.charCodeAt(0))}catch{fail('exclusive_cover')}
@@ -63,7 +74,7 @@ export async function exclusiveCatalogRoute(store,path,body){
    const old=await store.get(ITEM+input.id);if(old?.revision!==body.revision&&!(old===undefined&&body.revision===0))fail('exclusive_changed',409);
    if(!old&&value.ids.length>=MAX_ITEMS)fail('exclusive_capacity',409);const row=clean(input,old);
    if(row.poster.startsWith('/exclusive-cover/')&&!await store.get(COVER+row.poster.split('/').at(-1)))fail('exclusive_cover');
-   const all=await exclusiveSnapshot(store),newIds=new Set([row.id,...row.episodes.map(e=>e.id)]);if(all.items.some(other=>other.id!==row.id&&[other.id,...other.episodes.map(e=>e.id)].some(id=>newIds.has(id))))fail('exclusive_duplicate',409);
+   const all=await exclusiveSnapshot(store),newIds=new Set(mediaIds(row));if(all.items.some(other=>other.id!==row.id&&mediaIds(other).some(id=>newIds.has(id))))fail('exclusive_duplicate',409);
    const playbackChanged=!old||JSON.stringify([old.type,old.mode,old.page,old.visible,old.adult,old.episodes])!==JSON.stringify([row.type,row.mode,row.page,row.visible,row.adult,row.episodes]);
    const saved={...row,revision:(old?.revision||0)+1,playbackRevision:(old?.playbackRevision||0)+(playbackChanged?1:0),createdAt:old?.createdAt||Date.now(),updatedAt:Date.now()};
    if(new TextEncoder().encode(JSON.stringify(all.items.filter(x=>x.id!==row.id).concat(saved))).length>500000)fail('exclusive_capacity',409);
@@ -73,5 +84,5 @@ export async function exclusiveCatalogRoute(store,path,body){
  }catch(error){return Response.json({error:error.status?error.message:'exclusive_unavailable'},{status:error.status||503});}
 }
 export async function exportExclusives(store){const value=await store.get(INDEX);if(!value)return undefined;const data=await exclusiveSnapshot(store);return {index:value,items:data.items,covers:[...await store.list({prefix:COVER})]};}
-export function validExclusiveBackup(data){try{return data&&Array.isArray(data.items)&&data.items.length<=MAX_ITEMS&&data.index&&Array.isArray(data.index.ids)&&data.index.ids.length===data.items.length&&new Set(data.index.ids).size===data.items.length&&data.items.every(row=>{try{return exclusiveId(row.id)&&data.index.ids.includes(row.id)&&Number.isSafeInteger(row.revision)&&row.revision>0&&Number.isSafeInteger(row.playbackRevision)&&row.playbackRevision>0&&!!clean(row,row)}catch{return false}})&&Array.isArray(data.covers)&&data.covers.length<=300&&data.covers.reduce((sum,entry)=>sum+(entry[1]?.size||0),0)<=512000&&data.covers.every(([key,value])=>/^exclusive:cover:[a-f0-9]{64}$/.test(key)&&!!coverData('data:'+value.type+';base64,'+value.data));}catch{return false;}}
+export function validExclusiveBackup(data){try{return data&&Array.isArray(data.items)&&data.items.length<=MAX_ITEMS&&new Set(data.items.flatMap(mediaIds)).size===data.items.flatMap(mediaIds).length&&data.index&&Array.isArray(data.index.ids)&&data.index.ids.length===data.items.length&&new Set(data.index.ids).size===data.items.length&&data.items.every(row=>{try{return exclusiveId(row.id)&&data.index.ids.includes(row.id)&&Number.isSafeInteger(row.revision)&&row.revision>0&&Number.isSafeInteger(row.playbackRevision)&&row.playbackRevision>0&&!!clean(row,row)}catch{return false}})&&Array.isArray(data.covers)&&data.covers.length<=300&&data.covers.reduce((sum,entry)=>sum+(entry[1]?.size||0),0)<=512000&&data.covers.every(([key,value])=>/^exclusive:cover:[a-f0-9]{64}$/.test(key)&&!!coverData('data:'+value.type+';base64,'+value.data));}catch{return false;}}
 export async function restoreExclusives(store,data){for(const prefix of [ITEM,COVER])for(const key of (await store.list({prefix})).keys())await store.delete(key);await store.delete(INDEX);if(!data)return;await store.put(INDEX,data.index);for(const row of data.items)await store.put(ITEM+row.id,row);for(const [key,value]of data.covers)await store.put(key,value);}

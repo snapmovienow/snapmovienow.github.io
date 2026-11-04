@@ -78,6 +78,7 @@ async function details(params, kind, auth, deps, base) {
   if (!numeric(publicId)) return deps.json({error: 'invalid_stream'}, 400);
   const record = await deps.resolve(publicId);
   if (!record || record.kind !== kind) return deps.json({error: 'not_found'}, 404);
+  if (deps.localSeries?.matches(record)) return kind==='series_list'?deps.localSeries.details({record,auth,base,register:deps.register,catalog:deps.catalog,adultPolicy:deps.adultPolicy}):deps.json({error:'not_found'},404);
   if (auth.user.permissions.adults === false && !await deps.adultPolicy.allowed(record)) return deps.json({error:'adult_content_disabled'},403);
   const action = kind === 'movie' ? 'get_vod_info' : 'get_series_info';
   const data = await deps.catalog(action, record.server, {[kind === 'movie' ? 'vod_id' : 'series_id']: record.upstreamId});
@@ -134,6 +135,7 @@ export async function handleXtream(req, deps) {
     const record = await deps.resolve(publicId), expected = kind === 'series' ? 'episode' : kind;
     if (!record || record.kind !== expected) return deps.json({error: 'not_found'}, 404);
     if (deps.localLive?.matches(record)) return kind==='live'?deps.localLive.play(req,auth,{...record,ext:ext.toLowerCase()}):deps.json({error:'not_found'},404);
+    if (deps.localSeries?.matches(record)) return kind==='series'?deps.localSeries.play(req,auth,{...record,ext:ext.toLowerCase()}):deps.json({error:'not_found'},404);
     if (auth.user.permissions.adults === false && !await deps.adultPolicy.allowed(record)) return deps.json({error:'adult_content_disabled'},403);
     deps.onResolvedMedia?.(kind,publicId);
     return deps.play(req, auth.session, {...record, type: kind, ext: ext.toLowerCase()});
@@ -161,5 +163,7 @@ export async function handleXtream(req, deps) {
     rows = !category || category.kind !== categoryKind(spec[1]) ? [] : rows.filter(row => row._server === category.server && String(row.category_id) === category.upstreamId);
   }
   const mapped=await mapList(rows, spec[1], auth, deps, url.origin);
-  return deps.json(deps.localLive?await deps.localLive.list({action,rows:mapped,auth,base:url.origin,categoryId,catalog:deps.catalog,register:deps.register,adultPolicy:deps.adultPolicy}):mapped);
+  const listInput={action,rows:mapped,auth,base:url.origin,categoryId,catalog:deps.catalog,register:deps.register,adultPolicy:deps.adultPolicy};
+  const live=deps.localLive?await deps.localLive.list(listInput):mapped;
+  return deps.json(deps.localSeries?await deps.localSeries.list({...listInput,rows:live}):live);
 }
