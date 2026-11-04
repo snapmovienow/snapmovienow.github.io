@@ -6,23 +6,25 @@ import vm from 'node:vm';
 const app=readFileSync(new URL('../app.js',import.meta.url),'utf8');
 const clientSource=readFileSync(new URL('../session-client.js',import.meta.url),'utf8');
 const token=username=>({username,access_token:'fixture-token-'+username});
-function fixture({cookieMode=false,seed,blocked=false,quota=false,immutable=false}={}){
+function fixture({cookieMode=false,seed,blocked=false,quota=false,immutable=false,now=performance.now.bind(performance)}={}){
  const data=new Map(seed?[['smn_session',JSON.stringify(seed)]]:[]),fault={blocked,quota,immutable},calls=[],elements=new Map();
  function node(){const classes=new Set();return {value:'',textContent:'',hidden:false,disabled:false,children:[],listeners:{},classList:{add:x=>classes.add(x),remove:x=>classes.delete(x),contains:x=>classes.has(x)},addEventListener(type,fn){this.listeners[type]=fn},append(...items){this.children.push(...items)},replaceChildren(...items){this.children=items}}}
  const document={body:node(),getElementById(id){if(!elements.has(id))elements.set(id,node());return elements.get(id)},createElement:()=>node()};
  document.getElementById('user').value='fixture-user';document.getElementById('pass').value='fixture-password';document.getElementById('sessionNotice').hidden=true;
  let auth=async body=>({user_info:{auth:1,username:body.username||seed?.username||'fixture-user'},access_token:token(body.username||seed?.username||'fixture-user').access_token,permissions:{movies:true,series:true,tv:true},session_expires_at:Date.now()+3600000,server_time:Date.now()});
- let remoteLogout=async()=>Response.json({ok:true});let catalogs=0,expiryArms=0;
+ let remoteLogout=async()=>Response.json({ok:true});let catalogs=0,expiryArms=0,expiryInfo;
  const storage={getItem(k){if(fault.blocked)throw Error('SecurityError');return data.get(k)??null},setItem(k,v){if(fault.blocked||fault.quota||fault.immutable)throw Error('QuotaExceededError');data.set(k,v)},removeItem(k){if(fault.blocked||fault.immutable)throw Error('SecurityError');data.delete(k)}};
  const ctx=vm.createContext({document,performance,AbortSignal,Response,SMNConfig:{cookieMode},profileSync:null,profilePreferences:{},favorites:[],currentPlay:null,location:{pathname:'/',href:''},sessionExpiry:{cancel(){}},armSessionExpiry(){expiryArms++},loadUserFavorites(){},async loadCatalog(){catalogs++;document.getElementById('content').hidden=false;return false},saveContinue(){},stopPlayback(){},resetLiveDiagnostics(){},SMNConnection:{message:(_e,fallback)=>fallback,async requestJSON(_url,options){const body=JSON.parse(options.body);calls.push({kind:'api',body,credentials:options.credentials});return auth(body)}},async fetch(_url,options){calls.push({kind:'logout',body:JSON.parse(options.body),credentials:options.credentials});return remoteLogout(options)}});
  Object.defineProperty(ctx,'localStorage',{get(){if(fault.blocked)throw Error('SecurityError');return storage}});
  Object.defineProperty(ctx,'sessionStorage',{get(){if(fault.blocked)throw Error('SecurityError');return storage}});
+ ctx.performance={now};
  vm.runInContext(clientSource,ctx);
  vm.runInContext(app.slice(0,app.indexOf('async function loadCatalog(')),ctx);
  vm.runInContext(app.slice(app.indexOf('async function logout('),app.indexOf('const searchPanel=')),ctx);
  const a=app.indexOf('async function restoreSession('),b=app.indexOf('function profileReference(',a);
  vm.runInContext(app.slice(a,b).replace(/restoreSession\(\);\s*$/,''),ctx);
- return {ctx,data,fault,calls,document,client:ctx.SMNSessionClient,storage,get catalogs(){return catalogs},get expiryArms(){return expiryArms},setAuth:fn=>auth=fn,setLogout:fn=>remoteLogout=fn,run:source=>vm.runInContext(source,ctx),state:()=>JSON.parse(vm.runInContext('JSON.stringify({authenticated,creds,authGeneration,pendingLogout})',ctx))};
+ ctx.armSessionExpiry=info=>{expiryArms++;expiryInfo=info};
+ return {ctx,data,fault,calls,document,client:ctx.SMNSessionClient,storage,get catalogs(){return catalogs},get expiryArms(){return expiryArms},get expiryInfo(){return expiryInfo},setAuth:fn=>auth=fn,setLogout:fn=>remoteLogout=fn,run:source=>vm.runInContext(source,ctx),state:()=>JSON.parse(vm.runInContext('JSON.stringify({authenticated,creds,authGeneration,pendingLogout})',ctx))};
 }
 
 for(const cookieMode of [false,true])for(const mode of ['quota','blocked'])test('valid login remains usable with '+mode+', cookies='+cookieMode,async()=>{
@@ -97,6 +99,12 @@ test('only an explicit server acknowledgement or its exact invalid-session code 
 test('a cookie sentinel is never used to revoke the newly authenticated cookie',async()=>{
  const f=fixture({cookieMode:true,seed:{username:'older',access_token:'cookie'},immutable:true});await f.run('doLogin()');
  assert.equal(f.state().authenticated,true);assert.equal(f.calls.filter(x=>x.kind==='logout').length,0);
+});
+
+test('waiting for previous-session cleanup does not extend the signed access deadline',async()=>{
+ let now=0;const f=fixture({seed:token('older'),immutable:true,now:()=>now});
+ f.setLogout(async()=>{now=5000;return Response.json({ok:true})});await f.run('doLogin()');
+ assert.equal(f.state().authenticated,true);assert.equal(f.expiryInfo.network_age_ms,5000);
 });
 
 test('late cleanup cannot overwrite a newer login or revive a logged-out session',async()=>{

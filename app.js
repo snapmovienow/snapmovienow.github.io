@@ -16,9 +16,11 @@ async function revokeSession(session){
  catch{return false}
 }
 async function activateSession(info,nextSession,generation){
+ const persistenceStarted=performance.now();
  const persisted=await SMNSessionClient.persist(sessionStorageSource,nextSession,{cookieMode:globalThis.SMNConfig?.cookieMode===true,revokePrevious:revokeSession});
  if(generation!==authGeneration||creds!==nextSession)return;
- loadUserFavorites();permissions=info.permissions||{movies:true,series:true,tv:true};authenticated=true;pendingLogout=null;armSessionExpiry(info);
+ loadUserFavorites();permissions=info.permissions||{movies:true,series:true,tv:true};authenticated=true;pendingLogout=null;
+ armSessionExpiry({...info,network_age_ms:Number(info.network_age_ms||0)+Math.max(0,performance.now()-persistenceStarted)});
  document.body.classList.add('authenticated');document.getElementById('login').classList.remove('open');
  document.getElementById('loginBtn').classList.add('hidden');document.getElementById('heroLogin').classList.add('hidden');
  showSessionNotice(persisted?'':'Sesión temporal: no pudimos guardar tu acceso en este navegador. Podrás seguir usándolo; al recargar podrías tener que iniciar sesión nuevamente.');
