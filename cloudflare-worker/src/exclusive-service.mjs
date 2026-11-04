@@ -4,6 +4,7 @@ import {exclusiveURL,exclusiveId,exclusivePublic,visibleExclusive,selectExclusiv
 import {observeFirstChunk} from './local-startup-observations.mjs';
 import {createExclusiveSeriesXtream} from './exclusive-series-xtream.mjs';
 import {isEmpressPage,resolveEmpressSource,empressMediaAllowed,empressMediaHeaders} from './empress-source.mjs';
+import {ownedMediaDescriptor,isOwnedMediaSeries,assertOwnedMediaConnected,fetchOwnedMedia,fetchOwnedPreview,readBoundedJson,OWNED_MEDIA_SERIES,OWNED_MEDIA_UNTIL} from './owned-media-source.mjs';
 const error=(code,status=400)=>Object.assign(Error(code),{status});
 async function mediaFetch(url,{range,head=false,signal,fetcher=fetch,allowed,upstreamHeaders={}}={}){
  let target=exclusiveURL(url);for(let i=0;i<4;i++){
@@ -19,7 +20,7 @@ export function createExclusiveService(deps){
  const read=async env=>{const r=await deps.directory(env,'/exclusive-read');if(!r.ok)throw error('exclusive_unavailable',503);return r.json();};
  const resolve=async(media,viewer)=>isEmpressPage(media.page)?resolveEmpressSource(media.page,{fetcher:deps.fetcher,signal:AbortSignal.timeout(35000)}):isOfficialLivePage(media.page)?resolveOfficialLive(media.page,{fetcher:deps.fetcher,signal:AbortSignal.timeout(45000),cachePublicPages:true,...(viewer?{viewerKey:viewer.sid,viewerExpiresAt:viewer.exp}:{})}):{url:media.mode==='gnula'?await deps.resolveGnula(media.page,media.preferredEmbed||null,{signal:AbortSignal.timeout(35000)}):exclusiveURL(media.page)};
  const lookup=async(env,id,permissions,options={})=>{const data=await read(env),selected=selectExclusive(data.items,id);if(!selected||!(options.live?visibleLocalTv(selected.row,permissions):visibleExclusive(selected.row,permissions)))throw error('title_not_allowed',404);if(selected.row.type==='series'&&selected.media===selected.row)throw error('exclusive_episode_required');return selected;};
- const catalog=async(env,permissions,origin,options={})=>{const data=await read(env);return {revision:data.revision,items:data.items.filter(row=>visibleExclusive(row,permissions)&&(!options.legacy||row.mode==='gnula'&&!isOfficialLivePage(row.page))).sort((a,b)=>b.createdAt-a.createdAt).map(row=>exclusivePublic(row,origin))};};
+ const catalog=async(env,permissions,origin,options={})=>{const data=await read(env);return {revision:data.revision,items:data.items.filter(row=>visibleExclusive(row,permissions)&&(!options.legacy||row.mode==='gnula'&&!isOfficialLivePage(row.page)||isOwnedMediaSeries(row))).sort((a,b)=>b.createdAt-a.createdAt).map(row=>exclusivePublic(row,origin))};};
  const episodes=async(env,id,permissions,origin)=>{const data=await read(env),row=data.items.find(x=>x.id===id);if(!row||row.type!=='series'||!visibleExclusive(row,permissions))throw error('title_not_allowed',404);const grouped={};for(const ep of row.episodes){(grouped[ep.season]??=[]).push({...ep,page:undefined,...(ep.alternatives?{alternatives:ep.alternatives.map(({page,...option})=>option)}:{}),exclusive_id:ep.id,container_extension:row.mode==='gnula'?'m3u8':new URL(ep.page).pathname.split('.').at(-1),smn_profile:{type:'series',id:row.id,server:row.profileServer,episodeId:ep.id}});}return {info:{name:row.name,plot:row.plot,year:row.year,cover:exclusivePublic(row,origin).cover},episodes:grouped};};
  const prepare=async(req,env,session,id,options={})=>{
   const localStartedAt=options.localStartedAt||Date.now();
@@ -32,6 +33,7 @@ export function createExclusiveService(deps){
   let resolved;
   try{resolved=await resolve(media,session);}catch(e){if(!req.signal.aborted)await deps.directory(env,'/channel-startup-failure',{...session,request_id,exclusiveId:id,playbackRevision:row.playbackRevision,live:options.live===true,client:deps.requestConnectionClient(req)}).then(r=>r.body?.cancel()).catch(()=>{});throw e;}
   const source=exclusiveURL(resolved.url);
+  if(ownedMediaDescriptor(source))assertOwnedMediaConnected(env);
   const allocated=await deps.directory(env,'/exclusive-acquire',{...session,request_id,exclusiveId:id,playbackRevision:row.playbackRevision,...(options.live?{live:true}:{}),client:deps.requestConnectionClient(req)});if(!allocated.ok){const b=await allocated.json();throw error(b.error||'exclusive_capacity',allocated.status);}
   const {lease_id}=await allocated.json();
   try{
@@ -40,8 +42,22 @@ export function createExclusiveService(deps){
    const token=await deps.ticket(env,value);return {url:new URL('/exclusive-media?t='+encodeURIComponent(token),req.url).href,lease_id,request_id};
   }catch(e){await deps.directory(env,'/release',{sid:session.sid,lease_id,request_id});throw e;}
  };
+ const authorizeOwned=async(req,env)=>{
+  if(req.method!=='POST')throw error('method_not_allowed',405);
+  const body=await readBoundedJson(req),token=body?.ticket;
+  if(typeof token!=='string'||!/^[A-Za-z0-9_.-]{30,14000}$/.test(token)||typeof body.id!=='string'||Object.keys(body).some(key=>!['ticket','id','range','head'].includes(key)))throw error('session_expired',401);
+  const data=await deps.unticket(env,token),source=ownedMediaDescriptor(data?.source);
+  if(!source||data?.kind!=='exclusive-media'||data.exclusiveId!==source.exclusiveId||data.parentId!==OWNED_MEDIA_SERIES||body.id!==source.id||data.resource||data.empressPage||data.officialPage||Date.now()>=OWNED_MEDIA_UNTIL)throw error('title_not_allowed',403);
+  const [access,itemResponse]=await Promise.all([deps.sessionCall(env,data.sid,'/check'),deps.directory(env,'/exclusive-item-read',{id:data.parentId})]);
+  if(!access.ok){await itemResponse.body?.cancel();throw error('session_expired',401);}await access.body?.cancel();
+  const current=itemResponse.ok?selectExclusive([await itemResponse.json()],data.exclusiveId):null;
+  if(!current||!current.row.visible||current.row.playbackRevision!==data.playbackRevision||current.media.page!==source.url)throw error('title_not_allowed',410);
+  const heartbeat=await deps.directory(env,'/heartbeat',{sid:data.sid,lease_id:data.lease_id,request_id:data.request_id});
+  if(!heartbeat.ok){await heartbeat.body?.cancel();throw error('playback_expired',410);}await heartbeat.body?.cancel();
+  return Response.json({ok:true,id:source.id},{headers:{'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});
+ };
  const media=async(req,env,ctx)=>{
-  const data=await deps.unticket(env,new URL(req.url).searchParams.get('t')||'');
+  const playbackTicket=new URL(req.url).searchParams.get('t')||'',data=await deps.unticket(env,playbackTicket);
   if(data?.kind!=='exclusive-media'||!exclusiveId(data.exclusiveId))throw error('session_expired',401);
   const scope={sid:data.sid,lease_id:data.lease_id,request_id:data.request_id,exclusiveId:data.exclusiveId,parentId:data.parentId,playbackRevision:data.playbackRevision};
   let heartbeat;
@@ -68,10 +84,13 @@ export function createExclusiveService(deps){
   const usageFailure=code=>deps.directory(env,'/channel-usage-observe',{...scope,kind:'failure',code}).then(r=>r.body?.cancel()).catch(()=>{});
   let empressStage='scope',empressStatus=null,empressResource='unknown';
   try{
-  const base=new URL(exclusiveURL(data.officialPage?(data.source||data.resource):data.source)),target=new URL(exclusiveURL(data.resource||data.source));const allowed=data.empressPage?url=>empressMediaAllowed(data.empressPage,url,data.empressContext):data.officialPage?url=>officialMediaAllowed(data.officialPage,url):null;if(allowed?!allowed(target):data.resource&&target.origin!==base.origin)throw error('exclusive_resource',403);
+  const owned=ownedMediaDescriptor(data.source),base=new URL(exclusiveURL(data.officialPage?(data.source||data.resource):data.source)),target=new URL(exclusiveURL(data.resource||data.source));
+  if(owned&&(data.exclusiveId!==owned.exclusiveId||data.parentId!==OWNED_MEDIA_SERIES||data.resource))throw error('exclusive_resource',403);
+  const allowed=owned?url=>String(url)===owned.url:data.empressPage?url=>empressMediaAllowed(data.empressPage,url,data.empressContext):data.officialPage?url=>officialMediaAllowed(data.officialPage,url):null;if(allowed?!allowed(target):data.resource&&target.origin!==base.origin)throw error('exclusive_resource',403);
   empressStage='upstream';empressResource=target.pathname.endsWith('.m3u8')?'playlist':target.pathname.endsWith('.key')?'key':/\.(?:ts|m4s|mp4|aac)$/.test(target.pathname)?'media':'other';
-  const fetched=await mediaFetch(target.href,{range:data.empressPage&&empressResource==='playlist'?undefined:req.headers.get('Range')||undefined,head:req.method==='HEAD',signal:req.signal,fetcher:deps.fetcher,allowed,...(data.empressPage?{upstreamHeaders:empressMediaHeaders(data.empressPage,data.empressContext)}:{})});const response=fetched.response;empressStatus=response.status;
-  if(!response.ok){await response.body?.cancel();if(data.officialPage)await forgetOfficialLivePage(data.officialPage,{fetcher:deps.fetcher});throw error('media_unavailable',response.status===404?404:502);}
+  const fetched=owned?{url:target.href,response:await fetchOwnedMedia(target.href,env,playbackTicket,{range:req.headers.get('Range')||undefined,head:req.method==='HEAD',signal:req.signal,fetcher:deps.fetcher})}:await mediaFetch(target.href,{range:data.empressPage&&empressResource==='playlist'?undefined:req.headers.get('Range')||undefined,head:req.method==='HEAD',signal:req.signal,fetcher:deps.fetcher,allowed,...(data.empressPage?{upstreamHeaders:empressMediaHeaders(data.empressPage,data.empressContext)}:{})});const response=fetched.response;empressStatus=response.status;
+  if(owned&&response.status===416){await response.body?.cancel();await deps.directory(env,'/release',{sid:data.sid,lease_id:data.lease_id,request_id:data.request_id});const headers=new Headers({'Cache-Control':'no-store','Accept-Ranges':'bytes'}),range=response.headers.get('content-range');if(/^bytes \*\/\d+$/.test(range||''))headers.set('content-range',range);return new Response(null,{status:416,headers});}
+  if(!response.ok){if(owned)console.error({event:'owned_media_failure',stage:'upstream',episode:owned.episode,option:owned.option,status:response.status,method:req.method});await response.body?.cancel();if(data.officialPage)await forgetOfficialLivePage(data.officialPage,{fetcher:deps.fetcher});throw error('media_unavailable',response.status===404?404:502);}
   if(allowed?!allowed(fetched.url):data.resource&&new URL(fetched.url).origin!==base.origin){await response.body?.cancel();throw error('exclusive_resource',403);}
   const out=new Headers({'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});for(const key of ['content-type','content-length','content-range','accept-ranges','etag','last-modified'])if(response.headers.has(key))out.set(key,response.headers.get(key));
   if(!data.resource){out.set('X-SNAP-Playback-Quality',data.monitor);if(data.officialPage)out.set('X-SNAP-Local-Startup','2');}
@@ -115,7 +134,7 @@ export function createExclusiveService(deps){
   if(body.action==='exclusive-list')return Response.json(await read(env));
   if(body.action==='exclusive-save'||body.action==='exclusive-cover'){const r=await deps.directory(env,body.action==='exclusive-save'?'/exclusive-save':'/exclusive-cover-save',{...body,actor});return Response.json(await r.json(),{status:r.status});}
   if(body.action==='exclusive-check'){
-   const data=await read(env),selection=selectExclusive(data.items,body.id);if(!selection)throw error('title_not_allowed',404);const resolved=await resolve(selection.media),r=await mediaFetch(resolved.url,{range:'bytes=0-2047',fetcher:deps.fetcher,...(resolved.empressPage?{allowed:url=>empressMediaAllowed(resolved.empressPage,url,resolved.empressContext),upstreamHeaders:empressMediaHeaders(resolved.empressPage,resolved.empressContext)}:{})}),type=r.response.headers.get('content-type')||'';
+   const data=await read(env),selection=selectExclusive(data.items,body.id);if(!selection)throw error('title_not_allowed',404);const resolved=await resolve(selection.media),r=ownedMediaDescriptor(resolved.url)?{response:await fetchOwnedPreview(resolved.url,env,{fetcher:deps.fetcher})}:await mediaFetch(resolved.url,{range:'bytes=0-2047',fetcher:deps.fetcher,...(resolved.empressPage?{allowed:url=>empressMediaAllowed(resolved.empressPage,url,resolved.empressContext),upstreamHeaders:empressMediaHeaders(resolved.empressPage,resolved.empressContext)}:{})}),type=r.response.headers.get('content-type')||'';
    let ok=r.response.ok&&(/^(?:video\/|audio\/|application\/octet-stream)/i.test(type)||/mpegurl/i.test(type));if(ok&&/mpegurl/i.test(type))ok=(await limitedText(r.response)).trimStart().startsWith('#EXTM3U');else await r.response.body?.cancel();
    return Response.json({ok,checkedAt:Date.now(),message:ok?'El enlace respondió como contenido multimedia.':'No se pudo confirmar un video reproducible.'});
   }return null;
@@ -132,5 +151,5 @@ export function createExclusiveService(deps){
  };
  const liveXtream=(env,ctx)=>createLocalTvXtream({read,media,prepare:async(...args)=>{const prepared=await prepare(...args);return {...prepared,release:()=>deps.directory(env,'/release',{sid:args[2].sid,lease_id:prepared.lease_id,request_id:prepared.request_id})};}},env,ctx);
  const seriesXtream=(env,ctx)=>createExclusiveSeriesXtream({read,media,prepare:async(...args)=>{const prepared=await prepare(...args);return {...prepared,release:()=>deps.directory(env,'/release',{sid:args[2].sid,lease_id:prepared.lease_id,request_id:prepared.request_id})};}},env,ctx);
- return {catalog,episodes,prepare,media,admin,xtream,liveXtream,seriesXtream,read,async cover(env,id){const r=await deps.directory(env,'/exclusive-cover-read',{id});if(!r.ok)return new Response('Not found',{status:404});const value=await r.json();return new Response(Uint8Array.from(atob(value.data),c=>c.charCodeAt(0)),{headers:{'Content-Type':value.type,'Cache-Control':'public, max-age=31536000, immutable','X-Content-Type-Options':'nosniff'}});}};
+ return {catalog,episodes,prepare,media,authorizeOwned,admin,xtream,liveXtream,seriesXtream,read,async cover(env,id){const r=await deps.directory(env,'/exclusive-cover-read',{id});if(!r.ok)return new Response('Not found',{status:404});const value=await r.json();return new Response(Uint8Array.from(atob(value.data),c=>c.charCodeAt(0)),{headers:{'Content-Type':value.type,'Cache-Control':'public, max-age=31536000, immutable','X-Content-Type-Options':'nosniff'}});}};
 }

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {handleXtream} from '../src/xtream.mjs';
+import {ownedMediaForEpisode} from '../src/owned-media-source.mjs';
 import {createExclusiveSeriesXtream,EXCLUSIVE_SERIES_SERVER,EXCLUSIVE_SERIES_ID} from '../src/exclusive-series-xtream.mjs';
 
 const origin='https://api.example.test',provider='private-provider-scope',customer={username:'series-customer',password:'series-customer-fixture-password'};
@@ -53,4 +54,17 @@ row.visible=false;assert.equal((await(await api('get_series')).json()).length,1)
 row.year=2025;assert.equal((await(await api('get_series')).json()).length,1);row.year=2026;
 user.permissions.series=false;assert.deepEqual(await(await api('get_series')).json(),[]);assert.equal((await api('get_series_info',{series_id:owned.series_id})).status,403);assert.equal((await play(episodes[0])).status,403);user.permissions.series=true;
 disneyPresent=false;const fallback=await(await api('get_series_categories')).json();assert.equal(fallback.length,3);assert.equal(fallback.filter(c=>c.category_name==='SERIES-DISNEY').length,1);const fallbackId=fallback.find(c=>c.category_name==='SERIES-DISNEY').category_id;assert.equal((await(await api('get_series',{category_id:fallbackId})).json()).length,1);
+
+// Switching to verified copies preserves the same numeric identities and both
+// DNS choices. Clients receive MP4 metadata while cached route IDs remain valid.
+const oldIds=episodes.map(episode=>episode.id);
+row.mode='direct';row.page='';
+row.episodes=row.episodes.map(episode=>({...episode,page:ownedMediaForEpisode(episode.id).url,alternatives:episode.alternatives.map(option=>({...option,page:ownedMediaForEpisode(option.id).url}))}));
+const copied=await(await api('get_series_info',{series_id:owned.series_id})).json();
+assert.deepEqual(copied.episodes['1'].map(episode=>episode.id),oldIds);
+assert.equal(JSON.stringify(copied).includes('.chatgpt.site'),false);
+for(const episode of copied.episodes['1']){
+ assert.equal(episode.container_extension,'mp4');assert.equal(new URL(episode.direct_source).pathname.endsWith('.mp4'),true);
+ const response=await play(episode,'mp4');assert.equal(response.status,200);await response.body?.cancel();
+}
 console.log('PASS: owned Disney series Xtream folder reuse, one real season with eight labelled choices, strict client metadata, stable identities, GET/POST filters, all source selections, current visibility/permissions, parent isolation and zero provider playback.');

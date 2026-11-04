@@ -1,0 +1,226 @@
+[
+  {
+    "id": "empress-s1e1-es",
+    "episode": 1,
+    "option": 1,
+    "language": "Español",
+    "size": 413371571,
+    "sha256": "5ffc1bca2e8bda3d2625089bacd193e96e4c99d7d93389a0e4029cb1ca7efd0f",
+    "durationSeconds": 2981.568,
+    "fileName": "Emperatriz-T1E01-ES.mp4",
+    "exclusiveId": "empress-2026-s1e1-es",
+    "rangeSamples": [
+      {
+        "start": 0,
+        "length": 4096,
+        "sha256": "d4f646edda4e4a1f7b668c628d625c3747a17f19f7270ee05304a3ef2148cf9b"
+      },
+      {
+        "start": 206685785,
+        "length": 4096,
+        "sha256": "ac0ccefaf6a25989628f6062916a00ac2fa4b587b31b3d00404293704d97b12a"
+      },
+      {
+        "start": 413367475,
+        "length": 4096,
+        "sha256": "5926a7c5890716c03f5e8d2e4a08da8f602ebc6fdbb350a32deeead21c477057"
+      }
+    ]
+  },
+  {
+    "id": "empress-s1e1-subes",
+    "episode": 1,
+    "option": 2,
+    "language": "Coreano subtitulado",
+    "size": 446670823,
+    "sha256": "b46e94dce3e481fedbc520a8d989c64004937c02765b6ba1419332c49660e4d6",
+    "durationSeconds": 3064.035556,
+    "fileName": "Emperatriz-T1E01-SUB.mp4",
+    "exclusiveId": "empress-2026-s1e1-subes",
+    "rangeSamples": [
+      {
+        "start": 0,
+        "length": 4096,
+        "sha256": "98500b252781f64fa5922df55ca86d18db346f15e5c6ccdff4eda356fce1c473"
+      },
+      {
+        "start": 223335411,
+        "length": 4096,
+        "sha256": "155a0f1b383e102e6e770e9edd08e579940c90636db6765772a3cb3795b85e45"
+      },
+      {
+        "start": 446666727,
+        "length": 4096,
+        "sha256": "1f7c55ab58298f0783abccf151e91accf02ebcec660eb284c7043432fb207302"
+      }
+    ]
+  },
+  {
+    "id": "empress-s1e2-es",
+    "episode": 2,
+    "option": 1,
+    "language": "Español",
+    "size": 476673169,
+    "sha256": "60a39c944447b50816a9df0b54eb29a5b9588ad0a0b495e00d2b5afaf3ae1457",
+    "durationSeconds": 3451.808,
+    "fileName": "Emperatriz-T1E02-ES.mp4",
+    "exclusiveId": "empress-2026-s1e2-es",
+    "rangeSamples": [
+      {
+        "start": 0,
+        "length": 4096,
+        "sha256": "7c25a056d5d20af14bd3b2d0576fbb3ea469095c0f7e985a6b03c8798f79833a"
+      },
+      {
+        "start": 238336584,
+        "length": 4096,
+        "sha256": "1163c266d95f9132955728f912ae799a5f438461832f3c5576dc6e65a710f3e8"
+      },
+      {
+        "start": 476669073,
+        "length": 4096,
+        "sha256": "1d90b9c8f8da1787f9856702ad0c4d0c77dd6d0ebb5d9bd2bec7e5177b0caab2"
+      }
+    ]
+  },
+  {
+    "id": "empress-s1e2-subes",
+    "episode": 2,
+    "option": 2,
+    "language": "Coreano subtitulado",
+    "size": 480798333,
+    "sha256": "ab98f22013b60d3bdc265f6162dd80a7faf7ec4e0402e9285025bc28edd25fe6",
+    "durationSeconds": 3534.262857,
+    "fileName": "Emperatriz-T1E02-SUB.mp4",
+    "exclusiveId": "empress-2026-s1e2-subes",
+    "rangeSamples": [
+      {
+        "start": 0,
+        "length": 4096,
+        "sha256": "9b3b075a2e526bafc357458beb8ec6c48baf4cfb8bd862407bcb5a8a916a7a5d"
+      },
+      {
+        "start": 240399166,
+        "length": 4096,
+        "sha256": "33464e774014dd837573c243d8deaa996bcd134ae4cde43a5465271139e4a1ee"
+      },
+      {
+        "start": 480794237,
+        "length": 4096,
+        "sha256": "564d9e6e5cc8551bb072982c2b6818420fa84d096ba35be2e15a42b67fda435d"
+      }
+    ]
+  },
+  {
+    "id": "empress-s1e3-es",
+    "episode": 3,
+    "option": 1,
+    "language": "Español",
+    "size": 444357562,
+    "sha256": "35efdaa84482f65b0afaf7dbfb99c0419db49100f0c29ed85581cf6b572d0a89",
+    "durationSeconds": 3184.8,
+    "fileName": "Emperatriz-T1E03-ES.mp4",
+    "exclusiveId": "empress-2026-s1e3-es",
+    "rangeSamples": [
+      {
+        "start": 0,
+        "length": 4096,
+        "sha256": "57b1f323ef61ca09c4a83404518390fad62c9610b44bc41709d81f10addb0e20"
+      },
+      {
+        "start": 222178781,
+        "length": 4096,
+        "sha256": "5d833948e0724f9b69453684af107451dec97971dbbad602463a28e341abd35e"
+      },
+      {
+        "start": 444353466,
+        "length": 4096,
+        "sha256": "25d9b821e975f631d5aff84aaf28b12761184cc820cdf6bb6b5d7c7ce964757f"
+      }
+    ]
+  },
+  {
+    "id": "empress-s1e3-subes",
+    "episode": 3,
+    "option": 2,
+    "language": "Coreano subtitulado",
+    "size": 463303215,
+    "sha256": "29a41bcf94023ea7833f6b5014725cbdb1bf05663e10b69afa36f91cc1e4f263",
+    "durationSeconds": 3267.256599,
+    "fileName": "Emperatriz-T1E03-SUB.mp4",
+    "exclusiveId": "empress-2026-s1e3-subes",
+    "rangeSamples": [
+      {
+        "start": 0,
+        "length": 4096,
+        "sha256": "3db7c4c930cc79742299c5130b07499087a12bd85a9f086a87528a0036561702"
+      },
+      {
+        "start": 231651607,
+        "length": 4096,
+        "sha256": "f2a3a05f7afdb075e99be3dfce0fd1b5c362736fa94d93c022008e45fdc21ffd"
+      },
+      {
+        "start": 463299119,
+        "length": 4096,
+        "sha256": "b556be7de0fef8c0ce60537df072581049abc7b172540217193401f6473191ee"
+      }
+    ]
+  },
+  {
+    "id": "empress-s1e4-es",
+    "episode": 4,
+    "option": 1,
+    "language": "Español",
+    "size": 421336144,
+    "sha256": "b8a8bc81f87a90ad66ae448b40c1fdd39ba57a258707d617902840b107e9a043",
+    "durationSeconds": 3090.786322,
+    "fileName": "Emperatriz-T1E04-ES.mp4",
+    "exclusiveId": "empress-2026-s1e4-es",
+    "rangeSamples": [
+      {
+        "start": 0,
+        "length": 4096,
+        "sha256": "df850330bad3d945af3ef025c6538bc9b56f40d3cba8a29bc0d0ad1d5a889b9c"
+      },
+      {
+        "start": 210668072,
+        "length": 4096,
+        "sha256": "d040e6ede480c82e47ff711af6753f64b46a771ebde5f76d1ad0c1cde1985944"
+      },
+      {
+        "start": 421332048,
+        "length": 4096,
+        "sha256": "74bd2c195f11e993f67b10a301cb21d64455da06d85d3cbc6798d1908f0c4ee6"
+      }
+    ]
+  },
+  {
+    "id": "empress-s1e4-subes",
+    "episode": 4,
+    "option": 2,
+    "language": "Coreano subtitulado",
+    "size": 450076734,
+    "sha256": "bed8c5a7dbc9f46882c3832726940fc0de84e8531281d586a32e832f641d88e3",
+    "durationSeconds": 3177.209615,
+    "fileName": "Emperatriz-T1E04-SUB.mp4",
+    "exclusiveId": "empress-2026-s1e4-subes",
+    "rangeSamples": [
+      {
+        "start": 0,
+        "length": 4096,
+        "sha256": "0136feffa6066f35d611d9034523a45b888af5eed85831c063737c718c8b87a2"
+      },
+      {
+        "start": 225038367,
+        "length": 4096,
+        "sha256": "438a9b255f684a01ae74dea525655c1d97052a82d259079154ebf2f15d9634d7"
+      },
+      {
+        "start": 450072638,
+        "length": 4096,
+        "sha256": "543d69c423d655a20930e6d43f72f23ff6d99c3aed0c94e565db8995a93cd440"
+      }
+    ]
+  }
+]

@@ -1,4 +1,5 @@
 import {isAdult} from './content-permissions.mjs';
+import {isOwnedMediaSeries} from './owned-media-source.mjs';
 
 // The registry namespace is independent of CCF and of existing exclusives.
 // Four real episodes are exposed as eight explicitly labelled source choices.
@@ -8,7 +9,7 @@ export const EXCLUSIVE_SERIES_CATEGORY='SERIES-DISNEY';
 const SERIES_UPSTREAM_ID='1',CATEGORY_UPSTREAM_ID='1';
 const normal=value=>String(value||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[\s_-]+/g,'').toUpperCase();
 const disney=row=>normal(row.category_name)==='SERIESDISNEY';
-const visible=(row,permissions)=>!!(row?.id===EXCLUSIVE_SERIES_ID&&row.type==='series'&&row.mode==='gnula'&&row.year===2026&&row.visible&&permissions.series&&(permissions.adults||!row.adult&&!isAdult(row)));
+const visible=(row,permissions)=>!!(row?.id===EXCLUSIVE_SERIES_ID&&row.type==='series'&&(row.mode==='gnula'||isOwnedMediaSeries(row))&&row.year===2026&&row.visible&&permissions.series&&(permissions.adults||!row.adult&&!isAdult(row)));
 const image=(value,base)=>typeof value==='string'?(value.startsWith('/')?base+value:value):'';
 const duration=value=>Number.isFinite(value)&&value>0&&value<=43200?Math.floor(value):0;
 const clock=value=>[Math.floor(value/3600),Math.floor(value%3600/60),value%60].map(n=>String(n).padStart(2,'0')).join(':');
@@ -54,11 +55,11 @@ export function createExclusiveSeriesXtream({read,prepare,media},env,ctx){
    const {record,auth,base,register}=input;
    if(record.kind!=='series_list'||record.upstreamId!==SERIES_UPSTREAM_ID)return Response.json({error:'not_found'},{status:404});
    const row=await current(auth.user.permissions);if(!row)return Response.json({error:'title_not_allowed'},{status:404});
-   const entries=choices(row),cover=image(row.poster,base),category=await categoryId({...input,action:'get_series_info'});
-   const ids=await register(entries.map(choice=>({kind:'episode',server:EXCLUSIVE_SERIES_SERVER,upstreamId:choice.upstreamId,parentId:SERIES_UPSTREAM_ID,ext:'m3u8',activity:{title:choice.title,seriesTitle:row.name,season:1,episode:choice.number}})));
+   const entries=choices(row),cover=image(row.poster,base),category=await categoryId({...input,action:'get_series_info'}),ext=isOwnedMediaSeries(row)?'mp4':'m3u8';
+   const ids=await register(entries.map(choice=>({kind:'episode',server:EXCLUSIVE_SERIES_SERVER,upstreamId:choice.upstreamId,parentId:SERIES_UPSTREAM_ID,ext,activity:{title:choice.title,seriesTitle:row.name,season:1,episode:choice.number}})));
    const episodes=entries.map((choice,index)=>{
     const seconds=duration(choice.metadata.durationSeconds),poster=image(choice.metadata.poster||row.poster,base);
-    return {id:String(ids[index]),episode_num:choice.number,title:choice.title,container_extension:'m3u8',season:1,added:String(Math.floor((row.createdAt||0)/1000)),custom_sid:'',direct_source:base+'/series/'+encodeURIComponent(auth.username)+'/'+encodeURIComponent(auth.password)+'/'+ids[index]+'.m3u8',info:{movie_image:poster,plot:choice.metadata.plot||row.plot||'',duration_secs:seconds,duration:clock(seconds),releasedate:'2026-11-03',rating:0},smn_profile:{type:'series',id:row.id,server:row.profileServer,episodeId:choice.id}};
+    return {id:String(ids[index]),episode_num:choice.number,title:choice.title,container_extension:ext,season:1,added:String(Math.floor((row.createdAt||0)/1000)),custom_sid:'',direct_source:base+'/series/'+encodeURIComponent(auth.username)+'/'+encodeURIComponent(auth.password)+'/'+ids[index]+'.'+ext,info:{movie_image:poster,plot:choice.metadata.plot||row.plot||'',duration_secs:seconds,duration:clock(seconds),releasedate:'2026-11-03',rating:0},smn_profile:{type:'series',id:row.id,server:row.profileServer,episodeId:choice.id}};
    });
    const info={name:row.name,cover,plot:row.plot||'',cast:'Shin Mina, Ju Jihoon, Lee Jongsuk, Lee Seyoung',director:'Cho Suwon',genre:'Drama, Romance, Fantasía',releaseDate:'2026-11-03',release_date:'2026-11-03',year:2026,last_modified:String(Math.floor((row.updatedAt||row.createdAt||0)/1000)),rating:'0',rating_5based:0,backdrop_path:[],youtube_trailer:'',episode_run_time:'',category_id:category};
    return Response.json({info,seasons:episodes.length?[{season_number:1,id:1,name:'Temporada 1',episode_count:episodes.length,air_date:'2026-11-03',overview:row.plot||'',cover,cover_big:cover}]:[],episodes:episodes.length?{'1':episodes}:{}});
@@ -68,7 +69,7 @@ export function createExclusiveSeriesXtream({read,prepare,media},env,ctx){
    if(record.kind!=='episode'||record.parentId!==SERIES_UPSTREAM_ID)return Response.json({error:'not_found'},{status:404});
    const row=await current(auth.user.permissions),choice=row&&choices(row).find(item=>item.upstreamId===record.upstreamId);
    if(!choice)return Response.json({error:'title_not_allowed'},{status:404});
-   if(record.ext!=='m3u8')return Response.json({error:'invalid_stream'},{status:400});
+   if(record.ext!=='m3u8'&&!(isOwnedMediaSeries(row)&&record.ext==='mp4'))return Response.json({error:'invalid_stream'},{status:400});
    const prepared=await prepare(request,env,auth.session,choice.id);
    try{return await media(new Request(prepared.url,request),env,ctx);}
    catch(error){await prepared.release?.();throw error;}

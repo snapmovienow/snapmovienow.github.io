@@ -3,6 +3,7 @@ import {GNULA_CATALOG} from './exclusive-seed.mjs';
 import {supportedSourcePage} from './gnula-source.mjs';
 import {isAdult} from './content-permissions.mjs';
 import {writeAudit} from './security.mjs';
+import {ownedMediaDescriptor} from './owned-media-source.mjs';
 const INDEX='exclusive:index',ITEM='exclusive:item:',COVER='exclusive:cover:',MAX_ITEMS=300;
 export const exclusiveId=value=>typeof value==='string'&&/^[a-z0-9][a-z0-9_-]{1,150}$/.test(value);
 const fail=(code='exclusive_input',status=400)=>{throw Object.assign(Error(code),{status})};
@@ -11,7 +12,7 @@ export function exclusiveURL(value,{poster=false}={}){
  if(typeof value!=='string'||value.length>2048||/[\u0000-\u0020\\]/.test(value))fail('exclusive_url');
  let u;try{u=new URL(value.startsWith('//')?'https:'+value:value)}catch{fail('exclusive_url')}
  const host=u.hostname.toLowerCase();
- if(u.protocol!=='https:'||u.username||u.password||u.port&&u.port!=='443'||u.hash||!host.includes('.')||! /^[a-z0-9.-]+$/.test(host)||/^\d+(?:\.\d+)*$/.test(host)||host.includes('..')||/(?:^|\.)(?:localhost|local|internal|test|invalid|example|onion)$/.test(host)||/(?:^|\.)(?:nip\.io|sslip\.io|localtest\.me|metadata\.google\.internal)$/.test(host)||host==='api.snaptvnow.com'||host.endsWith('.chatgpt.site'))fail('exclusive_url');
+ if(u.protocol!=='https:'||u.username||u.password||u.port&&u.port!=='443'||u.hash||!host.includes('.')||! /^[a-z0-9.-]+$/.test(host)||/^\d+(?:\.\d+)*$/.test(host)||host.includes('..')||/(?:^|\.)(?:localhost|local|internal|test|invalid|example|onion)$/.test(host)||/(?:^|\.)(?:nip\.io|sslip\.io|localtest\.me|metadata\.google\.internal)$/.test(host)||host==='api.snaptvnow.com'||host.endsWith('.chatgpt.site')&&!ownedMediaDescriptor(u.href))fail('exclusive_url');
  return u.href;
 }
 function address(value,mode){const url=exclusiveURL(value);if(mode==='gnula'&&!supportedSourcePage(new URL(url)))fail('exclusive_source');if(mode==='direct'&&!/\.(?:m3u8|mp4|mkv|webm|m4v|mov)$/i.test(new URL(url).pathname))fail('exclusive_source');return url;}
