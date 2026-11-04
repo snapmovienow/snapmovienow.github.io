@@ -41,7 +41,7 @@ export async function traceRequest(req, handler, {logger = console.error, now = 
         request_id: requestId, ray_id: rayId(req.headers.get('CF-Ray')),
         route: routeGroup(new URL(req.url).pathname),
         method: ['GET', 'HEAD', 'POST', 'OPTIONS'].includes(req.method) ? req.method : 'other',
-        status: response.status,...(mediaFailure?{media_failure:mediaFailure}:{}),...(portalFailure?{portal:portalFailure}:{}), elapsed_ms: elapsedMs, version: SERVICE_VERSION,...(trace.type?{playback:trace.snapshot(response.status,errorCode)}:{})});
+        status: response.status,...(fastMediaEvent?{diagnostic:'fast_media_failure'}:{}),...(mediaFailure?{media_failure:mediaFailure}:{}),...(portalFailure?{portal:portalFailure}:{}), elapsed_ms: elapsedMs, version: SERVICE_VERSION,...(trace.type?{playback:trace.snapshot(response.status,errorCode)}:{})});
     } catch { /* Diagnostics cannot interrupt a response. */ }
   }
   if(trace.type&&onTiming)try{onTiming(trace.snapshot(response.status,errorCode))}catch{} // Optional, off the playback path.

@@ -13,6 +13,7 @@
     "cpu_ms": 120000
   },
   "vars": {
+    "FAST_MEDIA_FAILURE_LOGS_ENABLED": "true",
     "CATALOG_MAINTENANCE_ENABLED": "true",
     "PLAYBACK_CANARY_USERNAME": "dieguito2026",
     "PLAYBACK_CANARY_ENABLED": "true",
