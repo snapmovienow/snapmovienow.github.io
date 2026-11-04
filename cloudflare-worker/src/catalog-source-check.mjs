@@ -34,11 +34,22 @@ export async function inspectCatalogSource(media,{fetcher=fetch,resolver=resolve
     return {ok:true,check:'media_bytes'};
    }
    const text=new TextDecoder().decode(await readSmall(response,1000000));if(!text.trimStart().startsWith('#EXTM3U'))throw Error('invalid_playlist');
-   const lines=text.split(/\r?\n/).map(line=>line.trim()),first=lines.findIndex(line=>line&&!line.startsWith('#')),child=lines[first];if(!child)throw Error('media_empty');
-   const destination=new URL(exclusiveURL(new URL(child.trim(),source).href));if(options.allowed?!options.allowed(destination):destination.origin!==origin)throw Error('media_origin_changed');
-   if(text.includes('#EXT-X-STREAM-INF')){source=destination.href;continue;}
-   for(const match of lines.slice(0,first).join('\n').matchAll(/#EXT-X-(?:KEY|MAP):[^\n]*URI="([^"]+)"/g)){
-    const resource=new URL(exclusiveURL(new URL(match[1],source).href));const {response:extra}=await request(resource.href,origin,options,empress?undefined:'bytes=0-2047');
+   const lines=text.split(/\r?\n/).map(line=>line.trim()),entries=lines.flatMap((line,index)=>line&&!line.startsWith('#')?[{line,index}]:[]),master=text.includes('#EXT-X-STREAM-INF');
+   // Live players normally start near the current edge. Inspect that same
+   // position instead of an old segment whose stitched advertisement expired.
+   // Selection is positional: advertisements receive no special treatment.
+   const selected=entries[master||lines.includes('#EXT-X-ENDLIST')?0:Math.max(0,entries.length-3)];if(!selected)throw Error('media_empty');
+   const destination=new URL(exclusiveURL(new URL(selected.line,source).href));if(options.allowed?!options.allowed(destination):destination.origin!==origin)throw Error('media_origin_changed');
+   if(master){source=destination.href;continue;}
+   const active=new Map();
+   for(const line of lines.slice(0,selected.index)){
+    if(line.startsWith('#EXT-X-KEY:')){
+     if(/(?:^|,)\s*METHOD=NONE\s*(?:,|$)/.test(line.slice('#EXT-X-KEY:'.length)))active.delete('key');else active.set('key',line);
+    }else if(line.startsWith('#EXT-X-MAP:'))active.set('map',line);
+   }
+   for(const line of active.values()){
+    const uri=line.slice(line.indexOf(':')+1).match(/(?:^|,)\s*URI="([^"]+)"/);if(!uri)throw Error('invalid_playlist');
+    const resource=new URL(exclusiveURL(new URL(uri[1],source).href));const {response:extra}=await request(resource.href,origin,options,empress?undefined:'bytes=0-2047');
     if(/text\/html/i.test(extra.headers.get('content-type')||'')){await extra.body?.cancel();throw Error('media_not_video');}
     if((await readSmall(extra,2048)).length<16)throw Error('media_empty');
    }

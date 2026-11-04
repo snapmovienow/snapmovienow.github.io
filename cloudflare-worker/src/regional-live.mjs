@@ -162,20 +162,62 @@ export const REGIONAL_CHANNELS=[
 const fail=()=>{throw Error('official_live_unavailable')};
 const decode=value=>value.replace(/&quot;/g,'"').replace(/&#(?:0*39|x0*27);/gi,"'").replace(/&amp;/g,'&');
 const adVideo=u=>/^rr\d+---sn-[a-z0-9-]+\.googlevideo\.com$/.test(u.hostname)&&u.pathname.startsWith('/videoplayback/');
+const NBCU_ACCOUNT='3fec3e5cac39a52b2132f9c66c83dae043dc17d4';
+const NBCU_ROUTES=[{field:'m3u8_url',host:'d2kowtvrzzi7ps.cloudfront.net',root:'11602',playout:'prod_default_nbc'},{field:'national_m3u8_url',host:'d368vp0qqzvkid.cloudfront.net',root:'11603',playout:'prod_default_nbc-direct'}];
 export function regionalMediaAllowed(channel,u){
- if(channel.adapter==='nbcu-fast')return u.hostname==='d2kowtvrzzi7ps.cloudfront.net'&&(u.pathname.startsWith('/11602/'+channel.streamId+'/hls/')||/^\/manifest\/[a-f0-9]{40}\/prod_default_nbc\/[a-f0-9-]{36}\//.test(u.pathname)||/^\/segment\/[a-f0-9]{40}\/prod_default_nbc\//.test(u.pathname))||u.hostname===channel.mediaHost&&u.pathname.startsWith('/live/');
+ if(!u||u.protocol!=='https:'||u.username||u.password||u.port||u.hash)return false;
+ if(channel.adapter==='nbcu-fast'){if(/%(?:0[0-9a-f]|1[0-9a-f]|7f|2e|2f|5c)/i.test(u.pathname))return false;return NBCU_ROUTES.some(route=>u.hostname===route.host&&(u.pathname.startsWith('/'+route.root+'/'+channel.streamId+'/hls/')||new RegExp('^/manifest/'+NBCU_ACCOUNT+'/'+route.playout+'/[a-f0-9-]{36}/').test(u.pathname)||u.pathname.startsWith('/segment/'+NBCU_ACCOUNT+'/'+route.playout+'/')))||u.hostname===channel.mediaHost&&u.pathname.startsWith('/live/');}
  if(channel.adapter==='cbs-local')return u.hostname==='dai.google.com'&&(u.pathname.startsWith('/linear/hls/')&&u.pathname.includes('/event/'+channel.event+'/')||u.pathname.startsWith('/linear/pods/v1/p/'+channel.event+'/'))||u.hostname===channel.mediaHost&&(u.pathname.startsWith('/live/')||u.pathname.startsWith('/ad/seg/videoplayback/'))||adVideo(u);
  return false;
 }
 export function forgetRegionalLive(channel,options={}){return forgetPublicLiveDescriptor('regional:'+channel.page,options);}
+function nbcuRoot(channel,value,route){
+ try{
+  const u=new URL(value);if(u.protocol!=='https:'||u.username||u.password||u.port||u.hash||u.hostname!==route.host||u.pathname!=='/'+route.root+'/'+channel.streamId+'/hls/master.m3u8'||u.href.length>=16384)return null;
+  // These public page descriptors contain only advertising metadata. Playback
+  // session/signature URLs are neither selected nor persisted in this cache.
+  for(const key of u.searchParams.keys())if(!/^ads\.[A-Za-z0-9_]+$/.test(key)||/(?:^|[._-])(?:token|session|signature|expires|sig|exp)(?:$|[._-])/i.test(key))return null;
+  return u.href;
+ }catch{return null;}
+}
+async function nbcuDescriptor(channel,options){
+ const found=new Map();let sawNational=false;
+ const parse=text=>{
+  const html=decode(text);
+  for(const route of NBCU_ROUTES){
+   const pattern=new RegExp('"'+route.field+'"\\s*:\\s*("(?:\\\\.|[^"\\\\])*")','g');
+   for(const match of html.matchAll(pattern)){
+    if(route.field==='national_m3u8_url')sawNational=true;
+    let value;try{value=nbcuRoot(channel,JSON.parse(match[1]),route);}catch{continue;}
+    if(value&&!found.has(route.field))found.set(route.field,value);
+   }
+  }
+  // Both fields may arrive in separate chunks. Older station pages that have
+  // only the primary field are accepted after the bounded page read completes.
+  return sawNational&&found.size?[...NBCU_ROUTES.map(route=>found.get(route.field)).filter(Boolean)]:null;
+ };
+ let choices;
+ try{choices=await readPublicLiveDescriptor(channel.page,parse,options);}catch(error){
+  if(options.signal?.aborted||!found.size)throw error;
+  choices=NBCU_ROUTES.map(route=>found.get(route.field)).filter(Boolean);
+ }
+ for(const url of choices){
+  if(options.signal?.aborted)throw options.signal.reason||Error('playback_superseded');
+  try{
+   // Probe the public master without Range or redirect following. Only the
+   // stable master URL is cached for 60s; no manifest, session or bytes are kept.
+   await readPublicLiveDescriptor(url,text=>{const value=text.trimStart();return value.startsWith('#EXTM3U')&&/#EXT(?:-X-STREAM-INF|INF):/.test(value)?true:null;},{...options,maxBytes:262144});
+   return url;
+  }catch(error){if(options.signal?.aborted)throw error;}
+ }
+ fail();
+}
 export async function resolveRegionalLive(channel,options={}){
- const url=await publicLiveDescriptor('regional:'+channel.page,()=>readPublicLiveDescriptor(channel.page,text=>{
-  const html=decode(text),field=channel.adapter==='nbcu-fast'?'m3u8_url':'video';
-  const pattern=new RegExp('"'+field+'"\\s*:\\s*("(?:\\\\.|[^"\\\\])*")','g');
+ const url=await publicLiveDescriptor('regional:'+channel.page,()=>channel.adapter==='nbcu-fast'?nbcuDescriptor(channel,options):readPublicLiveDescriptor(channel.page,text=>{
+  const html=decode(text),pattern=new RegExp('"video"\\s*:\\s*("(?:\\\\.|[^"\\\\])*")','g');
   for(const m of html.matchAll(pattern)){
    let u;try{u=new URL(JSON.parse(m[1]))}catch{continue}
-   if(channel.adapter==='nbcu-fast'&&u.protocol==='https:'&&u.hostname==='d2kowtvrzzi7ps.cloudfront.net'&&u.pathname==='/11602/'+channel.streamId+'/hls/master.m3u8')return u.href;
-   if(channel.adapter==='cbs-local'&&u.protocol==='https:'&&u.hostname==='dai.google.com'&&u.pathname==='/linear/hls/event/'+channel.event+'/master.m3u8')return u.href;
+   if(u.protocol==='https:'&&u.hostname==='dai.google.com'&&u.pathname==='/linear/hls/event/'+channel.event+'/master.m3u8')return u.href;
   }return null;
  },options),options);
  if(!regionalMediaAllowed(channel,new URL(url)))fail();return {url,officialPage:channel.page};

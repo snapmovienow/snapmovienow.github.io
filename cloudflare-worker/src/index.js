@@ -14,6 +14,10 @@ import {selectExclusive,visibleExclusive} from './exclusive-catalog.mjs';
 import {createExclusiveService} from './exclusive-service.mjs';
 import {ownedVerificationEnabled,runOwnedMediaVerification} from './owned-media-verification.mjs';
 import {createOwnedMediaBootstrap} from './owned-media-bootstrap.mjs';
+import {createLocalTvAudit,LOCAL_AUDIT_KEY,localAuditEnabled} from './local-tv-audit.mjs';
+import {probeLocalChannel} from './local-channel-probe.mjs';
+import {REGIONAL_CHANNELS} from './regional-live.mjs';
+import {inspectCatalogSource} from './catalog-source-check.mjs';
 import {GNULA_CATALOG} from './exclusive-seed.mjs';
 import {resolveGnula,allowedGnula} from './gnula-source.mjs';
 import {publicHealthSnapshot} from './public-health.mjs';
@@ -81,7 +85,30 @@ async function unticket(env,t){try{if(!env.TICKET_SECRET)return null;const raw=u
 
 export class PlaybackSession {
  constructor(state,env){this.state=state;this.env=env}
+ localAudit(){
+  const ctx={waitUntil:p=>this.state.waitUntil?.(p)},request=request=>traceRequest(request,trace=>handleRequest(request,this.env,ctx,trace));
+  const adapter=ownPlaybackCanaryAdapter({env:this.env,storage:this.state.storage,directory,ownSession,ticket,sessionCall,request});
+  return createLocalTvAudit(this.state.storage,this.env,{
+   inventory:async()=>{
+    let data=await exclusives.read(this.env);const channel=REGIONAL_CHANNELS.find(channel=>channel.id==='local-telemundo-noreste');
+    // The owner approved adding this feed. Reuse an existing entry and never
+    // overwrite owner edits or visibility. Add only when genuinely absent.
+    if(localAuditEnabled(this.env)&&!data.items.some(row=>row.id===channel.id||row.page===channel.page)){
+     const inspected=await inspectCatalogSource({mode:'gnula',page:channel.page},{signal:AbortSignal.timeout(18000)});
+     if(inspected.ok){const item={id:channel.id,type:'movie',name:channel.name,source:'TV LOCAL OFICIAL',mode:'gnula',page:channel.page,poster:channel.poster,plot:channel.plot,year:null,visible:true,adult:false,episodes:[]};const saved=await directory(this.env,'/exclusive-save',{item,revision:0,actor:'owner-local-tv-review-20261104'});await saved.body?.cancel();data=await exclusives.read(this.env);}
+    }
+    return data;
+   },
+   probe:(row,options)=>probeLocalChannel(row,options,{
+    authenticate:signal=>adapter.authenticate({username:this.env.PLAYBACK_CANARY_USERNAME},{signal}),
+    prepare:(session,row,signal)=>exclusives.prepare(new Request('https://api.snaptvnow.com/',{signal}),this.env,session,row.id,{live:true,localRow:row,localStartedAt:Date.now()}),
+    request,release:session=>adapter.release(session)
+   })
+  });
+ }
  async fetch(req){const path=new URL(req.url).pathname;
+ if(path==='/local-tv-audit-start')return Response.json(await this.localAudit().start());
+ if(path==='/local-tv-audit-status')return Response.json(await this.localAudit().status());
  if(path==='/empress-origin-diagnostic-resource')return diagnosticResource(this.env,await req.json(),{unticket});
  if(path==='/empress-origin-diagnostic-run'){
   if(!diagnosticEnabled(this.env))return Response.json({error:'diagnostic_disabled'},{status:403});
@@ -131,7 +158,7 @@ export class PlaybackSession {
  if(path==="/logout"){await this.state.storage.deleteAll();return new Response("ok")}
  if(path==='/ensure'){const {exp,identity,sid}=await req.json(),oldExp=await this.state.storage.get('exp'),old=await this.state.storage.get('identity');if(oldExp>Date.now()&&old?.uid===identity.uid&&old.version===identity.version&&old.xtreamVersion===identity.xtreamVersion)return Response.json({exp:oldExp});await this.state.storage.put('exp',exp);if(sid)await this.state.storage.put('sid',sid);await this.state.storage.put('identity',identity);await this.state.storage.setAlarm(exp);return Response.json({exp})}
  const exp=await this.state.storage.get("exp");const identity=await this.state.storage.get("identity");if(identity&&!(await directory(this.env,"/check",identity)).ok)return new Response("Inactive",{status:401});if(path.startsWith('/owner-access/'))return ownerAccessState(this.state.storage,path,await req.json(),exp,identity?.admin===true);return new Response(exp>Date.now()?"ok":"expired",{status:exp>Date.now()?200:401})}
- async alarm(){const sid=await this.state.storage.get("sid");if(sid)await directory(this.env,"/release-session",{sid});await this.state.storage.deleteAll()}
+ async alarm(){if(await this.state.storage.get(LOCAL_AUDIT_KEY)){await this.localAudit().step();return;}const sid=await this.state.storage.get("sid");if(sid)await directory(this.env,"/release-session",{sid});await this.state.storage.deleteAll()}
 }
 function envCanaryAllowed(env,config){return env.ENVIRONMENT!=='staging'&&!!env.PLAYBACK_CANARY_USERNAME&&String(config?.username||'').toLowerCase()===String(env.PLAYBACK_CANARY_USERNAME).toLowerCase()&&['live','movie','series'].includes(config?.type)}
 async function sessionCall(env,sid,path,body){if(!env.PLAYBACK_SESSIONS||!sid)return new Response("Unauthorized",{status:401});return env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName(sid)).fetch("https://session"+path,{method:body?"POST":"GET",...(body?{body:JSON.stringify({...body,sid})}:{})})}
@@ -348,6 +375,11 @@ async function serverStreamDirect(req,env,u,ctx,trace){
 }
 
 const ownedMediaBootstrap=createOwnedMediaBootstrap();
+let localAuditQueued=false;
+function localAuditBootstrap(env,ctx){
+ if(localAuditQueued||!ctx?.waitUntil||!env.PLAYBACK_SESSIONS||!localAuditEnabled(env))return;localAuditQueued=true;
+ ctx.waitUntil(env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_local_tv_audit_20261104_v1')).fetch('https://private/local-tv-audit-start',{method:'POST',body:'{}'}).then(response=>response.body?.cancel()).catch(()=>console.error({event:'local_tv_audit_start',reason:'unavailable'})));
+}
 const exclusives=createExclusiveService({directory,sessionCall,ticket,unticket,resolveGnula,requestConnectionClient,guardXtreamResponse});
 const catalogDeps={exclusives,directory,registry,sessionCall,ticket,managedPlayback,serverStream,json,catalogCredentials:async(env,server,ctx)=>(await catalogCredentials(env,server,ctx,3)).map(p=>({...p,origin:p.origin||ORIGIN}))};
 const xtreamRequest=createXtreamBridge(catalogDeps);
@@ -373,6 +405,9 @@ if(req.method==="OPTIONS")return new Response(null,{status:204,headers:cors});
 if(u.pathname==='/bounded-ts-diagnostic'&&req.method==='POST')return boundedTsRoute(req,env,ctx,{unticket,cookieToken,sessionCall,directory,registry,validatedMediaTarget,catalog:(env,ctx)=>createProviderCatalog(catalogDeps,env,ctx)});
 if(u.pathname==="/health")return json({ok:true,service:"snapmovienow-edge",version:SERVICE_VERSION,...await publicHealthSnapshot(env),capabilities:['reseller-service-monitor-v1','xtream','admin-recovery-renewal','backup-integrity','native-profile','metric-retry','admin-credentials-rotation','isolated-backup-recovery','xtream-series-diagnostic','operational-alerts','rotating-media-origins','admin-user-activity','admin-user-comments','reseller-bridge-v1','private-media-diagnostics-v1','live-startup-budget-v1','native-playback-release-v1','viewer-provider-affinity-v1','persistent-provider-assignment-v1','vod-startup-budget-v1','hedged-detail-catalog-v1','first-media-byte-check-v1','playback-stage-timings-v1','provider-circuit-recovery-v1','own-account-playback-canary-v1','performance-release-gate-v1','bounded-catalog-lookups-v1','shared-provider-validation-v1','customer-priority-playback-v1','indexed-playback-policy-v1','owner-playback-comparison-v1','pelisflix-voe-v1','official-local-tv-v1','private-owned-media-v1']});
 if(u.pathname==='/reseller-bridge')return resellerBridgeRequest(req,env,ctx);
+if(u.pathname==='/local-tv-health'&&req.method==='GET'){
+ try{return json(await (await env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_local_tv_audit_20261104_v1')).fetch('https://private/local-tv-audit-status')).json());}catch{return json({state:'unavailable'},503)}
+}
 // Read-only feature health: no titles, sources, tickets or customer data.
 if(u.pathname==='/exclusive-owned-health'&&req.method==='GET'){
  try{const [connected,verified]=await Promise.all([directory(env,'/owned-media-status'),env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_owned_media_verification_20261104')).fetch('https://private/owned-media-verification-status')]);return json({...await connected.json(),verification:await verified.json()});}catch{return json({connected:false,verification:{state:'unavailable'}},503)}
@@ -474,11 +509,12 @@ const x=new URL(ORIGIN+"/player_api.php");x.searchParams.set("username",String(b
 export default {scheduled(event,env,ctx){
  if(env.ENVIRONMENT==='staging')return;
  ownedMediaBootstrap(env,ctx);
+ localAuditBootstrap(env,ctx);
  if(event.cron===MONITOR_CRON&&diagnosticEnabled(env))ctx.waitUntil(env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_empress_diagnostic_20261104')).fetch('https://private/empress-origin-diagnostic-run',{method:'POST',body:'{}'}).then(r=>r.body?.cancel()).catch(()=>console.error({event:'empress_origin_diagnostic',reason:'diagnostic_unavailable'})));
  if(event.cron===MONITOR_CRON){ctx.waitUntil(directory(env,'/service-monitor-sample').then(r=>r.body?.cancel()).catch(()=>console.error({event:'service_monitor_sample_failed'})));ctx.waitUntil(isolatedPoolRefresh(env).catch(()=>console.error({event:'provider_inventory_refresh_failed'})));ctx.waitUntil(telegramTick(env).catch(()=>console.error({event:'telegram_tick_failed'})));ctx.waitUntil(monitorCall(env,'/tick').then(async response=>{if(!response.ok)console.error({event:'monitor_failed'});await response.body?.cancel()}).catch(()=>console.error({event:'monitor_failed'})));if(env.CATALOG_MAINTENANCE_ENABLED==='true')ctx.waitUntil(directory(env,'/catalog-maintenance-tick').then(async r=>{await r.body?.cancel()}).catch(()=>console.error({event:'catalog_maintenance_failed'})));return}
  if(event.cron&&event.cron!=='17 5 * * *')return;
  ctx.waitUntil(directory(env,'/backup-automatic').then(async response=>{const result=await response.json();if(result.error)console.error({event:'backup_failed',reason:result.error});if(result.recovery?.error)console.error({event:'backup_drill_failed',reason:result.recovery.error})}).catch(()=>console.error({event:'backup_failed',reason:'backup_service_unavailable'})).finally(async()=>{const response=await monitorCall(env,'/tick');await response.body?.cancel()}));
-},async fetch(req, env, ctx) {ownedMediaBootstrap(env,ctx);await markServiceVerification(req);const response=await traceRequest(req, trace => handleRequest(req, env, ctx,trace), {allowedOrigin: SITE,fastMediaFailureBudget:env.ENVIRONMENT==='production'&&env.FAST_MEDIA_FAILURE_LOGS_ENABLED==='true'?fastMediaFailureBudget:undefined,onTiming:timing=>{if(new URL(req.url).pathname!=='/stream'&&ctx?.waitUntil&&env.PLAYBACK_SESSIONS)ctx.waitUntil(env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_operations_v1')).fetch('https://private/operations/timing-ingest',{method:'POST',body:JSON.stringify({timing})}).then(r=>r.body?.cancel()).catch(()=>{}))}});return browserResponse(response,req,env);}};
+},async fetch(req, env, ctx) {ownedMediaBootstrap(env,ctx);localAuditBootstrap(env,ctx);await markServiceVerification(req);const response=await traceRequest(req, trace => handleRequest(req, env, ctx,trace), {allowedOrigin: SITE,fastMediaFailureBudget:env.ENVIRONMENT==='production'&&env.FAST_MEDIA_FAILURE_LOGS_ENABLED==='true'?fastMediaFailureBudget:undefined,onTiming:timing=>{if(new URL(req.url).pathname!=='/stream'&&ctx?.waitUntil&&env.PLAYBACK_SESSIONS)ctx.waitUntil(env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_operations_v1')).fetch('https://private/operations/timing-ingest',{method:'POST',body:JSON.stringify({timing})}).then(r=>r.body?.cancel()).catch(()=>{}))}});return browserResponse(response,req,env);}};
 
 
 
