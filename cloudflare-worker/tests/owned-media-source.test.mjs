@@ -40,7 +40,7 @@ test('access headers are withheld unless exact destination, server secret and pl
 });
 test('seeking is preserved and redirects cannot disclose credentials',async()=>{
  const file=OWNED_MEDIA_FILES[0],env={SNAP_OWNED_MEDIA_SITE_TOKEN:'test-only-site-secret-0123456789012345'},ticket='test-playback-ticket-01234567890123456789012345';let calls=0;
- const response=await fetchOwnedMedia(file.url,env,ticket,{range:'bytes=100-199',fetcher:async(target,init)=>{calls++;assert.equal(target,file.url);assert.equal(init.redirect,'error');assert.equal(init.headers.get('Range'),'bytes=100-199');return new Response(new Uint8Array(100),{status:206,headers:{'content-range':'bytes 100-199/'+file.size}});}});
+ const response=await fetchOwnedMedia(file.url,env,ticket,{range:'bytes=100-199',fetcher:async(target,init)=>{calls++;assert.equal(target,file.url);assert.equal(init.redirect,'manual');assert.equal(init.headers.get('Range'),'bytes=100-199');return new Response(new Uint8Array(100),{status:206,headers:{'content-range':'bytes 100-199/'+file.size}});}});
  assert.equal(response.status,206);assert.equal((await response.arrayBuffer()).byteLength,100);assert.equal(calls,1);
  await assert.rejects(()=>fetchOwnedMedia('https://other.chatgpt.site/video.mp4',env,ticket,{fetcher:()=>{throw new Error('must_not_fetch');}}),error=>error.status===403);
 });

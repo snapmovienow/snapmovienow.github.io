@@ -1,8 +1,8 @@
 import {exclusiveSnapshot,exclusiveCatalogRoute} from './exclusive-catalog.mjs';
 import {EMPRESS_EPISODES,EMPRESS_SERIES_ID,EMPRESS_SERIES_PAGES} from './empress-catalog.mjs';
 import {ownedMediaForEpisode,isOwnedMediaSeries,probeOwnedMedia,OWNED_MEDIA_UNTIL} from './owned-media-source.mjs';
-const KEY='catalog-import:empress-owned-media-20261104-v2';
-const REQUEST='empress-owned-media-20261104-v2';
+const KEY='catalog-import:empress-owned-media-20261104-v3';
+const REQUEST='empress-owned-media-20261104-v3';
 const original=row=>row?.id===EMPRESS_SERIES_ID&&row.type==='series'&&row.mode==='gnula'&&EMPRESS_SERIES_PAGES.includes(row.page)&&row.episodes?.length===4&&EMPRESS_EPISODES.every(expected=>{
  const episode=row.episodes.find(item=>item.id===expected.id);
  return episode?.season===1&&episode.episode_num===expected.episode_num&&episode.page===expected.page&&episode.alternatives?.length===1&&episode.alternatives[0].id===expected.alternatives[0].id&&episode.alternatives[0].page===expected.alternatives[0].page;
@@ -18,7 +18,7 @@ export async function runOwnedMediaMigration(store,leases,env,{probe=probeOwnedM
   const next={requestId:REQUEST,state:'running',claim:crypto.randomUUID(),claimUntil:now()+120000,revision:row.revision,attempts:(old?.attempts||0)+1};await tx.put(KEY,next);return next;
  });
  if(!claim)return;
- let verified=false,probeCode='owned_media_not_ready';try{verified=(await probe(env)).ready===true;}catch(error){if(/^(?:owned_media_(?:fetch_1042|timeout|network|integrity|not_connected)|owned_media_http_[1-5][0-9]{2})$/.test(error?.message||''))probeCode=error.message;}
+ let verified=false,probeCode='owned_media_not_ready';try{verified=(await probe(env)).ready===true;}catch(error){if(/^(?:owned_media_(?:fetch_1042|timeout|network|integrity|not_connected|redirect)|owned_media_http_[1-5][0-9]{2})$/.test(error?.message||''))probeCode=error.message;}
  await store.transaction(async tx=>{
   const job=await tx.get(KEY);if(job?.claim!==claim.claim)return;
   const finish=async(state,reason,extra={})=>{await tx.put(KEY,{...job,state,claimUntil:0,reason,...extra,finishedAt:now()});console.log({event:'owned_media_migration',state,reason,count:extra.count||0});};

@@ -34,15 +34,22 @@ export function ownedMediaHeaders(target,env,playbackTicket){
  if(typeof playbackTicket!=='string'||!/^[A-Za-z0-9_.-]{30,14000}$/.test(playbackTicket))throw failure('session_expired',401);
  return {'OAI-Sites-Authorization':'Bearer '+secret,'Authorization':'Bearer '+playbackTicket};
 }
+async function privateFetch(target,init,fetcher){
+ // Workers rejects redirect:"error" before any I/O. Its manual mode lets us
+ // reject every redirect without sending the credential to another host.
+ const response=await fetcher(target,{...init,redirect:'manual'});
+ if(response.status>=300&&response.status<400){await response.body?.cancel();throw failure('owned_media_redirect');}
+ return response;
+}
 export async function fetchOwnedMedia(target,env,playbackTicket,{range,head=false,signal,fetcher=fetch}={}){
  const headers=new Headers(ownedMediaHeaders(target,env,playbackTicket));
  if(range)headers.set('Range',range);
- const response=await fetcher(target,{method:head?'HEAD':'GET',headers,redirect:'error',signal:signal?AbortSignal.any([signal,AbortSignal.timeout(20000)]):AbortSignal.timeout(20000)});
+ const response=await privateFetch(target,{method:head?'HEAD':'GET',headers,signal:signal?AbortSignal.any([signal,AbortSignal.timeout(20000)]):AbortSignal.timeout(20000)},fetcher);
  return response;
 }
 export async function probeOwnedMedia(env,{fetcher=fetch}={}){
  const headers={'OAI-Sites-Authorization':'Bearer '+siteSecret(env)};
- let response;try{response=await fetcher(OWNED_MEDIA_ORIGIN+'/api/ready',{headers,redirect:'error',signal:AbortSignal.timeout(20000)});}catch(error){throw failure(/1042/.test(String(error?.message))?'owned_media_fetch_1042':error?.name==='TimeoutError'?'owned_media_timeout':'owned_media_network');}
+ let response;try{response=await privateFetch(OWNED_MEDIA_ORIGIN+'/api/ready',{headers,signal:AbortSignal.timeout(20000)},fetcher);}catch(error){if(error?.message==='owned_media_redirect')throw error;throw failure(/1042/.test(String(error?.message))?'owned_media_fetch_1042':error?.name==='TimeoutError'?'owned_media_timeout':'owned_media_network');}
  if(!response.ok){const status=response.status;await response.body?.cancel();throw failure('owned_media_http_'+status);}
  const value=await readBoundedJson(response,20000);
  if(value?.release!==OWNED_MEDIA_RELEASE||value.ready!==true||value.items?.length!==8||!OWNED_MEDIA_FILES.every(file=>value.items.some(item=>item.id===file.id&&item.ready===true&&item.sha256===file.sha256&&item.size===file.size)))throw failure('owned_media_integrity');
@@ -50,7 +57,7 @@ export async function probeOwnedMedia(env,{fetcher=fetch}={}){
 }
 export async function fetchOwnedPreview(target,env,{fetcher=fetch}={}){
  const item=ownedMediaDescriptor(target);if(!item)throw failure('exclusive_resource',403);
- return fetcher(OWNED_MEDIA_ORIGIN+'/api/preview/'+item.id,{headers:{'OAI-Sites-Authorization':'Bearer '+siteSecret(env),Range:'bytes=0-2047'},redirect:'error',signal:AbortSignal.timeout(20000)});
+ return privateFetch(OWNED_MEDIA_ORIGIN+'/api/preview/'+item.id,{headers:{'OAI-Sites-Authorization':'Bearer '+siteSecret(env),Range:'bytes=0-2047'},signal:AbortSignal.timeout(20000)},fetcher);
 }
 export async function readBoundedJson(request,limit=20000){
  const length=request.headers.get('content-length');if(length&&(!/^\d+$/.test(length)||Number(length)>limit))throw failure('body_too_large',413);

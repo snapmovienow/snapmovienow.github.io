@@ -19,7 +19,7 @@ const call=(path,value)=>env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromN
 const originalNow=Date.now;Date.now=()=>Date.parse('2026-11-04T19:00:00Z');
 const originalFetch=globalThis.fetch,served=[];let savedTicket;
 globalThis.fetch=async(target,init={})=>{
- const url=new URL(target);assert.equal(url.origin,OWNED_MEDIA_ORIGIN);assert.equal(init.redirect,'error');
+ const url=new URL(target);assert.equal(url.origin,OWNED_MEDIA_ORIGIN);assert.equal(init.redirect,'manual');
  const headers=new Headers(init.headers);assert.equal(headers.get('OAI-Sites-Authorization'),'Bearer '+env.SNAP_OWNED_MEDIA_SITE_TOKEN);
  const source=OWNED_MEDIA_FILES.find(file=>file.url===url.href);assert.ok(source,'private requests are restricted to the eight copies');
  const ticket=headers.get('Authorization')?.slice(7);assert.ok(ticket);savedTicket={ticket,id:source.id};
