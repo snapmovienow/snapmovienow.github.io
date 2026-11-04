@@ -8,6 +8,10 @@
   ],
   "workers_dev": true,
   "preview_urls": true,
+  "keep_vars": true,
+  "limits": {
+    "cpu_ms": 120000
+  },
   "vars": {
     "CATALOG_MAINTENANCE_ENABLED": "true",
     "PLAYBACK_CANARY_USERNAME": "dieguito2026",

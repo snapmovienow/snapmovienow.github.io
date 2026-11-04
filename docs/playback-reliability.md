@@ -14,6 +14,17 @@ Five-minute operational checks evaluate recent real playback, server timings, pr
 
 ## Containment and recovery
 
+Long-running media relays have an explicit 120,000 ms active-CPU ceiling. This
+provides bounded headroom above the Durable Object default without changing the
+startup, idle, authorization or signed-expiry deadlines. The native TCP body pump
+shares one idle watchdog and one cancellation listener instead of allocating
+these for every media block. Only a pending socket read has a 20-second idle
+deadline; downstream backpressure is not mistaken for an idle origin. Finite
+HTTP bodies still finish at Content-Length without waiting for socket EOF.
+Real workerd regression tests cover stream backpressure and lifecycle contracts.
+Passing local tests does not by itself establish that production CPU resets
+have ceased; production observations remain required.
+
 A live source returning HTTP 404 can retry another source/quality variant of the same channel before changing provider accounts. Candidates come only from existing verified catalog snapshots, with the same server, category and exact channel name after removing known parenthesized source/quality suffixes. Country, regional names, channel numbers, MAX and `+` are preserved; adult permissions remain mandatory. TS stays TS and HLS stays HLS. Every attempt retains the same viewer/request, releases its failed lease first and signs the actual selected media ID. Variant and account retries share the existing three allocations and eight-second startup deadline. No extra catalog probes or background-account tests are introduced; owner diagnostic samples retain their exact channel.
 
 Channel access checks request only their selected server and reuse provider-scoped full snapshots when available. Immutable row/category arrays have weakly held indexes, so changing a channel checks its row rather than reclassifying the whole catalog. Provider configuration changes invalidate snapshot reuse; account and adult permissions are still checked on every opening.

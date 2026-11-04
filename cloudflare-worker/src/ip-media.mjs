@@ -32,10 +32,10 @@ export async function fetchApprovedMediaIP(value,headers,connectSocket,nativeStr
  if(signal?.aborted)throw cancelledReason();
  const socket=connect({hostname:url.hostname,port:Number(url.port||80)},{secureTransport:'off'});
  socket.closed.catch(()=>{});
- let reader,nativeReader,socketWriter,bodyWriter,bodyError,socketClosed=false,bodyAborted=false,headersComplete=false;
+ let reader,nativeReader,socketWriter,bodyWriter,bodyError,rejectBodyOperation,bodyIdleTimer,bodyIdleDeadline=0,socketClosed=false,bodyAborted=false,headersComplete=false;
  const disposed=new WeakSet();
  const disposeReader=(r,reason)=>{if(!r||disposed.has(r))return;disposed.add(r);void r.cancel(reason).catch(()=>{});try{r.releaseLock()}catch{}};
- const closeSocket=(reason)=>{if(socketClosed)return;socketClosed=true;signal?.removeEventListener('abort',onAbort);disposeReader(nativeReader||reader,reason);try{socketWriter?.releaseLock()}catch{};void socket.close().catch(()=>{})};
+ const closeSocket=(reason)=>{if(socketClosed)return;socketClosed=true;clearTimeout(bodyIdleTimer);bodyIdleDeadline=0;if(reason)rejectBodyOperation?.(reason);signal?.removeEventListener('abort',onAbort);disposeReader(nativeReader||reader,reason);try{socketWriter?.releaseLock()}catch{};void socket.close().catch(()=>{})};
  const abortBody=reason=>{if(bodyWriter&&!bodyAborted){bodyAborted=true;void bodyWriter.abort(reason).catch(()=>{})}};
  const onAbort=()=>{const reason=cancelledReason();bodyError?.(reason);abortBody(reason);closeSocket(reason)};
  signal?.addEventListener('abort',onAbort,{once:true});if(signal?.aborted)onAbort();
@@ -91,13 +91,31 @@ export async function fetchApprovedMediaIP(value,headers,connectSocket,nativeStr
   catch{nativeReader=socket.readable.getReader();readBlock=()=>nativeReader.read()}
   const writer=bodyWriter=stream.writable.getWriter();
   writer.closed.catch(error=>closeSocket(error));
+  // One watchdog and the existing request-abort listener cover the whole
+  // transfer. Recreating a timer, Promise.race and abort subscription per TCP
+  // block needlessly spends CPU during long-running video responses.
+  const watchBodyIdle=()=>{
+   bodyIdleTimer=undefined;if(!bodyIdleDeadline||socketClosed)return;
+   const remaining=bodyIdleDeadline-Date.now();
+   if(remaining>0){bodyIdleTimer=setTimeout(watchBodyIdle,remaining);bodyIdleTimer?.unref?.();return}
+   const error=Error('media_timeout');rejectBodyOperation?.(error);abortBody(error);closeSocket(error);
+  };
+  const bodyOperation=(operation,reading=false)=>new Promise((resolve,reject)=>{
+   let settled=false;
+   const finish=(done,value)=>{if(settled)return;settled=true;if(rejectBodyOperation===fail)rejectBodyOperation=undefined;if(reading)bodyIdleDeadline=0;done(value)};
+   const fail=error=>finish(reject,error);rejectBodyOperation=fail;
+   if(signal?.aborted){fail(cancelledReason());return}
+   if(socketClosed){fail(Error('client_disconnected'));return}
+   if(reading){bodyIdleDeadline=Date.now()+20000;if(bodyIdleTimer===undefined){bodyIdleTimer=setTimeout(watchBodyIdle,20000);bodyIdleTimer?.unref?.()}}
+   try{Promise.resolve(operation()).then(value=>finish(resolve,value),fail)}catch(error){fail(error)}
+  });
   (async()=>{try{
-   let received=prefix.length,initial=prefix.length===0;if(prefix.length)await abortable(writer.write(prefix));
+   let received=prefix.length,initial=prefix.length===0;if(prefix.length)await bodyOperation(()=>writer.write(prefix));
    while(length===null||received<length){
-    const size=length===null?65536:Math.min(65536,length-received),chunk=await timed(readBlock(initial?1:size));initial=false;
+    const size=length===null?65536:Math.min(65536,length-received),chunk=await bodyOperation(()=>readBlock(initial?1:size),true);initial=false;
     if(chunk.done){if(length!==null&&received<length)throw Error('truncated_http_body');break}
     const bytes=length===null?chunk.value:chunk.value.subarray(0,length-received);
-    received+=bytes.length;await abortable(writer.write(bytes));
+    received+=bytes.length;await bodyOperation(()=>writer.write(bytes));
    }
    closeSocket();await writer.close();
   }catch(error){abortBody(error)}
