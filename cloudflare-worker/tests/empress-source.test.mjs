@@ -38,7 +38,7 @@ const fetcher=async(url,options)=>{
  if(url==='https://voe.sx/'+ids[pageNumber-1])return new Response('window.location.href="'+(redirect||'https://shannoncoldalready.com/'+ids[pageNumber-1])+'";');
  if(url==='https://shannoncoldalready.com/'+ids[pageNumber-1]){
   generation++;const n=mode==='wrong-episode'?pageNumber%4+1:pageNumber;
-  const source='https://'+cdn+'/engine/hls2-c/01/18734/'+ids[pageNumber-1]+'_,n,.urlset/master.m3u8?signature='+generation;
+  const source='https://'+cdn+'/engine/'+(mode==='voe-standard-path'?'hls2':'hls2-c')+'/01/18734/'+ids[pageNumber-1]+'_,n,.urlset/master.m3u8?signature='+generation;
   return new Response(voePlayer({source,title:'LED 0'+n+' SubEsp [Fixture].mp4',default_captions_language:mode==='wrong-captions'?'en':'es',audio_languages:[{countryCode:mode==='wrong-audio'?'es':'ko',language:mode==='wrong-audio'?'Spanish':'Korean'}],drm:mode==='drm'}));
  }
  if(new URL(url).hostname===cdn){if(mode==='forbidden')return new Response('Forbidden',{status:403});return new Response('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=500000\nindex-v1-a1.m3u8\n');}
@@ -63,6 +63,14 @@ for(const n of [1,2,3,4]){
 }
 for(const page of [peli(5),tudu(0),peli(1)+'?',peli(1)+'?redirect=private',tudu(1)+'#',tudu(1)+'#other',peli(1).replace('https:','http:'),peli(1).replace('pelisflix200.rest','pelisflix200.city'),peli(1).replace('https://','https://user:password@'),peli(1).replace('/episodio/','/%2e%2e/episodio/'),'https://pelisflix200.rest/serie/la-emperatriz-divorciada/']){
  assert.equal(isEmpressPage(page),false);await assert.rejects(resolveEmpressSource(page,{fetcher}),/empress_source_unavailable/);
+}
+pageNumber=1;
+for(const n of [1,2,3,4]){
+ pageNumber=n;mode='voe-standard-path';redirect='';
+ const result=await resolveEmpressSource(tudu(n),{fetcher}),prefix='/engine/hls2/01/18734/'+ids[n-1]+'_,n,.urlset/';
+ assert.equal(result.empressContext.prefix,prefix);
+ assert.equal(empressMediaAllowed(tudu(n),'https://'+cdn+prefix+'video0.ts',result.empressContext),true);
+ for(const other of ['hls2-c','hls2-other'])assert.equal(empressMediaAllowed(tudu(n),'https://'+cdn+prefix.replace('/hls2/','/'+other+'/')+'video0.ts',result.empressContext),false);
 }
 pageNumber=1;
 mode='st1-path';redirect='';

@@ -34,6 +34,7 @@ const drain=async()=>{for(let n=0;background.length&&n<20;n++)await Promise.allS
 const voeIds=['qbx1bmzqqoxm','zhbsadlqzyhb','hcmxykc2a6yu','ifq0dewv8v1u'],cdn='ugc-cdn-caching-integration.cloudwindow-route.com';
 const wrapper=n=>'https://nupload.my/watch/'+'A'.repeat(43)+n;
 const hash=n=>String(n).padStart(12,'0'),root='https://sv2.ibra.lat/';
+const voeEngine=n=>n%2===0?'hls2':'hls2-c';
 const payload=(episode,option)=>Uint8Array.from({length:2048},(_,index)=>index===0?0x47:(episode*16+option+index)%256);
 const rot13=value=>value.replace(/[a-zA-Z]/g,c=>String.fromCharCode(c.charCodeAt(0)+(c.toLowerCase()<='m'?13:-13)));
 const voePlayer=data=>'<script type="application/json">'+JSON.stringify([rot13(btoa(Array.from(btoa(JSON.stringify(data))).reverse().map(c=>String.fromCharCode(c.charCodeAt(0)+3)).join('')))])+'</script>';
@@ -77,7 +78,7 @@ globalThis.fetch=async(value,options={})=>{
  if(url.hostname==='voe.sx')return new Response('window.location.href="https://shannoncoldalready.com'+url.pathname+'";');
  if(url.hostname==='shannoncoldalready.com'){
   const n=voeIds.indexOf(url.pathname.slice(1))+1;assert.ok(n);
-  return new Response(voePlayer({source:'https://'+cdn+'/engine/hls2-c/01/18734/'+voeIds[n-1]+'_,n,.urlset/master.m3u8?signature=fixture'+(++generation),title:'LED 0'+n+' SubEsp [Fixture].mp4',default_captions_language:'es',audio_languages:[{countryCode:'ko',language:'Korean'}]}));
+  return new Response(voePlayer({source:'https://'+cdn+'/engine/'+voeEngine(n)+'/01/18734/'+voeIds[n-1]+'_,n,.urlset/master.m3u8?signature=fixture'+(++generation),title:'LED 0'+n+' SubEsp [Fixture].mp4',default_captions_language:'es',audio_languages:[{countryCode:'ko',language:'Korean'}]}));
  }
  let episode,option,prefix;
  if(url.hostname==='sv2.ibra.lat'){
@@ -89,7 +90,7 @@ globalThis.fetch=async(value,options={})=>{
   const redirected=url.pathname.match(/^\/da\/([a-f0-9]{2})\//);episode=redirected?parseInt(redirected[1],16)-167:Number(url.pathname.match(/^\/(?:st1\/)?files\/(\d+)\//)?.[1]);assert.ok(episode>=1&&episode<=4);prefix=(episode%2===0?'/st1':'')+'/files/'+episode+'/'+hash(episode)+'/';
   assert.equal(headers.get('referer'),wrapper(episode));assert.equal(headers.get('origin'),'https://nupload.my');
  }else if(url.hostname===cdn){
-  option=2;episode=voeIds.findIndex(id=>url.pathname.includes('/'+id+'_'))+1;assert.ok(episode);prefix='/engine/hls2-c/01/18734/'+voeIds[episode-1]+'_,n,.urlset/';
+  option=2;episode=voeIds.findIndex(id=>url.pathname.includes('/'+id+'_'))+1;assert.ok(episode);prefix='/engine/'+voeEngine(episode)+'/01/18734/'+voeIds[episode-1]+'_,n,.urlset/';
   assert.equal(headers.has('origin'),false);assert.equal(headers.has('referer'),false);
  }else throw Error('unreviewed fixture destination');
  if(failMediaOnce){failMediaOnce=false;return new Response('unavailable',{status:503});}

@@ -23,7 +23,7 @@ const voeHost=host=>/^ugc-cdn-caching-[a-z0-9]{1,80}\.cloudwindow-route\.com$/.t
 function validContext(page,context){
  const d=definition(page);if(!d||!context||context.provider!==d.provider||context.episode!==d.episode)return null;
  if(d.provider==='nupload')return wrapperAllowed(context.wrapper)&&nuploadHost(context.host)&&/^\/(?:st1\/)?files\/\d{1,8}\/[a-f0-9]{8,64}\/$/.test(context.prefix||'')&&(!context.masterPath||context.masterPath==='/'||nuploadMasterPath(context.masterPath))?d:null;
- const id=VOE_IDS[d.episode-1],prefix=new RegExp('^/engine/hls2-c/\\d{2}/\\d{1,10}/'+id+'_[a-z0-9_,.-]{1,40}\\.urlset/$');
+ const id=VOE_IDS[d.episode-1],prefix=new RegExp('^/engine/hls2(?:-c)?/\\d{2}/\\d{1,10}/'+id+'_[a-z0-9_,.-]{1,40}\\.urlset/$');
  return voeHost(context.host)&&prefix.test(context.prefix||'')?d:null;
 }
 export function empressMediaAllowed(page,value,context={}){
