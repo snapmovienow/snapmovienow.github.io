@@ -87,14 +87,14 @@ export class PlaybackSession {
   if(!diagnosticEnabled(this.env))return Response.json({error:'diagnostic_disabled'},{status:403});
   await runEmpressOriginDiagnostic(this.state.storage,this.env,{ticket,delegate:body=>this.env.PLAYBACK_SESSIONS.get(this.env.PLAYBACK_SESSIONS.idFromName('__smn_empress_diagnostic_peer_20261104')).fetch('https://private/empress-origin-diagnostic-resource',{method:'POST',body:JSON.stringify(body)})});return Response.json({ok:true});
  }
- if(path==='/owned-media-verification-status'){const value=await this.state.storage.get('owned-media-verification:20261104-v1');return Response.json({state:value?.state||'pending',passed:value?.passed||0,rangeChecks:value?.rangeChecks||0});}
+ if(path==='/owned-media-verification-status'){const value=await this.state.storage.get('owned-media-verification:20261104-v2');return Response.json({state:value?.state||'pending',passed:value?.passed||0,rangeChecks:value?.rangeChecks||0});}
  if(path==='/owned-media-verification-run'){
   if(!ownedVerificationEnabled(this.env))return Response.json({error:'verification_disabled'},{status:403});
   const connected=await directory(this.env,'/owned-media-connect');const connection=await connected.json();
   console.log({event:'owned_media_connection',state:connection.state,reason:connection.reason,count:connection.count||0});
   if(!connected.ok||connection.state!=='completed')return Response.json({ok:false},{status:503});
   const ctx={waitUntil:p=>this.state.waitUntil?.(p)},adapter=ownPlaybackCanaryAdapter({env:this.env,storage:this.state.storage,directory,ownSession,ticket,sessionCall,request:request=>traceRequest(request,trace=>handleRequest(request,this.env,ctx,trace))});
-  await runOwnedMediaVerification(this.state.storage,this.env,{read:()=>exclusives.read(this.env),authenticate:signal=>adapter.authenticate({username:this.env.PLAYBACK_CANARY_USERNAME},{signal}),prepare:(session,id,signal)=>exclusives.prepare(new Request('https://api.snaptvnow.com/',{signal}),this.env,session,id),request:request=>fetch(request),release:session=>adapter.release(session)});
+  await runOwnedMediaVerification(this.state.storage,this.env,{read:()=>exclusives.read(this.env),authenticate:signal=>adapter.authenticate({username:this.env.PLAYBACK_CANARY_USERNAME},{signal}),prepare:(session,id,signal)=>exclusives.prepare(new Request('https://api.snaptvnow.com/',{signal}),this.env,session,id),request:request=>traceRequest(request,trace=>handleRequest(request,this.env,ctx,trace)),release:session=>adapter.release(session)});
   return Response.json({ok:true});
  }
  if(path==='/boxpanel/private')return boxpanelFetch(this.state,req);

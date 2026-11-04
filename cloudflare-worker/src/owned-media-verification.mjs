@@ -1,5 +1,5 @@
 import {OWNED_MEDIA_FILES,isOwnedMediaSeries,OWNED_MEDIA_SERIES} from './owned-media-source.mjs';
-const KEY='owned-media-verification:20261104-v1';
+const KEY='owned-media-verification:20261104-v2';
 const UNTIL=Date.parse('2026-11-06T00:00:00Z');
 const code=error=>error?.status===409?'test_account_busy':error?.name==='TimeoutError'||error?.name==='AbortError'?'verification_timeout':['catalog_not_ready','range_mismatch','checksum_mismatch','media_type','body_size','route_scope'].includes(error?.message)?error.message:'verification_failed';
 const sha=async bytes=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))].map(value=>value.toString(16).padStart(2,'0')).join('');
