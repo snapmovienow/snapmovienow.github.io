@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {OWNED_MEDIA_FILES,OWNED_MEDIA_ORIGIN,OWNED_MEDIA_SERIES,ownedMediaDescriptor,ownedMediaForEpisode,isOwnedMediaSeries,ownedMediaHeaders,fetchOwnedMedia} from '../src/owned-media-source.mjs';
+import {OWNED_MEDIA_FILES,OWNED_MEDIA_ORIGIN,OWNED_MEDIA_SERIES,ownedMediaDescriptor,ownedMediaForEpisode,isOwnedMediaSeries,ownedMediaHeaders,fetchOwnedMedia,probeOwnedMedia} from '../src/owned-media-source.mjs';
 import {exclusiveURL} from '../src/exclusive-catalog.mjs';
 
 test('exact eight verified copies preserve episode and language identity',()=>{
@@ -10,6 +10,10 @@ test('exact eight verified copies preserve episode and language identity',()=>{
   const file=ownedMediaForEpisode('empress-2026-s1e'+number+'-'+suffix);
   assert.equal(file.episode,number);assert.equal(file.option,suffix==='es'?1:2);assert.equal(ownedMediaDescriptor(file.url),file);
  }
+});
+test('readiness failures expose bounded diagnostic codes without response bodies or network messages',async()=>{
+ const env={SNAP_OWNED_MEDIA_SITE_TOKEN:'test-only-site-secret-0123456789012345'};
+ for(const [fetcher,code] of [[async()=>new Response('PRIVATE',{status:403}),'owned_media_http_403'],[async()=>{throw new Error('1042 PRIVATE URL');},'owned_media_fetch_1042'],[async()=>{throw new Error('PRIVATE URL');},'owned_media_network']])await assert.rejects(()=>probeOwnedMedia(env,{fetcher}),error=>error.message===code);
 });
 test('Sites exception cannot target other projects, routes, query strings or files',()=>{
  const source=OWNED_MEDIA_FILES[0].url;

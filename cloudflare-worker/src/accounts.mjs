@@ -52,7 +52,7 @@ export async function accountsFetch(state,env,req){
  if(['/bounded-ts-claim','/bounded-ts-status','/bounded-ts-result'].includes(p))return boundedTsQuota(store,p,b,env);
  if(['/reseller-portal-rotation-status','/reseller-portal-rotation-begin','/reseller-portal-rotation-finish'].includes(p))return gatewayRotationStore(store,p,b);
  const leases=await openLeaseStore(store);
- if(p==='/owned-media-status'){const row=await store.get('exclusive:item:'+OWNED_MEDIA_SERIES);return answer({connected:isOwnedMediaSeries(row),options:isOwnedMediaSeries(row)?8:0});}
+ if(p==='/owned-media-status'){const row=await store.get('exclusive:item:'+OWNED_MEDIA_SERIES),job=await ownedMediaMigrationStatus(store);return answer({connected:isOwnedMediaSeries(row),options:isOwnedMediaSeries(row)?8:0,migration:{state:job.state,reason:job.reason,probeCode:job.probeCode}});}
  if(p==='/owned-media-connect'){await runOwnedMediaMigration(store,leases,env);return answer(await ownedMediaMigrationStatus(store));}
  if(p==='/reseller-service-monitor')return store.transaction(tx=>readServiceMonitor(tx,leases.in(tx),b));
  if(p==='/service-monitor-sample'){await store.transaction(tx=>sampleServiceMonitor(tx,leases.in(tx),TRUSTED_RESELLERS.map(r=>r.accountId)));return answer({ok:true});}

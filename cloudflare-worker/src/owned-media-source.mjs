@@ -41,8 +41,9 @@ export async function fetchOwnedMedia(target,env,playbackTicket,{range,head=fals
  return response;
 }
 export async function probeOwnedMedia(env,{fetcher=fetch}={}){
- const response=await fetcher(OWNED_MEDIA_ORIGIN+'/api/ready',{headers:{'OAI-Sites-Authorization':'Bearer '+siteSecret(env)},redirect:'error',signal:AbortSignal.timeout(20000)});
- if(!response.ok){await response.body?.cancel();throw failure('owned_media_not_ready');}
+ const headers={'OAI-Sites-Authorization':'Bearer '+siteSecret(env)};
+ let response;try{response=await fetcher(OWNED_MEDIA_ORIGIN+'/api/ready',{headers,redirect:'error',signal:AbortSignal.timeout(20000)});}catch(error){throw failure(/1042/.test(String(error?.message))?'owned_media_fetch_1042':error?.name==='TimeoutError'?'owned_media_timeout':'owned_media_network');}
+ if(!response.ok){const status=response.status;await response.body?.cancel();throw failure('owned_media_http_'+status);}
  const value=await readBoundedJson(response,20000);
  if(value?.release!==OWNED_MEDIA_RELEASE||value.ready!==true||value.items?.length!==8||!OWNED_MEDIA_FILES.every(file=>value.items.some(item=>item.id===file.id&&item.ready===true&&item.sha256===file.sha256&&item.size===file.size)))throw failure('owned_media_integrity');
  return {ready:true,count:8,size:OWNED_MEDIA_FILES.reduce((sum,file)=>sum+file.size,0)};

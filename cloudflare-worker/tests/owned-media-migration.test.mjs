@@ -34,6 +34,12 @@ test('missing copies produce finite retries with no partial catalog changes',asy
 test('concurrent owner edit wins and disables this import',async()=>{
  const store=new Store();await runOwnedMediaMigration(store,leases,env,{now:()=>Date.parse('2026-11-04T19:00:00Z'),probe:async()=>{await store.put('exclusive:item:'+EMPRESS_SERIES_ID,{...original,revision:6,name:'Cambio reciente'});return{ready:true}}});assert.equal((await ownedMediaMigrationStatus(store)).reason,'catalog_changed');assert.equal((await store.get('exclusive:item:'+EMPRESS_SERIES_ID)).name,'Cambio reciente');
 });
+test('storage diagnostics retain only an allowlisted code and finite retry count',async()=>{
+ for(const [message,expected] of [['owned_media_http_403','owned_media_http_403'],['PRIVATE credential in error','owned_media_not_ready']]){
+  const store=new Store();for(let n=0;n<4;n++)await runOwnedMediaMigration(store,leases,env,{now:()=>Date.parse('2026-11-04T19:00:00Z'),probe:async()=>{throw new Error(message);}});
+  const job=await ownedMediaMigrationStatus(store);assert.equal(job.state,'failed');assert.equal(job.attempts,3);assert.equal(job.probeCode,expected);assert.equal(JSON.stringify(job).includes('PRIVATE'),false);
+ }
+});
 test('different sources, staging, missing credential and expired trial cannot migrate',async()=>{
  const changed=structuredClone(original);changed.episodes[0].page='https://media.snapcdn.net/manual.mp4';const store=new Store(changed);
  await runOwnedMediaMigration(store,leases,env,{now:()=>Date.parse('2026-11-04T19:00:00Z'),probe:()=>{throw new Error('not a reviewed source');}});assert.equal((await ownedMediaMigrationStatus(store)).reason,'catalog_requires_review');
