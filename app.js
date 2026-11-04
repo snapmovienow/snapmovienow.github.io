@@ -1,9 +1,53 @@
 const API=globalThis.SMNConfig?.api||"https://api.snaptvnow.com";let allMovies=[],allSeries=[],allLive=[],permissions={movies:true,series:true,tv:true},authenticated=false,authGeneration=0;
-let creds=SMNSessionClient.read(localStorage,{cookieMode:globalThis.SMNConfig?.cookieMode===true});const loginModal=document.getElementById("login");document.getElementById("loginBtn").addEventListener("click",()=>loginModal.classList.add("open"));document.getElementById("heroLogin").addEventListener("click",()=>loginModal.classList.add("open"));document.getElementById("closeLoginBtn").addEventListener("click",()=>loginModal.classList.remove("open"));
+const sessionStorageSource=()=>globalThis.localStorage;let pendingLogout=null;
+let creds=SMNSessionClient.read(sessionStorageSource,{cookieMode:globalThis.SMNConfig?.cookieMode===true});const loginModal=document.getElementById("login");document.getElementById("loginBtn").addEventListener("click",()=>loginModal.classList.add("open"));document.getElementById("heroLogin").addEventListener("click",()=>loginModal.classList.add("open"));document.getElementById("closeLoginBtn").addEventListener("click",()=>loginModal.classList.remove("open"));
 function menu(){document.getElementById("drawer").classList.toggle("open")} function closeLogin(){document.getElementById("login").classList.remove("open");if(location.hash==="#login")history.replaceState(null,"",location.pathname+location.search)}
 const boundedTsUI=globalThis.SMNBoundedTS?.init({document,getSession:()=>creds,getAuthenticated:()=>authenticated,config:globalThis.SMNConfig});
 const api=SMNSessionClient.transport({url:API,cookieMode:globalThis.SMNConfig?.cookieMode===true,getSession:()=>creds,getGeneration:()=>authGeneration,request:(...args)=>SMNConnection.requestJSON(...args)});
-async function doLogin(){const u=document.getElementById("user"),p=document.getElementById("pass"),m=document.getElementById("msg"),btn=document.getElementById("submit");const username=u.value.trim(),password=p.value;if(!username||!password){m.textContent="Escribe usuario y contraseña.";return}const loginGeneration=++authGeneration;profileSync?.stop();creds={username,password};btn.disabled=true;btn.textContent="Conectando…";m.textContent="";try{const a=await api("auth");if(!a?.user_info||String(a.user_info.auth)!=="1")throw new Error("auth");if(!a.access_token&&!globalThis.SMNConfig?.cookieMode)throw Error("session_missing");creds={username:a.user_info.username||creds.username,access_token:globalThis.SMNConfig?.cookieMode?"cookie":a.access_token};loadUserFavorites();permissions=a.permissions||{movies:true,series:true,tv:true};authenticated=true;SMNSessionClient.write(localStorage,creds,{cookieMode:globalThis.SMNConfig?.cookieMode===true});armSessionExpiry(a);document.body.classList.add("authenticated");document.getElementById("login").classList.remove("open");document.getElementById("loginBtn").classList.add("hidden");document.getElementById("heroLogin").classList.add("hidden");document.getElementById("welcome").textContent="Catálogo conectado. Cargando contenido…";const loadedSession=creds;const partial=await loadCatalog();if(!authenticated||creds!==loadedSession)return;document.getElementById("welcome").textContent=partial?"Parte del catálogo no está disponible. Puedes usar el contenido cargado y volver a intentar más tarde.":"Películas, series y TV disponibles para tu cuenta."}catch(e){if(loginGeneration!==authGeneration)return;sessionExpiry.cancel();localStorage.removeItem("smn_session");creds=null;authenticated=false;document.body.classList.remove("authenticated");document.getElementById("content").hidden=true;m.textContent=SMNConnection.message(e,"No se pudo iniciar sesión. Verifica tus datos.");}finally{btn.disabled=false;btn.textContent="Entrar"}}
+function showSessionNotice(message='',retryClose=false){
+ const node=document.getElementById('sessionNotice');if(!node)return;
+ node.textContent=message;node.hidden=!message;
+ if(retryClose){const button=document.createElement('button');button.type='button';button.textContent='Reintentar cierre';button.addEventListener('click',()=>{void logout()});node.append(' ',button)}
+}
+async function revokeSession(session){
+ if(!session?.access_token)return true;
+ const cookie=session.access_token==='cookie';
+ try{const response=await fetch(API,{method:'POST',credentials:cookie?'include':'omit',headers:{'content-type':'application/json'},body:JSON.stringify({op:'logout',access_token:cookie?undefined:session.access_token}),signal:AbortSignal.timeout(10000),keepalive:true});const result=await response.json();return response.ok&&result?.ok===true||response.status===401&&result?.error==='session_required'}
+ catch{return false}
+}
+async function activateSession(info,nextSession,generation){
+ const persistenceStarted=performance.now();
+ const persisted=await SMNSessionClient.persist(sessionStorageSource,nextSession,{cookieMode:globalThis.SMNConfig?.cookieMode===true,revokePrevious:revokeSession});
+ if(generation!==authGeneration||creds!==nextSession)return;
+ loadUserFavorites();permissions=info.permissions||{movies:true,series:true,tv:true};authenticated=true;pendingLogout=null;
+ armSessionExpiry({...info,network_age_ms:Number(info.network_age_ms||0)+Math.max(0,performance.now()-persistenceStarted)});
+ document.body.classList.add('authenticated');document.getElementById('login').classList.remove('open');
+ document.getElementById('loginBtn').classList.add('hidden');document.getElementById('heroLogin').classList.add('hidden');
+ showSessionNotice(persisted?'':'Sesión temporal: no pudimos guardar tu acceso en este navegador. Podrás seguir usándolo; al recargar podrías tener que iniciar sesión nuevamente.');
+ document.getElementById('welcome').textContent='Catálogo conectado. Cargando contenido…';
+ const partial=await loadCatalog();if(generation!==authGeneration||!authenticated||creds!==nextSession)return;
+ document.getElementById('welcome').textContent=partial?'Parte del catálogo no está disponible. Puedes usar el contenido cargado y volver a intentar más tarde.':'Películas, series y TV disponibles para tu cuenta.';
+}
+function loginFailure(error){
+ if(error?.message==='previous_session_unconfirmed')return 'No pudimos cerrar el acceso anterior en este navegador. Intenta nuevamente antes de cambiar de cuenta.';
+ return SMNConnection.message(error,error?.message==='auth'?'No se pudo iniciar sesión. Verifica tus datos.':'No se pudo completar el acceso. Intenta nuevamente.');
+}
+async function doLogin(){
+ const u=document.getElementById('user'),p=document.getElementById('pass'),m=document.getElementById('msg'),btn=document.getElementById('submit');
+ const username=u.value.trim(),password=p.value;
+ if(pendingLogout){m.textContent='Reintenta el cierre pendiente antes de iniciar otra sesión.';return}
+ if(!username||!password){m.textContent='Escribe usuario y contraseña.';return}
+ const loginGeneration=++authGeneration;profileSync?.stop();creds={username,password};btn.disabled=true;btn.textContent='Conectando…';m.textContent='';showSessionNotice();
+ try{
+  const info=await api('auth');if(!info?.user_info||String(info.user_info.auth)!=='1')throw Error('auth');
+  const nextSession={username:info.user_info.username||creds.username,access_token:globalThis.SMNConfig?.cookieMode?'cookie':info.access_token};
+  creds=nextSession;p.value='';await activateSession(info,nextSession,loginGeneration);
+ }catch(error){
+  if(loginGeneration!==authGeneration)return;
+  sessionExpiry.cancel();SMNSessionClient.clear(sessionStorageSource);creds=null;authenticated=false;showSessionNotice();
+  document.body.classList.remove('authenticated');document.getElementById('content').hidden=true;m.textContent=loginFailure(error);
+ }finally{if(loginGeneration===authGeneration){btn.disabled=false;btn.textContent='Entrar'}}
+}
 async function loadCatalog(){
  const loadingSession=creds;
  const catalog=await SMNCatalog.load({api,permissions});if(!authenticated||creds!==loadingSession)return;document.getElementById('content').hidden=false;
@@ -19,7 +63,21 @@ function renderLive(){const q=normalizeSearch(document.getElementById('liveSearc
 }
 for(const id of ['liveSearch','liveCategory'])document.getElementById(id).addEventListener('input',()=>{liveLimit=100;renderLive()});document.getElementById('liveMore').onclick=()=>{liveLimit+=100;renderLive()};
 function render(el,items,imgKey,nameKey){el.innerHTML="";const type=(["seriesRow","gnulaSeriesRow"].includes(el.id))?"series":"movie";(Array.isArray(items)?items.slice(0,80):[]).forEach(x=>{const d=document.createElement("div");d.className="card";d.tabIndex=0;d.addEventListener("click",()=>openDetail(x,type));const pic=x[imgKey]||x.stream_icon||x.cover||x.movie_image||x.info?.movie_image;if(pic)d.style.backgroundImage='url("'+String(pic).replace(/"/g,"")+'")';const b=document.createElement("b");b.textContent=x[nameKey]||"Sin título";d.appendChild(b);addSourceBadge(d,x);el.appendChild(d)});if(!el.children.length)el.innerHTML='<div class="card"><b>No hay contenido disponible</b></div>'}
-async function logout(reason){sessionExpiry.cancel();if(reason){sessionStorage.setItem("smn_access_notice",reason);document.getElementById("welcome").textContent=reason}const session=creds;saveContinue();stopPlayback();profileSync?.flush();profileSync?.stop();profileSync=null;favorites=[];resetLiveDiagnostics();authenticated=false;authGeneration++;creds=null;allMovies=[];allSeries=[];allLive=[];currentPlay=null;localStorage.removeItem("smn_session");document.getElementById("content").hidden=true;for(const id of ["detail","favoritesPanel","searchPanel","drawer"])document.getElementById(id).classList.remove("open");for(const id of ["movieRow","seriesRow","recentRow","gnulaRow","gnulaSeriesRow","continueRow","liveGrid","favoritesResults","searchResults"])document.getElementById(id).replaceChildren();document.body.classList.remove("authenticated");try{if(session?.access_token)await fetch(API,{method:"POST",credentials:globalThis.SMNConfig?.cookieMode?"include":"omit",headers:{"content-type":"application/json"},body:JSON.stringify({op:"logout",access_token:session.access_token==="cookie"?undefined:session.access_token}),keepalive:true})}finally{location.href=location.pathname}}
+async function logout(reason){
+ const generation=++authGeneration;sessionExpiry.cancel();
+ if(reason){try{globalThis.sessionStorage.setItem('smn_access_notice',reason)}catch{}}
+ const session=creds?.access_token?creds:pendingLogout||SMNSessionClient.read(sessionStorageSource,{cookieMode:globalThis.SMNConfig?.cookieMode===true})||(globalThis.SMNConfig?.cookieMode?{access_token:'cookie'}:null);
+ pendingLogout=session;saveContinue();stopPlayback();profileSync?.flush();profileSync?.stop();profileSync=null;favorites=[];profilePreferences={};resetLiveDiagnostics();
+ authenticated=false;creds=null;allMovies=[];allSeries=[];allLive=[];currentPlay=null;
+ const cleared=SMNSessionClient.clear(sessionStorageSource);showSessionNotice();document.getElementById('content').hidden=true;
+ for(const id of ['detail','favoritesPanel','searchPanel','drawer'])document.getElementById(id).classList.remove('open');
+ for(const id of ['movieRow','seriesRow','recentRow','gnulaRow','gnulaSeriesRow','continueRow','liveGrid','favoritesResults','searchResults'])document.getElementById(id).replaceChildren();
+ document.body.classList.remove('authenticated');document.getElementById('loginBtn').classList.remove('hidden');document.getElementById('heroLogin').classList.remove('hidden');
+ document.getElementById('submit').disabled=false;document.getElementById('submit').textContent='Entrar';document.getElementById('welcome').textContent=reason||'Has cerrado sesión.';
+ const revoked=await revokeSession(session);if(generation!==authGeneration)return;
+ if(cleared||revoked){pendingLogout=null;location.href=location.pathname;return}
+ showSessionNotice('El acceso está cerrado en esta pestaña, pero no pudimos confirmar el cierre completo. Reintenta antes de recargar.',true);
+}
 const searchPanel=document.getElementById("searchPanel"),searchInput=document.getElementById("searchInput"),searchResults=document.getElementById("searchResults"),searchMeta=document.getElementById("searchMeta");document.getElementById("searchBtn").addEventListener("click",()=>{searchPanel.classList.add("open");setTimeout(()=>searchInput.focus(),50)});document.getElementById("searchClose").addEventListener("click",()=>{searchPanel.classList.remove("open");searchInput.value="";searchResults.innerHTML="";searchMeta.textContent="Escribe para buscar en películas, series y TV."});function normalizeSearch(value){return String(value||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLocaleLowerCase("es").replace(/\bbarman\b/g,"batman").replace(/\b(v|vs|versus)\b/g," ").replace(/[^a-z0-9]+/g," ").trim()}
 function sourceName(x){if(x.exclusive)return "Exclusivo de SNAPTV";return x.source==="gnula"?"Gnula":x._server&&x._server!=="ccf"?"Servidor conectado":"CCF"}
 function addSourceBadge(card,x){const label=document.createElement("span");label.className="source-badge";label.textContent=sourceName(x);card.appendChild(label)}
@@ -152,8 +210,21 @@ const sessionExpiry=createSessionExpiry({expire:()=>logout("Tu acceso venció. C
 function armSessionExpiry(info){sessionExpiry.start(Number(info.session_expires_at||Number(info.user_info?.exp_date)*1000),Number(info.server_time||Date.now()),info.network_age_ms||0);if(!authenticated)throw Error("session_expired")}
 for(const event of ["pageshow","focus"])window.addEventListener(event,()=>sessionExpiry.check());
 document.addEventListener("visibilitychange",()=>{if(!document.hidden)sessionExpiry.check()});
-const accessNotice=sessionStorage.getItem("smn_access_notice");if(accessNotice){sessionStorage.removeItem("smn_access_notice");document.getElementById("welcome").textContent=accessNotice;document.getElementById("msg").textContent=accessNotice}
-async function restoreSession(){if(!creds)return;const restoreGeneration=authGeneration;try{const a=await api(creds.access_token?"session_info":"auth");if(!a?.user_info||String(a.user_info.auth)!=="1")throw 0;creds={username:a.user_info.username||creds.username,access_token:globalThis.SMNConfig?.cookieMode?"cookie":a.access_token||creds.access_token};loadUserFavorites();if(!creds.access_token)throw 0;permissions=a.permissions||{movies:true,series:true,tv:true};authenticated=true;SMNSessionClient.write(localStorage,creds,{cookieMode:globalThis.SMNConfig?.cookieMode===true});armSessionExpiry(a);document.body.classList.add("authenticated");document.getElementById("login").classList.remove("open");document.getElementById("loginBtn").classList.add("hidden");document.getElementById("heroLogin").classList.add("hidden");document.getElementById("welcome").textContent="Catálogo conectado. Cargando contenido…";const loadedSession=creds;const partial=await loadCatalog();if(!authenticated||creds!==loadedSession)return;document.getElementById("welcome").textContent=partial?"Parte del catálogo no está disponible. Puedes usar el contenido cargado y volver a intentar más tarde.":"Películas, series y TV disponibles para tu cuenta."}catch(e){if(restoreGeneration!==authGeneration)return;sessionExpiry.cancel();localStorage.removeItem("smn_session");creds=null;authenticated=false;document.getElementById("content").hidden=true;document.body.classList.remove("authenticated")}}restoreSession();
+const accessNotice=(()=>{let notice=null;try{notice=globalThis.sessionStorage.getItem('smn_access_notice')}catch{}try{globalThis.sessionStorage.removeItem('smn_access_notice')}catch{}return notice})();
+if(accessNotice){document.getElementById('welcome').textContent=accessNotice;document.getElementById('msg').textContent=accessNotice}
+async function restoreSession(){
+ if(!creds)return;const restoreGeneration=authGeneration;
+ try{
+  const info=await api(creds.access_token?'session_info':'auth');if(!info?.user_info||String(info.user_info.auth)!=='1')throw Error('auth');
+  const nextSession={username:info.user_info.username||creds.username,access_token:globalThis.SMNConfig?.cookieMode?'cookie':info.access_token||creds.access_token};
+  creds=nextSession;await activateSession(info,nextSession,restoreGeneration);
+ }catch(error){
+  if(restoreGeneration!==authGeneration)return;
+  sessionExpiry.cancel();SMNSessionClient.clear(sessionStorageSource);creds=null;authenticated=false;showSessionNotice();
+  document.getElementById('content').hidden=true;document.body.classList.remove('authenticated');
+  if(error?.message==='previous_session_unconfirmed')document.getElementById('welcome').textContent=loginFailure(error);
+ }
+}restoreSession();
 
 function profileReference(item,type){const id=String(item.stream_id||item.series_id||item.id||"");if(!/^[a-zA-Z0-9_.:-]+$/.test(id))return null;const server=item._server||item.source||"ccf";return {key:type+":"+server+":"+id,type,id,server}}
 function profileCatalog(reference){const rows=reference.type==="live"?allLive:reference.type==="series"?allSeries:allMovies;return rows.find(item=>profileReference(item,reference.type)?.key===reference.key)}

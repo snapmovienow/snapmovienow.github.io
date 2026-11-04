@@ -12,8 +12,8 @@ const startup='tests/live-audio-startup-runtime.mjs';
 assert.equal(existsSync(new URL('../tests/live-audio-startup.test.mjs',import.meta.url)),false,
  'HLS integration must not enter the worker-only test group');
 assert.ok(read(startup).includes("import Hls from 'hls.js'"),'the real-engine regression must remain present');
-assert.equal(pkg.scripts['test:browser'],`node ${startup} && node tests/live-audio-runtime.mjs`,
- 'Quality must run both audio integrations, failing immediately if either fails');
+assert.equal(pkg.scripts['test:browser'],`node ${startup} && node tests/live-audio-runtime.mjs && node tests/session-storage-browser-runtime.mjs`,
+ 'Quality must run audio and session-storage browser integrations, failing immediately if any fails');
 assert.match(read('.github/workflows/quality.yml'),/- name: Chromium audio regression\s+run: npm run test:browser/,
  'the audio runtime command remains a required Quality step');
 assert.equal(pkg.devDependencies['hls.js'],'1.6.15');
