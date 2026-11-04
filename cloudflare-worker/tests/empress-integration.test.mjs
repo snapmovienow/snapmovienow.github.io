@@ -98,6 +98,9 @@ globalThis.fetch=async(value,options={})=>{
   const text=url.pathname.endsWith('/video.m3u8')?variant('video'):url.pathname.endsWith('/audio.m3u8')?variant('audio'):master(prefix);
   return new Response(options.method==='HEAD'?null:text,{headers:{'content-type':'application/vnd.apple.mpegurl'}});
  }
+ // Public HLS segments can reject a synthetic Range even though the player's
+ // normal GET succeeds. This applies only to the pre-publication probe.
+ if(!playing&&headers.has('range'))return new Response('partial probe forbidden',{status:403});
  if(playing){
   const active=await leases();assert.equal(active.length,1);assert.equal(active[0].exclusiveId,expectedChoice);assert.equal(active[0].exclusiveParentId,EMPRESS_SERIES_ID);assert.equal(active[0].provider_id,undefined);
  }
@@ -125,7 +128,7 @@ try{
  const beforeCategories=await(await api('get_series_categories')).json(),beforeRows=await(await api('get_series')).json(),beforeImport=sourceCalls.length;
  await runEmpressImport(accountStore,{}, {ENVIRONMENT:'production',CATALOG_MAINTENANCE_ENABLED:'true'},{probe:async media=>{probes.push(media.page);return inspectCatalogSource(media,{fetcher:globalThis.fetch});}});
  const report=await empressImportStatus(accountStore);assert.equal(report.state,'completed');assert.equal(report.results.length,8);assert.ok(report.results.every(result=>result.status==='added'&&result.check==='playlist_and_segment'));
- assert.equal(probes.length,8);assert.equal(new Set(probes).size,8);assert.ok(sourceCalls.length>beforeImport);assert.ok(sourceCalls.some(call=>call.range==='bytes=0-2047'));
+ assert.equal(probes.length,8);assert.equal(new Set(probes).size,8);assert.ok(sourceCalls.length>beforeImport);assert.ok(sourceCalls.slice(beforeImport).every(call=>!call.range),'HLS publication checks use the same GET as the player');
  const saved=(await exclusiveSnapshot(accountStore)).items.find(row=>row.id===EMPRESS_SERIES_ID);assert.ok(saved);assert.equal(saved.episodes.length,4);assert.ok(saved.episodes.every(ep=>ep.alternatives.length===1));
  const categories=await(await api('get_series_categories',{},'POST')).json(),rows=await(await api('get_series')).json(),disney=categories.find(row=>row.category_name==='SERIES-DISNEY');
  assert.deepEqual(categories,beforeCategories,'the existing SERIES-DISNEY folder keeps its identity and order');assert.equal(categories.filter(row=>row.category_name==='SERIES-DISNEY').length,1);
