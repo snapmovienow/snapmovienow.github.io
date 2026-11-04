@@ -1,14 +1,31 @@
 // Session persistence and transport contracts, independent of catalog/player/DOM.
-globalThis.SMNSessionClient={
+globalThis.SMNSessionClient=(()=>{
+const resolveStorage=storage=>typeof storage==='function'?storage():storage;
+const client={
  read(storage,{cookieMode=false}={}){
-  try{const value=JSON.parse(storage.getItem('smn_session')||'null');if(!value)return null;
+  try{const value=JSON.parse(resolveStorage(storage).getItem('smn_session')||'null');if(!value)return null;
    if(typeof value.username!=='string'||!/^[a-zA-Z0-9_.@-]{3,80}$/.test(value.username)||Object.hasOwn(value,'password')||typeof value.access_token!=='string'||!value.access_token||cookieMode&&value.access_token!=='cookie')throw Error('invalid_saved_session');
    return {username:value.username,access_token:value.access_token};
-  }catch{try{storage.removeItem('smn_session')}catch{}return null}
+  }catch{client.clear(storage);return null}
  },
  write(storage,session,{cookieMode=false}={}){
-  if(!session?.username||!session.access_token)throw Error('session_missing');
-  storage.setItem('smn_session',JSON.stringify({username:session.username,access_token:cookieMode?'cookie':session.access_token}));
+  if(typeof session?.username!=='string'||!/^[a-zA-Z0-9_.@-]{3,80}$/.test(session.username)||typeof session.access_token!=='string'||!session.access_token)throw Error('session_missing');
+  try{resolveStorage(storage).setItem('smn_session',JSON.stringify({username:session.username,access_token:cookieMode?'cookie':session.access_token}));return true}
+  catch{return false}
+ },
+ clear(storage){try{resolveStorage(storage).removeItem('smn_session');return true}catch{return false}},
+ async persist(storage,session,{cookieMode=false,revokePrevious}={}){
+  const previous=client.read(storage,{cookieMode});
+  if(client.write(storage,session,{cookieMode}))return true;
+  // A quota failure must not leave another account's token available on reload.
+  // When removal is also blocked, revoke only that old bearer, never the current
+  // cookie or the same token being restored.
+  const cleared=client.clear(storage);
+  if(!cleared&&!cookieMode&&previous?.access_token&&previous.access_token!=='cookie'&&previous.access_token!==session.access_token){
+   try{if(typeof revokePrevious!=='function'||await revokePrevious(previous)!==true)throw Error('cleanup_failed')}
+   catch{throw Error('previous_session_unconfirmed')}
+  }
+  return false;
  },
  transport({url,cookieMode,getSession,getGeneration,request,now=performance.now.bind(performance),timeout=op=>AbortSignal.timeout(op==='gnula_token'?45000:20000)}){
   return async function(op,extra={}){
@@ -22,3 +39,5 @@ globalThis.SMNSessionClient={
   };
  }
 };
+return client;
+})();
