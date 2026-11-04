@@ -30,7 +30,7 @@ const fetcher=async(url,options)=>{
   assert.equal(headers.get('Referer'),wrapper);assert.equal(headers.get('Origin'),'https://nupload.my');
   if(mode==='forbidden')return new Response('Forbidden',{status:403});
   if(mode==='not-hls')return new Response('<h1>video not available</h1>');
-  if(mode==='master-redirect'&&new URL(url).pathname==='/')return new Response(null,{status:301,headers:{location:'/e1/17/abcdef123456.m3u8'}});
+  if(mode==='master-redirect'&&new URL(url).pathname==='/')return new Response(null,{status:301,headers:{location:redirect||'/da/a8/abcdef123456.m3u8'}});
   const child=mode==='foreign-resource'?'https://127.0.0.1/secret':'https://sv2.ibra.lat/files/7/abcdef123456/video0.ts?m=fixture';
   return new Response('#EXTM3U\n#EXT-X-TARGETDURATION:7\n#EXTINF:7,\n'+child+'\n#EXT-X-ENDLIST');
  }
@@ -65,7 +65,10 @@ for(const page of [peli(5),tudu(0),peli(1)+'?',peli(1)+'?redirect=private',tudu(
  assert.equal(isEmpressPage(page),false);await assert.rejects(resolveEmpressSource(page,{fetcher}),/empress_source_unavailable/);
 }
 pageNumber=1;
-mode='master-redirect';redirect='';const redirected=await resolveEmpressSource(peli(1),{fetcher});assert.equal(redirected.url,root+'e1/17/abcdef123456.m3u8');assert.equal(empressMediaAllowed(peli(1),redirected.url,redirected.empressContext),true);assert.equal(empressMediaAllowed(peli(1),root+'e1/17/abcdef987654.m3u8',redirected.empressContext),false,'a sibling file master cannot reuse this episode scope');
+mode='master-redirect';redirect='';const redirected=await resolveEmpressSource(peli(1),{fetcher});assert.equal(redirected.url,root+'da/a8/abcdef123456.m3u8');assert.equal(empressMediaAllowed(peli(1),redirected.url,redirected.empressContext),true);assert.equal(empressMediaAllowed(peli(1),root+'da/a8/abcdef987654.m3u8',redirected.empressContext),false,'a sibling file master cannot reuse this episode scope');
+for(const path of ['/e1/17/abcdef123456.m3u8','/af/be/abcdef123456.m3u8']){redirect=path;const result=await resolveEmpressSource(peli(1),{fetcher});assert.equal(result.url,new URL(path,root).href);}
+for(const path of ['/d/a8/abcdef123456.m3u8','/da/a88/abcdef123456.m3u8','/zz/a8/abcdef123456.m3u8','/da/gg/abcdef123456.m3u8']){redirect=path;const count=calls.length;await assert.rejects(resolveEmpressSource(peli(1),{fetcher}),/empress_source_unavailable/);assert.ok(!calls.slice(count).includes(new URL(path,root).href));}
+redirect='';
 for(const failure of ['wrong-heading','wrong-dub','private-wrapper','foreign-resource','not-hls','forbidden']){mode=failure;await assert.rejects(resolveEmpressSource(peli(1),{fetcher}),/empress_source_unavailable/);}
 for(const failure of ['wrong-episode','wrong-captions','wrong-audio','drm','forbidden']){mode=failure;redirect='';await assert.rejects(resolveEmpressSource(tudu(1),{fetcher}),/empress_source_unavailable/);}
 for(const destination of ['https://127.0.0.1/private','https://shannoncoldalready.com/'+ids[1],'https://shannoncoldalready.com/'+ids[0]+'?session=foreign','https://unreviewed.example.com/'+ids[0]]){

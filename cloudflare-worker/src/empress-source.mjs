@@ -18,7 +18,7 @@ function definition(value){
 export const isEmpressPage=value=>!!definition(value);
 const wrapperAllowed=value=>{try{const u=safe(value);return u.hostname==='nupload.my'&&/^\/watch\/[A-Za-z0-9]{32,100}$/.test(u.pathname)&&!u.search;}catch{return false;}};
 const nuploadHost=host=>/^sv(?:2|3|5)\.ibra\.lat$/.test(host||'');
-const nuploadMasterPath=path=>/^\/[a-f0-9]{2}\/\d{1,8}\/[a-f0-9]{8,64}\.m3u8$/.test(path||'');
+const nuploadMasterPath=path=>/^\/[a-f0-9]{2}\/[a-f0-9]{2}\/[a-f0-9]{8,64}\.m3u8$/.test(path||'');
 const voeHost=host=>/^ugc-cdn-caching-[a-z0-9]{1,80}\.cloudwindow-route\.com$/.test(host||'');
 function validContext(page,context){
  const d=definition(page);if(!d||!context||context.provider!==d.provider||context.episode!==d.episode)return null;
