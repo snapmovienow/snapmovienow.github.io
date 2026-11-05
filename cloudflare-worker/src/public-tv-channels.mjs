@@ -10,7 +10,8 @@ export const PUBLIC_TV_FOLDERS=[
  {key:'deportes',upstreamId:'107',name:'CANALES-DEPORTES',aliases:['CANALES-DEPORTES','DEPORTES']},
  {key:'infantiles',upstreamId:'108',name:'CANALES-INFANTILES',aliases:['CANALES-INFANTILES','INFANTIL','INFANTILES']},
  {key:'documentales',upstreamId:'109',name:'CANALES-DOCUMENTALES',aliases:['CANALES-DOCUMENTALES','DOCUMENTALES']},
- {key:'religiosos',upstreamId:'110',name:'CANALES-RELIGIOSOS',aliases:['CANALES-RELIGIOSOS','RELIGIOSOS','RELIGIOSO']}
+ {key:'religiosos',upstreamId:'110',name:'CANALES-RELIGIOSOS',aliases:['CANALES-RELIGIOSOS','RELIGIOSOS','RELIGIOSO']},
+ {key:'branding-test',upstreamId:'111',name:'PRUEBAS SNAPTVNOW'}
 ];
 export const PUBLIC_TV_CHANNELS=[
  {"id":"public-dw-es","name":"DW Español","page":"https://dwamdstream104.akamaized.net/hls/live/2015530/dwstream104/master.m3u8","adapter":"public-hls","categories":["noticias"],"xtreamId":"2000001","poster":"https://upload.wikimedia.org/wikipedia/commons/thumb/7/75/Deutsche_Welle_symbol_2012.svg/960px-Deutsche_Welle_symbol_2012.svg.png","plot":"Noticias, reportajes y documentales internacionales en español."},
@@ -37,6 +38,8 @@ export const PUBLIC_TV_CHANNELS=[
 // Separate owner-approved regional addition: keep the original twenty-channel
 // import and every previous numeric identity unchanged.
 export const UNIVISION_NY_CHANNEL={id:'local-univision-newyork',name:'Univision 41 · Nueva York · EN VIVO',page:'https://streaming-live-fcdn.api.prd.univisionnow.com/wxtv/wxtv.isml/hls/wxtv.m3u8',adapter:'public-hls',categories:['new-york'],xtreamId:'2000021',poster:'https://uvn-brightspot.s3.amazonaws.com/f1/55/003e5aa0491dbaf03067ee6a83d8/desktop-univision-41-nueva-york-298x168.jpg',plot:'WXTV Univision 41 de Nueva York, en español. Señal por internet del operador; disponibilidad y programación sujetas al proveedor.'};
+// Isolated prerecorded compatibility test; it does not replace any live feed.
+export const BRANDING_TEST_CHANNEL={id:'branding-test-snaptvnow',name:'PRUEBA MARCA SNAPTVNOW',page:'https://app.snaptvnow.com/branding-test/master.m3u8',adapter:'public-hls',categories:['branding-test'],xtreamId:'2000022',poster:'',plot:'Prueba de marca con subtítulos WebVTT sobre una demostración pregrabada. La posición y activación del texto dependen del reproductor; no es una señal en vivo.'};
 const begins=(u,host,prefix)=>u.hostname===host&&u.pathname.startsWith(prefix);
 const path=(u,host,pattern)=>u.hostname===host&&pattern.test(u.pathname);
 // Hosts and channel paths were checked against each public master and its media,
@@ -45,6 +48,7 @@ export function publicTvMediaAllowed(channel,u){
  if(u.protocol!=='https:'||u.username||u.password||u.port&&u.port!=='443'||u.hash||/%(?:2e|2f|5c)/i.test(u.pathname))return false;
  const root=new URL(channel.page);if(u.href===root.href)return true;
  switch(channel.id){
+ case 'branding-test-snaptvnow':return begins(u,'app.snaptvnow.com','/branding-test/')||begins(u,'snapmovienow.github.io','/branding-test/')||begins(u,'devstreaming-cdn.apple.com','/videos/streaming/examples/bipbop_adv_example_hevc/');
  case 'local-univision-newyork':return begins(u,'streaming-live-fcdn.api.prd.univisionnow.com','/wxtv/wxtv.isml/hls/');
  case 'public-dw-es':return path(u,'dwamdstream104.akamaized.net',/^\/hls\/live\/2015530(?:-b)?\/dwstream104\//);
  case 'public-euronews-es':return begins(u,'cdn-euronews.akamaized.net','/live/eds/euronews-es/25053/');

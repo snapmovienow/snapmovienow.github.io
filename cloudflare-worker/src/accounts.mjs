@@ -4,6 +4,7 @@ import {runEmpressImport,empressImportStatus} from './empress-import.mjs';
 import {runOwnedMediaMigration,ownedMediaMigrationStatus} from './owned-media-migration.mjs';
 import {isOwnedMediaSeries,OWNED_MEDIA_SERIES} from './owned-media-source.mjs';
 import {runUnivisionNyImport,univisionNyImportStatus} from './univision-ny-import.mjs';
+import {runBrandingTestImport,brandingTestImportStatus} from './branding-test-import.mjs';
 import {boundedTsQuota} from './bounded-ts-route.mjs';
 import {saveCatalogReferences,readCatalogReferences} from './catalog-references.mjs';
 import {runLocalTvImport,localTvImportStatus,runLocalTvExpansion,localTvExpansionStatus,runRegionalTvImport,regionalTvImportStatus} from './local-tv-import.mjs';
@@ -65,9 +66,10 @@ export async function accountsFetch(state,env,req){
   await runEmpressImport(store,leases,env);
   await runOwnedMediaMigration(store,leases,env);
   await runUnivisionNyImport(store,leases,env);
+  await runBrandingTestImport(store,leases,env);
   await runCatalogMaintenance(env,{directory:(env,path,body={})=>env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_accounts_v1')).fetch('https://private/accounts'+path,{method:'POST',body:JSON.stringify(body)})});return answer({ok:true});
  }
- if(p==='/catalog-maintenance-status'){const response=await catalogMaintenanceRoute(store,leases,p,b);return answer({...await response.json(),exclusiveImport:await yagaImportStatus(store),localTvImport:await localTvImportStatus(store),localTvExpansion:await localTvExpansionStatus(store),regionalTvImport:await regionalTvImportStatus(store),publicTvImport:await publicTvImportStatus(store),empressImport:await empressImportStatus(store),ownedMedia:await ownedMediaMigrationStatus(store),univisionNyImport:await univisionNyImportStatus(store),localTvXtream:await localTvXtreamStatus(store)});}
+ if(p==='/catalog-maintenance-status'){const response=await catalogMaintenanceRoute(store,leases,p,b);return answer({...await response.json(),exclusiveImport:await yagaImportStatus(store),localTvImport:await localTvImportStatus(store),localTvExpansion:await localTvExpansionStatus(store),regionalTvImport:await regionalTvImportStatus(store),publicTvImport:await publicTvImportStatus(store),empressImport:await empressImportStatus(store),ownedMedia:await ownedMediaMigrationStatus(store),univisionNyImport:await univisionNyImportStatus(store),brandingTestImport:await brandingTestImportStatus(store),localTvXtream:await localTvXtreamStatus(store)});}
  if(['/catalog-maintenance-status','/catalog-maintenance-start','/catalog-maintenance-probe','/catalog-maintenance-observe'].includes(p))return await catalogMaintenanceRoute(store,leases,p,b);
  if(['/exclusive-read','/exclusive-item-read','/exclusive-save','/exclusive-cover-save','/exclusive-cover-read'].includes(p))return store.transaction(async tx=>{
   const response=await exclusiveCatalogRoute(tx,p,b);

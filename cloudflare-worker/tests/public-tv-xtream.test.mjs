@@ -22,8 +22,9 @@ const origin='https://api.snaptvnow.com',provider='https://public-tv-provider.ex
 const background=[],ctx={waitUntil(p){background.push(p);}};
 const drain=async()=>{for(let n=0;background.length&&n<20;n++)await Promise.allSettled(background.splice(0));};
 let failMedia=false,providerAllocations=0,providerCategoryCalls=0,sourceCalls=0;
-const providerFolders=PUBLIC_TV_FOLDERS.map((f,index)=>({category_id:String(index+101),category_name:f.aliases.at(-1),parent_id:0}));
-const providerRows=PUBLIC_TV_FOLDERS.map((f,index)=>({stream_id:index+1,name:'Existing '+f.key,category_id:String(index+101),stream_icon:''}));
+const publicFolders=PUBLIC_TV_FOLDERS.filter(folder=>PUBLIC_TV_CHANNELS.some(channel=>channel.categories.includes(folder.key)));
+const providerFolders=publicFolders.map((f,index)=>({category_id:String(index+101),category_name:f.aliases.at(-1),parent_id:0}));
+const providerRows=publicFolders.map((f,index)=>({stream_id:index+1,name:'Existing '+f.key,category_id:String(index+101),stream_icon:''}));
 globalThis.fetch=async(value,options={})=>{
  const u=new URL(value);if(u.origin===provider){
   const action=u.searchParams.get('action');
@@ -53,7 +54,7 @@ assert.deepEqual(categories,categoriesBefore,'reuse existing provider folder IDs
 assert.deepEqual(rows.slice(0,rowsBefore.length),rowsBefore,'provider channels and bookmarks stay intact');
 assert.equal(added.length,20);assert.equal(new Set(added.map(c=>c.stream_id)).size,20);
 assert.deepEqual(await(await api('get_live_streams')).json(),rows,'stable IDs across catalog refreshes');
-for(const folder of PUBLIC_TV_FOLDERS){
+for(const folder of publicFolders){
  const category=categories.find(c=>c.category_name===folder.aliases.at(-1)),expected=rows.filter(c=>c.category_id===category.category_id);
  const filtered=await(await api('get_live_streams',{category_id:category.category_id},'POST')).json();assert.deepEqual(filtered.map(c=>c.stream_id),expected.map(c=>c.stream_id));
  for(const c of PUBLIC_TV_CHANNELS.filter(c=>c.categories.includes(folder.key)))assert.ok(expected.some(r=>r.name===c.name));

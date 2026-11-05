@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <meta name="referrer" content="no-referrer">
+  <title>PRUEBA MARCA SNAPTVNOW</title>
+  <style>
+    :root { color-scheme: dark; font: 17px/1.55 system-ui, sans-serif; background: #091411; color: #e9f5ef; }
+    body { max-width: 960px; margin: 0 auto; padding: 32px 20px 48px; }
+    .brand { color: #57efbc; font-weight: 800; letter-spacing: .12em; }
+    h1 { margin: 12px 0; font-size: clamp(1.7rem, 5vw, 2.8rem); line-height: 1.15; }
+    p { max-width: 760px; }
+    video { display: block; width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 12px; margin-top: 24px; }
+    video::cue { color: white; background: rgba(0, 0, 0, .65); }
+    .controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin: 16px 0; }
+    button, select, .link { font: inherit; border-radius: 8px; padding: 9px 14px; border: 1px solid #347560; background: #102c22; color: #e9f5ef; }
+    button { cursor: pointer; background: #57efbc; color: #071c13; border-color: #57efbc; font-weight: 700; }
+    a { color: #79f2ca; }
+    .link { display: inline-block; text-decoration: none; }
+    #status { padding: 12px 16px; border-left: 3px solid #57efbc; background: #10231b; }
+    .note { color: #b3c9bf; font-size: .95rem; }
+    details { margin-top: 24px; }
+  </style>
+</head>
+<body>
+  <div class="brand">SNAPTVNOW</div>
+  <h1>PRUEBA MARCA SNAPTVNOW</h1>
+  <p>Vídeo de demostración Apple Bip Bop de 10 minutos. Esta prueba comprueba si el reproductor puede mostrar nuestra frase mediante una pista de subtítulos HLS.</p>
+  <video id="player" controls playsinline preload="metadata" crossorigin="anonymous" aria-label="Vídeo de demostración con subtítulos SNAPTVNOW"></video>
+  <div class="controls">
+    <button id="play" type="button">Reproducir prueba</button>
+    <label for="subtitles">Frase:</label>
+    <select id="subtitles">
+      <option value="on">Mostrar subtítulos SNAPTVNOW</option>
+      <option value="off">Desactivar subtítulos</option>
+    </select>
+  </div>
+  <p id="status" role="status" aria-live="polite">Cargando manifiesto de demostración…</p>
+  <p class="note">La frase debe aparecer abajo a la derecha dentro del vídeo. Su posición y selección automática dependen del reproductor. Si Smarters no la muestra, selecciona la pista «SNAPTVNOW - prueba» en su botón de subtítulos.</p>
+  <p><a class="link" href="playlist.m3u">Lista M3U de un canal</a> <a class="link" href="master.m3u8">Manifiesto HLS</a></p>
+  <details>
+    <summary>Qué comprueba esta prueba</summary>
+    <p>Es una demostración VOD, no una emisión en vivo. El vídeo y el audio originales permanecen en el CDN público de Apple. La frase procede de una pista WebVTT real; esta página no superpone texto sobre el vídeo.</p>
+    <p>La prueba no confirma todavía la compatibilidad de todas las aplicaciones ni integra una marca permanente en los canales de televisión. Al desactivar los subtítulos, la frase desaparece.</p>
+  </details>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@1.6.15/dist/hls.min.js" integrity="sha384-iZBI1/lW9u8FcBjxuQ8nPTsU7TXhZNtzkV8H3gQHSTgz+VYQoKWqGlBHqhO84alJ" crossorigin="anonymous"></script>
+  <script>
+    'use strict';
+    const player = document.getElementById('player');
+    const status = document.getElementById('status');
+    const subtitles = document.getElementById('subtitles');
+    let engine;
+    let observedCue = false;
+    const watchedTracks = new WeakSet();
+
+    function reportCue(track) {
+      if (track.mode === 'showing' && Array.from(track.activeCues || []).some(cue => cue.text.includes('EXCLUSIVO · SNAPTVNOW'))) {
+        observedCue = true;
+        status.textContent = 'El reproductor ha activado la frase de la pista WebVTT. Comprueba su posición en el vídeo.';
+      }
+    }
+    function watchTracks() {
+      for (const track of player.textTracks) {
+        if (!watchedTracks.has(track)) {
+          watchedTracks.add(track);
+          track.addEventListener('cuechange', () => reportCue(track));
+        }
+        reportCue(track);
+      }
+    }
+    function selectSubtitles() {
+      const enabled = subtitles.value === 'on';
+      if (engine) {
+        engine.subtitleDisplay = enabled;
+        engine.subtitleTrack = enabled && engine.subtitleTracks.length ? 0 : -1;
+      }
+      for (const track of player.textTracks) {
+        if (track.kind === 'subtitles') track.mode = enabled ? 'showing' : 'disabled';
+      }
+      if (!enabled) status.textContent = 'Subtítulos desactivados. La frase no debería aparecer.';
+      else if (!observedCue) status.textContent = 'Pista SNAPTVNOW seleccionada; esperando un subtítulo activo durante la reproducción…';
+      watchTracks();
+    }
+
+    player.textTracks.addEventListener('addtrack', () => { watchTracks(); selectSubtitles(); });
+    player.addEventListener('timeupdate', watchTracks);
+    subtitles.addEventListener('change', selectSubtitles);
+    document.getElementById('play').addEventListener('click', async () => {
+      try { await player.play(); }
+      catch { status.textContent = 'No se pudo iniciar el vídeo. Reintenta con el control de reproducción.'; }
+    });
+    player.addEventListener('error', () => { status.textContent = 'El reproductor no pudo cargar la demostración en este navegador.'; });
+
+    if (player.canPlayType('application/vnd.apple.mpegurl')) {
+      player.src = 'master.m3u8';
+      player.addEventListener('loadedmetadata', () => {
+        status.textContent = 'Vídeo cargado con HLS nativo; esperando la pista de subtítulos…';
+        selectSubtitles();
+      });
+    } else if (window.Hls && Hls.isSupported()) {
+      engine = new Hls({renderTextTracksNatively: true, maxBufferLength: 12, maxMaxBufferLength: 20});
+      engine.on(Hls.Events.MANIFEST_PARSED, () => {
+        status.textContent = 'Manifiesto HLS cargado; esperando los subtítulos reales durante la reproducción…';
+        selectSubtitles();
+      });
+      engine.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, selectSubtitles);
+      engine.on(Hls.Events.ERROR, (_, data) => {
+        if (data.fatal) status.textContent = 'Error al cargar la demostración HLS. Reabre esta página para reintentar.';
+      });
+      engine.loadSource('master.m3u8');
+      engine.attachMedia(player);
+    } else {
+      status.textContent = 'Este navegador no admite HLS. Abre la lista M3U en un reproductor compatible.';
+    }
+  </script>
+</body>
+</html>
