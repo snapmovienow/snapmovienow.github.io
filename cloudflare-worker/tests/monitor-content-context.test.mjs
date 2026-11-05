@@ -28,7 +28,9 @@ try{
  await call('/tick');assert.equal(sent.length,1);assert.equal(metadataReads,1);
  assert.deepEqual(sent[0].to,['owner@example.com']);assert.equal(sent[0].from,'alerts@example.com');assert.match(sent[0].text,/ID 8471.*Example sports channel.*HTTP 404/);assert.match(sent[0].text,/no atribuye toda la alerta/);
  for(const value of ['never-send','private-account','private.invalid','test_context_only'])assert.ok(!sent[0].text.includes(value));
- now+=300000;healthy=true;await call('/tick');assert.equal(sent.length,2);assert.equal(metadataReads,1,'healthy snapshots do not need metadata reads');assert.match(sent[1].text,/RECUPERADO/);assert.match(sent[1].text,/Referencia del fallo anterior/);assert.match(sent[1].text,/no confirma la reparación de cada contenido/);assert.match(sent[1].text,/ID 8471/);
+ healthy=true;
+ for(let observation=0;observation<3;observation++){now+=300000;await call('/tick');assert.equal(sent.length,observation<2?1:2)}
+ assert.equal(metadataReads,1,'healthy snapshots do not need metadata reads');assert.match(sent[1].text,/RECUPERADO/);assert.match(sent[1].text,/Referencia del fallo anterior/);assert.match(sent[1].text,/no confirma la reparación de cada contenido/);assert.match(sent[1].text,/ID 8471/);
  now+=300000;healthy=false;metadataFail=true;await call('/tick');assert.equal(sent.length,3,'missing optional context must not suppress an alert');assert.ok(!sent[2].text.includes('private-read-failure'));assert.ok(!sent[2].text.includes('ID 8471'),'new incident cannot inherit an unrelated previous context');
  console.log('PASS: existing recipient preserved; bounded content metadata on alerts and historical recovery references; no probes, secrets, duplicate emails or blocked alerts on context failure.');
 }finally{Date.now=originalNow;globalThis.fetch=originalFetch}

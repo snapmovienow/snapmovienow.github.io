@@ -1,6 +1,6 @@
 // Bounded metadata for the owner's existing alert destination. This is context
 // from the same media type/window, never proof that every failure is this item.
-export function mediaFailureContext(items,type,server,now){
+export function mediaFailureContext(items,type,server,now,references){
  const lines=[],seen=new Set();
  for(const row of Array.isArray(items)?items:[]){
   if(row?.type!==type||server&&row.server!==server||!Number.isFinite(row.lastObservedAt)||row.lastObservedAt>now||row.lastObservedAt<=now-15*60000)continue;
@@ -11,6 +11,7 @@ export function mediaFailureContext(items,type,server,now){
   if(/(?:https?:\/\/|password=|username=|access_token=)/i.test(title))title='';
   const line='ID '+row.id+' · '+(title||'Nombre no disponible')+' · HTTP '+statuses.join(', ')+' · '+new Date(row.lastObservedAt).toISOString();
   if(new TextEncoder().encode([...lines,line].join('\n')).length>600)break;
+  if(references)references.push(...statuses.map(status=>`${row.id}:${status}`));
   lines.push(line);if(lines.length>=3)break;
  }
  return lines.join('\n');
