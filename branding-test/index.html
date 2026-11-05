@@ -93,13 +93,7 @@
     });
     player.addEventListener('error', () => { status.textContent = 'El reproductor no pudo cargar la demostración en este navegador.'; });
 
-    if (player.canPlayType('application/vnd.apple.mpegurl')) {
-      player.src = 'master.m3u8';
-      player.addEventListener('loadedmetadata', () => {
-        status.textContent = 'Vídeo cargado con HLS nativo; esperando la pista de subtítulos…';
-        selectSubtitles();
-      });
-    } else if (window.Hls && Hls.isSupported()) {
+    if (window.Hls && Hls.isSupported()) {
       engine = new Hls({renderTextTracksNatively: true, maxBufferLength: 12, maxMaxBufferLength: 20});
       engine.on(Hls.Events.MANIFEST_PARSED, () => {
         status.textContent = 'Manifiesto HLS cargado; esperando los subtítulos reales durante la reproducción…';
@@ -111,6 +105,12 @@
       });
       engine.loadSource('master.m3u8');
       engine.attachMedia(player);
+    } else if (player.canPlayType('application/vnd.apple.mpegurl')) {
+      player.src = 'master.m3u8';
+      player.addEventListener('loadedmetadata', () => {
+        status.textContent = 'Vídeo cargado con HLS nativo; esperando la pista de subtítulos…';
+        selectSubtitles();
+      });
     } else {
       status.textContent = 'Este navegador no admite HLS. Abre la lista M3U en un reproductor compatible.';
     }
