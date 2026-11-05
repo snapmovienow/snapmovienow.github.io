@@ -43,8 +43,9 @@ const row=(id,status='Active',date='2099-01-01')=>[String(id),'line'+id,'<span t
 const inventory=parseInventory({data:[row(1),row(2,'Disabled'),row(3,'Active','2000-01-01')]});assert.deepEqual(inventory.map(a=>a.status),['active','suspended','expired']);assert.ok(!JSON.stringify(inventory).includes('upstream-secret'));
 const objects=new Map(),env={TICKET_SECRET:'dashboard-test-secret-only',ADMIN_SETUP_SECRET:'test-only-setup-secret-longer-than-32-characters'};
 env.PLAYBACK_SESSIONS={idFromName:x=>x,get(id){if(!objects.has(id))objects.set(id,new PlaybackSession({storage:new Store()},env));return {fetch:(url,opts)=>objects.get(id).fetch(new Request(url,opts))}}};
-let upstreamCalls=0,fail=false;
-globalThis.fetch=async(url,opts={})=>{upstreamCalls++;const u=new URL(url);if(fail)return new Response('Unavailable',{status:503});if(u.pathname.endsWith('/login'))return new Response(opts.method==='POST'?'<a href="dashboard">Welcome</a>':'<input name="password">',{headers:{'set-cookie':'PHPSESSID=test; path=/'}});if(u.pathname.endsWith('/table'))return Response.json({recordsFiltered:3,data:[row(1),row(2,'Disabled'),row(3,'Active','2000-01-01')]});if(u.pathname==='/player_api.php')return Response.json({user_info:{auth:1,status:'Active',max_connections:'3',active_cons:'0'}});throw Error('Unexpected upstream')};
+let upstreamCalls=0,fail=false,invalidLogin=false;
+let table=()=>({recordsFiltered:3,data:[row(1),row(2,'Disabled'),row(3,'Active','2000-01-01')]});
+globalThis.fetch=async(url,opts={})=>{upstreamCalls++;const u=new URL(url);if(fail)return new Response('Unavailable',{status:503});if(u.pathname.endsWith('/login'))return new Response(opts.method==='POST'&&!invalidLogin?'<a href="dashboard">Welcome</a>':'<input name="password">',{headers:{'set-cookie':'PHPSESSID=test; path=/'}});if(u.pathname.endsWith('/table'))return Response.json(table(Number(u.searchParams.get('start'))));if(u.pathname==='/player_api.php')return Response.json({user_info:{auth:1,status:'Active',max_connections:'3',active_cons:'0'}});throw Error('Unexpected upstream')};
 const root='https://snapmovienow-edge.juancanta89.workers.dev',request=async(action,data={})=>{const r=await worker.fetch(new Request(root+'/admin',{method:'POST',body:JSON.stringify({action,...data})}),env);return {status:r.status,data:await r.json()}};
 assert.equal((await request('provider-dashboard',{refresh:true})).status,401);assert.equal(upstreamCalls,0,'unauthenticated inventory requests never reach the provider');
 await request('setup',{setupSecret:env.ADMIN_SETUP_SECRET,username:'owner',password:'test-admin-password-long'});
@@ -59,6 +60,36 @@ const auth=await worker.fetch(new Request(root,{method:'POST',body:JSON.stringif
 assert.equal((await request('provider-dashboard',{access_token:customer})).status,401,'a customer token cannot see another provider account or its allocations');
 fail=true;const failed=await admin('provider-dashboard',{refresh:true});assert.equal(failed.status,200);assert.equal(failed.data.stale,true,'a retained snapshot is explicitly marked stale');assert.equal(failed.data.summary.activeAccounts,1,'a transient outage preserves the known inventory');assert.equal(failed.data.stale,true);
 const before=JSON.stringify([...await (await openLeaseStore(objects.get('__smn_accounts_v1').state.storage)).active()]);await admin('provider-dashboard');assert.equal(JSON.stringify([...await (await openLeaseStore(objects.get('__smn_accounts_v1').state.storage)).active()]),before,'viewing a dashboard never starts or stops playback');
+
+const directory=objects.get('__smn_accounts_v1').state.storage;
+const savedUser=await directory.get('user:nito'),leases=await openLeaseStore(directory);
+await leases.put('inventory-test-lease',{provider_id:'1',uid:savedUser.id,version:savedUser.version,sid:'test-session',until:Date.now()+90000});
+const savedProviders=await directory.get('providers');
+async function assertRetained(){
+ const result=await admin('provider-dashboard',{refresh:true});
+ assert.equal(result.status,200);assert.equal(result.data.stale,true);
+ assert.equal(result.data.summary.activeAccounts,1);assert.ok(await leases.get('inventory-test-lease'));
+}
+await assertRetained(); // Temporary HTTP failure.
+fail=false;invalidLogin=true;await assertRetained();invalidLogin=false;
+await directory.put('providers',[{...savedProviders[0],encrypted:'unreadable-config'}]);await assertRetained();
+await directory.put('providers',savedProviders);
+for(const incomplete of [
+ {recordsFiltered:1,data:[]},
+ {recordsFiltered:0,recordsTotal:1,data:[]},
+ {data:[]},
+ {recordsFiltered:2,data:[row(2,'Disabled'),['invalid']]},
+ {recordsFiltered:1,data:[row(1,'Unrecognized')]},
+ {recordsFiltered:1,data:[row(1).map((value,index)=>index===2?'':value)]}
+]){table=()=>incomplete;await assertRetained();}
+table=()=>({recordsFiltered:2,data:[row(2,'Disabled')]});
+await assertRetained(); // Duplicated page; total alone cannot prove completeness.
+table=start=>start===0?{recordsFiltered:2,data:[row(2,'Disabled')]}:{recordsFiltered:3,data:[row(3,'Disabled')]};
+await assertRetained(); // The inventory changed between pages.
+table=start=>start===0?{recordsFiltered:2,data:[row(1,'active')]}:{recordsFiltered:2,data:[row(2,'Disabled')]};
+const verified=await admin('provider-dashboard',{refresh:true});assert.equal(verified.data.stale,false);assert.equal(verified.data.accounts.length,2);assert.equal(verified.data.summary.activeAccounts,1);assert.ok(await leases.get('inventory-test-lease'));
+table=()=>({recordsFiltered:0,data:[]});
+const empty=await admin('provider-dashboard',{refresh:true});assert.equal(empty.data.summary.activeAccounts,0);assert.equal(empty.data.accounts.length,0);assert.equal(await leases.count(),0,'a complete empty inventory revokes existing reservations');
 await admin('logout');assert.equal((await admin('provider-dashboard')).status,401);
 // A panel with no playable accounts still returns all account metadata.
 fail=false;globalThis.fetch=async(url,opts={})=>new URL(url).pathname.endsWith('/table')?Response.json({recordsFiltered:1,data:[row(5,'Disabled')]}):new Response(opts.method==='POST'?'<a href="dashboard">Welcome</a>':'<input name="password">',{headers:{'set-cookie':'PHPSESSID=test; path=/'}});
