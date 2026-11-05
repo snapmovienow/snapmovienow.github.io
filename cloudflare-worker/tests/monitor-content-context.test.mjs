@@ -13,7 +13,7 @@ class Store{constructor(){this.data=new Map();this.queue=Promise.resolve()}async
 let healthy=false,metadataReads=0,metadataFail=false;
 const sent=[],env={ENVIRONMENT:'production',TICKET_SECRET:'context-test-secret',PLAYBACK_SESSIONS:{idFromName:x=>x,get:()=>({fetch:async url=>{
  const path=new URL(url).pathname;
- if(path==='/monitor-providers')return Response.json({providers:[]});
+ if(path==='/monitor-providers')return Response.json({configuredIds:[],providers:[]});
  if(path==='/operations/monitor')return Response.json({groups:[],timings:[{type:'live',platform:'other',requests:10,failures:healthy?0:3,stages:{total:{p95UpperMs:1000},origin:{p95UpperMs:1000}},statusCounts:healthy?{200:10}:{404:3,200:7}}]});
  if(path==='/accounts/backup-status')return Response.json({automaticStatus:'success',lastAutomaticAt:now});
  if(path==='/monitor-media-failures'){metadataReads++;if(metadataFail)throw Error('private-read-failure');return Response.json({items:[entry()]})}
