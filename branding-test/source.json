@@ -1,0 +1,34 @@
+{
+  "name": "PRUEBA MARCA SNAPTVNOW",
+  "kind": "HLS VOD demonstration, not live TV",
+  "source": "Apple Developer Bip Bop streaming example",
+  "sourceDocumentation": "https://developer.apple.com/streaming/examples/advanced-stream-hevc.html",
+  "sourceMaster": "https://devstreaming-cdn.apple.com/videos/streaming/examples/bipbop_adv_example_hevc/master.m3u8",
+  "videoSource": "https://devstreaming-cdn.apple.com/videos/streaming/examples/bipbop_adv_example_hevc/v3/prog_index.m3u8",
+  "audioSource": "https://devstreaming-cdn.apple.com/videos/streaming/examples/bipbop_adv_example_hevc/a1/prog_index.m3u8",
+  "subtitleTimingSource": "https://devstreaming-cdn.apple.com/videos/streaming/examples/bipbop_adv_example_hevc/s1/en/fileSequence0.webvtt",
+  "subtitleTimingSecondSegmentChecked": "https://devstreaming-cdn.apple.com/videos/streaming/examples/bipbop_adv_example_hevc/s1/en/fileSequence1.webvtt",
+  "timestampMap": {
+    "mpegts": 900000,
+    "local": "00:00:00.000"
+  },
+  "videoDurationSeconds": 599.99999,
+  "audioDurationSeconds": 600.04267,
+  "subtitleDurationSeconds": 600,
+  "videoCodec": "avc1.64001f",
+  "audioCodec": "mp4a.40.2",
+  "resolution": "640x360",
+  "drm": false,
+  "videoOrAudioModified": false,
+  "videoOrAudioHostedHere": false,
+  "initialFragmentValidation": {
+    "method": "ffprobe first two video packets and ffmpeg decode of first video frame",
+    "requestByteRange": "bytes=0-511625",
+    "responseStatus": 206,
+    "bytesRead": 511626,
+    "firstVideoPtsSeconds": 10,
+    "secondVideoPtsSeconds": 10.033333,
+    "firstFrameDecoded": true
+  },
+  "note": "Only manifests and a new WebVTT text track are hosted here. The 90 kHz timestamp map is copied from the original aligned Apple subtitle rendition. Position and default subtitle selection depend on the player."
+}
