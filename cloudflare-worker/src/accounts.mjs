@@ -14,6 +14,7 @@ import {recordProviderHealth,rankProviderCandidates,providerCircuitState,claimPr
 import {recordChannelObservation,readChannelObservations} from './provider-channel-observations.mjs';
 import {affinityGroup,providerAffinity,rememberProvider,forgetProvider,recentlyValidated,pruneAffinities} from './provider-affinity.mjs';
 import {assignmentKey,usableProvider,assignedProvider,saveAssignment,mediaRecentlyFailed,recentAccountProof} from './provider-assignment.mjs';
+import {INVENTORY_MAX_AGE_MS,mergeInventories,readInventoryPool} from './provider-inventory.mjs';
 import {exclusiveCatalogRoute,exclusiveSnapshot,selectExclusive,visibleExclusive} from './exclusive-catalog.mjs';
 import {cleanConnectionClient,recordConnectionLimit,updateConnectionQuality,closeResellerConnection} from './connection-monitor.mjs';
 import {resellerPresence,resellerPlaybackSummary,resellerLiveConnections,recordCustomerActivity} from './reseller-presence.mjs';
@@ -151,13 +152,13 @@ export async function accountsFetch(state,env,req){
   const u=await store.get('user:'+normal(configured)),admin=await store.get('admin');
   if(!alive(u)||u.admin||u.role==='admin'||u.id===admin?.id)return answer({error:'canary_account_unavailable'},409);
   if(p==='/canary-identity'){
-   const pool=await store.get('pool');
-   if(pool?.lines?.length&&pool.syncedAt>Date.now()-12*3600000){const counts=await leases.providerCounts();if(!pool.lines.some(line=>Number(line.maxConnections)-Number(line.external||0)-(counts.get(String(line.id))||0)>=2))return answer({error:'ccf_capacity'},409);}
+   const pool=await readInventoryPool(store);
+   if(pool?.lines.length){const counts=await leases.providerCounts();if(!pool.lines.some(line=>Number(line.maxConnections)-Number(line.external||0)-(counts.get(String(line.id))||0)>=2))return answer({error:'ccf_capacity'},409);}
   }
   if(p==='/canary-sample'){
    if(!['live','movie','series'].includes(b.type))return answer({error:'canary_sample_type'},400);
-   const now=Date.now(),pool=await store.get('pool'),health=await store.get('provider-health')||{};
-   if(!pool?.lines?.length||pool.syncedAt<now-12*3600000)return answer({sample:null});
+   const now=Date.now(),pool=await readInventoryPool(store,now),health=await store.get('provider-health')||{};
+   if(!pool?.lines.length)return answer({sample:null});
    const failed404=b.type==='live'?failedLive404Sample(health,pool,now):null;
    for(const [key,row]of Object.entries(health).filter(([,row])=>row?.ok===true&&row.at>now-1800000&&row.at<=now).sort((a,b)=>b[1].at-a[1].at)){
     const [scope,type,server,id,ext,...provider]=key.split('|');
@@ -199,10 +200,28 @@ export async function accountsFetch(state,env,req){
  if(p==='/provider-remove')return store.transaction(async tx=>{const providers=await tx.get('providers')||[],next=providers.filter(x=>x.source!==b.source);if(next.length===providers.length)return answer({error:'not_found'},404);const pools=await tx.get('source-pools')||{};delete pools[b.source];await tx.put('providers',next);await tx.put('source-pools',pools);if(next.length)await tx.put('provider',{...next[0],mode:'panel'});else await tx.delete('provider');await mergePools(tx,pools,leases.in(tx));return answer({ok:true})});
  if(p==='/permissions'){const user=await store.get('user:'+normal(b.username));return answer(contentPermissions(user?.permissions))}
  if(p==='/provider')return answer(await store.get('provider')||{});
- if(p==='/pool')return answer(await store.get('pool')||{lines:[],syncedAt:0});
+ if(p==='/pool')return answer(await readInventoryPool(store)||{lines:[],syncedAt:0,attemptedAt:0});
  if(p==='/provider-dashboard')return store.transaction(async tx=>answer(await providerDashboard(tx,Date.now(),leases.in(tx))));
- if(p==='/pool-sync')return store.transaction(async tx=>{const lines=b.lines;if(b.source){const pools=await tx.get('source-pools')||{};if(b.retain){const old=pools[b.source];pools[b.source]=old&&old.syncedAt>Date.now()-12*3600000?{...old,attemptedAt:Date.now()}:{lines:[],inventory:old?.inventory||[],syncedAt:old?.syncedAt||0,attemptedAt:Date.now()}}else{if(!Array.isArray(lines))return answer({error:'panel_no_active_lines'},503);pools[b.source]={lines,inventory:b.inventory,syncedAt:Date.now()}}await tx.put('source-pools',pools);await mergePools(tx,pools,leases.in(tx));return answer({ok:true})}if(!Array.isArray(lines))return answer({error:'panel_no_active_lines'},503);await tx.put('pool',{lines,syncedAt:Date.now()});const valid=new Set(lines.map(p=>p.id));await leases.in(tx).removeMatching(l=>l.provider_id&&!valid.has(l.provider_id));return answer({ok:true})});
- if(p==='/overview'){const provider=await store.get('provider'),pool=await store.get('pool'),connections=await leases.count();return answer({provider:provider?{username:provider.username,mode:provider.mode||'single',maxConnections:provider.mode==='panel'?(pool?.lines||[]).reduce((n,l)=>n+l.maxConnections,0):provider.maxConnections,activeAccounts:pool?.lines?.length||0,sourceCount:(await store.get('providers'))?.length||1}:null,connections})}
+ if(p==='/pool-sync')return store.transaction(async tx=>{
+  const {lines}=b,now=Date.now();
+  if(b.source){
+   const pools=await tx.get('source-pools')||{};
+   if(b.retain){
+    const old=pools[b.source]||{lines:[],inventory:[],syncedAt:0};
+    pools[b.source]={...old,lines:old.syncedAt>now-INVENTORY_MAX_AGE_MS?old.lines:[],attemptedAt:now};
+   }else{
+    if(!Array.isArray(lines))return answer({error:'panel_no_active_lines'},503);
+    pools[b.source]={lines,inventory:b.inventory,syncedAt:now};
+   }
+   await tx.put('source-pools',pools);await mergePools(tx,pools,leases.in(tx),now);
+   return answer({ok:true});
+  }
+  if(!Array.isArray(lines))return answer({error:'panel_no_active_lines'},503);
+  await tx.put('pool',{lines,syncedAt:now,attemptedAt:now});
+  const valid=new Set(lines.map(p=>p.id));await leases.in(tx).removeMatching(l=>l.provider_id&&!valid.has(l.provider_id));
+  return answer({ok:true});
+ });
+ if(p==='/overview'){const provider=await store.get('provider'),pool=await readInventoryPool(store),connections=await leases.count();return answer({provider:provider?{username:provider.username,mode:provider.mode||'single',maxConnections:provider.mode==='panel'?(pool?.lines||[]).reduce((n,l)=>n+l.maxConnections,0):provider.maxConnections,activeAccounts:pool?.lines?.length||0,sourceCount:(await store.get('providers'))?.length||1}:null,connections})}
  if(p==='/playback-begin'||p==='/playback-cancel')return store.transaction(async tx=>{
   if(typeof b.request_id!=='string'||!/^[a-zA-Z0-9_-]{1,100}$/.test(b.request_id))return answer({error:'invalid_playback_request'},400);
   const key='playback:'+b.sid,old=await tx.get(key)||{revision:0,cancelled:{}};
@@ -253,7 +272,7 @@ export async function accountsFetch(state,env,req){
    const row=health['account|'+lease.provider_id];row.openUntil=Math.max(row.openUntil||0,Date.now()+30000);row.backoff=Math.max(row.backoff||0,30000);
   }
   if(lease.canary&&b.ok&&!b.capacityBusy&&env.PLAYBACK_CANARY_USERNAME&&normal(lease.username)===normal(env.PLAYBACK_CANARY_USERNAME)){
-   const pool=await tx.get('pool'),provider=pool?.lines?.find(p=>p.id===lease.provider_id&&p.credentialKey===lease.providerCredentialKey&&usableProvider(p));
+   const pool=await readInventoryPool(tx),provider=pool?.lines.find(p=>p.id===lease.provider_id&&p.credentialKey===lease.providerCredentialKey&&usableProvider(p));
    if(provider){const key='canary-'+assignmentKey(lease.uid);await tx.put(key,saveAssignment(await tx.get(key),affinityGroup(lease),lease.uid,provider));}
   }
   await tx.put('provider-health',health);await recordChannelObservation(tx,lease,b,env);return answer({ok:true});
@@ -283,7 +302,7 @@ export async function accountsFetch(state,env,req){
   if(provider.mode==='panel'){
    // Inventory refresh stays off the streaming path. Counts use an index,
    // rather than deserializing all leases once for every provider candidate.
-   const pool=await tx.get('pool');if(!pool||pool.syncedAt<Date.now()-12*3600000)return answer({error:'panel_unavailable'},503);
+   const pool=await readInventoryPool(tx);if(!pool||pool.syncedAt<=Date.now()-INVENTORY_MAX_AGE_MS)return answer({error:'panel_unavailable'},503);
    const counts=await local.providerCounts();
    // Project replacement of this viewer only. Keep a same-media lease ID and
    // its history intact; all other viewers still count towards capacity.
@@ -380,9 +399,12 @@ export async function accountsFetch(state,env,req){
 }
 
 
-async function mergePools(tx,pools,leases){
- const unique=new Map(),keys=new Map();for(const pool of Object.values(pools))for(const line of pool.lines){const id=keys.get(line.key)||line.id,previous=unique.get(id);const next=previous?{...line,id:previous.id,maxConnections:Math.min(previous.maxConnections,line.maxConnections),external:Math.max(previous.external,line.external)}:line;unique.set(id,next);if(line.key)keys.set(line.key,id)}
- const lines=[...unique.values()];await tx.put('pool',{lines,syncedAt:Object.keys(pools).length?Math.min(...Object.values(pools).map(p=>p.attemptedAt||p.syncedAt)):Date.now()});await leases.removeMatching(l=>l.provider_id&&!unique.has(l.provider_id));
+async function mergePools(tx,pools,leases,now){
+ const pool=mergeInventories(pools,now),valid=new Set(pool.lines.map(line=>line.id));
+ // An aging source stops offering capacity while its refresh is pending.
+ // Its existing reservations remain until that source updates or expires.
+ for(const snapshot of Object.values(pools))for(const line of snapshot.lines)valid.add(line.id);
+ await tx.put('pool',pool);await leases.removeMatching(l=>l.provider_id&&!valid.has(l.provider_id));
 }
 
 async function registerXtream(store,entries){

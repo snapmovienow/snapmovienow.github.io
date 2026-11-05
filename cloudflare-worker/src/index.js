@@ -53,6 +53,7 @@ import {CCF_MEDIA_ORIGIN,isApprovedMediaIP} from './ip-media.mjs';
 import {fetchValidatedMedia,validatedMediaTarget} from './media-origin.mjs';
 import {readPanel,readPanelRecord,validateServerUrl} from "./reseller.mjs";
 import {accountsFetch} from "./accounts.mjs";
+import {INVENTORY_REFRESH_MS} from './provider-inventory.mjs';
 export {BackupRecovery} from './backup-recovery.mjs';
 import {matchesXtream} from './xtream.mjs';
 import {contentPermissions,createAdultPolicy,isAdult} from './content-permissions.mjs';
@@ -179,8 +180,8 @@ const poolRefreshes=new WeakMap();
 async function isolatedPoolRefresh(env,force=false){const response=await env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_provider_refresh_v1')).fetch('https://private/refresh-pool',{method:'POST',body:JSON.stringify({force})});const status=await response.json();if(!response.ok)throw Error(status.error||'provider_unavailable');return status.single?null:(await (await directory(env,'/pool')).json()).lines}
 async function providerPool(env,ctx){
  const key=env.PLAYBACK_SESSIONS;
- if(ctx?.waitUntil){const snapshot=await (await directory(env,'/pool')).json();if(snapshot.lines?.length&&snapshot.syncedAt>Date.now()-12*3600000){
-  if(snapshot.syncedAt<Date.now()-30000&&!poolRefreshes.has(key)){const work=isolatedPoolRefresh(env);poolRefreshes.set(key,work);ctx.waitUntil(work.catch(()=>{}).finally(()=>poolRefreshes.delete(key)))}
+ if(ctx?.waitUntil){const snapshot=await (await directory(env,'/pool')).json();if(snapshot.lines?.length){
+  if(snapshot.attemptedAt<=Date.now()-INVENTORY_REFRESH_MS&&!poolRefreshes.has(key)){const work=isolatedPoolRefresh(env);poolRefreshes.set(key,work);ctx.waitUntil(work.catch(()=>{}).finally(()=>poolRefreshes.delete(key)))}
   return snapshot.lines;
  }}
  if(poolRefreshes.has(key))return poolRefreshes.get(key);const work=isolatedPoolRefresh(env);poolRefreshes.set(key,work);try{return await work}finally{poolRefreshes.delete(key)}
@@ -188,7 +189,7 @@ async function providerPool(env,ctx){
 async function refreshProviderPool(env,force=false){
  const providers=await (await directory(env,'/providers')).json();if(!providers.length)throw Error('provider_not_configured');
  const saved=await (await directory(env,'/provider')).json();if(providers.length===1&&saved.mode!=='panel')return null;
- let pool=await (await directory(env,'/pool')).json();if(!force&&pool.syncedAt>Date.now()-30000)return pool.lines;let transient=false;
+ let pool=await (await directory(env,'/pool')).json();if(!force&&pool.attemptedAt>Date.now()-INVENTORY_REFRESH_MS)return pool.lines;let transient=false;
  await Promise.all(providers.map(async p=>{
   let raw=[],inventory=[];const origin=p.origin||ORIGIN;
   try{
