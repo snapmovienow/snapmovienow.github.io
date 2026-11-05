@@ -150,7 +150,12 @@ export class PlaybackSession {
   }).catch(()=>{}));
   return Response.json(result)}
  if(path==='/monitor-media-failures'){const health=await (await directory(this.env,'/provider-health')).json();const items=await cachedFailureNames(createProviderCatalog(catalogDeps,this.env,null,{timeoutMs:1500,cacheReadMs:300}),health.recentMediaFailures);return Response.json({items})}
- if(path==='/monitor-providers'){const providers=await (await directory(this.env,'/providers')).json();return Response.json(await probeProviders(providers,{decrypt:value=>unticket(this.env,value),readPanel,validateAccount:(username,password,origin,timeout,signal)=>validateAccount(username,password,origin,timeout,signal,this.env.CCF_ENTRY_TRANSPORT==='tcp'),identifier:hashId}))}
+ if(path==='/monitor-providers'){
+  try{
+   const response=await directory(this.env,'/providers');if(!response.ok)throw Error('monitor_provider_directory_unavailable');
+   return Response.json(await probeProviders(await response.json(),{decrypt:value=>unticket(this.env,value),readPanel,validateAccount:(username,password,origin,timeout,signal)=>validateAccount(username,password,origin,timeout,signal,this.env.CCF_ENTRY_TRANSPORT==='tcp'),identifier:hashId}));
+  }catch{return Response.json({error:'monitor_provider_directory_unavailable'},{status:503})}
+ }
  if(path.startsWith('/profile/'))return profileRoute(this.state.storage,req);
  if(path.startsWith('/operations/timing-'))return playbackTimingsRoute(this.state.storage,req);
  if(path==='/operations/monitor'){const [playback,timings]=await Promise.all([operationsRoute(this.state.storage,req),playbackTimingsRoute(this.state.storage,new Request('https://private/operations/timing-read',{method:'POST',body:'{}'}))]);return Response.json({...await playback.json(),timings:(await timings.json()).groups})}
