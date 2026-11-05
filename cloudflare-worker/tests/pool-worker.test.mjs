@@ -1,9 +1,11 @@
 import {openLeaseStore} from '../src/lease-store.mjs';
+import {INVENTORY_MAX_AGE_MS,mergeInventories} from '../src/provider-inventory.mjs';
 import assert from 'node:assert/strict';import worker,{PlaybackSession} from '../src/index.js';
 class Store{constructor(){this.data=new Map();this.queue=Promise.resolve()}async get(k){return structuredClone(this.data.get(k))}async put(k,v){this.data.set(k,structuredClone(v))}async delete(k){this.data.delete(k)}async deleteAll(){this.data.clear()}async setAlarm(){}async list({prefix}){return new Map([...this.data].filter(([k])=>k.startsWith(prefix)).map(([k,v])=>[k,structuredClone(v)]))}transaction(fn){const r=this.queue.then(()=>fn(this));this.queue=r.catch(()=>{});return r}}
 const objects=new Map(),env={TICKET_SECRET:'test-ticket-secret-only',ADMIN_SETUP_SECRET:'setup-test-only-123456789012345678901234567890'};env.PLAYBACK_SESSIONS={idFromName:x=>x,get(id){if(!objects.has(id))objects.set(id,new PlaybackSession({storage:new Store()},env));return {fetch:(url,options)=>objects.get(id).fetch(new Request(url,options))}}};
 const row=id=>['<a>'+id+'</a>','<a>line'+id+'</a>','<span class="table-trunc-copy-cell__text tooltip" title="line-password-test">hidden</span>','owner','<i title="Active"></i>','','','0','3','','','2099-01-01'];
-globalThis.fetch=async(url,opts)=>{const u=new URL(url);if(u.pathname.endsWith('/login'))return new Response(opts.method==='POST'?'<a href="dashboard">Welcome</a>':'<input name="password">',{headers:{'set-cookie':'PHPSESSID='+((opts.body||'').includes('username=second')?'second':'first')+'; path=/'}});if(u.pathname.endsWith('/table'))return Response.json({recordsFiltered:2,data:opts.headers.Cookie?.includes('second')?[row(2),row(3)]:[row(1),row(2)]});if(u.pathname==='/player_api.php'){assert.ok(['line1','line2','line3'].includes(u.searchParams.get('username')));assert.equal(u.searchParams.get('password'),'line-password-test');const action=u.searchParams.get('action');return Response.json(action==='get_vod_streams'?[{stream_id:123,name:'Movie'}]:action==='get_series'?[{series_id:456,name:'Series'}]:{user_info:{auth:1,status:'Active',max_connections:'3',active_cons:'0'}})}return new Response('sample',{headers:{'content-type':'video/mp4'}})};
+let inventoryReads=0,inventoryFails=false;
+globalThis.fetch=async(url,opts)=>{const u=new URL(url);if(u.pathname.endsWith('/login'))return new Response(opts.method==='POST'?'<a href="dashboard">Welcome</a>':'<input name="password">',{headers:{'set-cookie':'PHPSESSID='+((opts.body||'').includes('username=second')?'second':'first')+'; path=/'}});if(u.pathname.endsWith('/table')){inventoryReads++;return inventoryFails?new Response('Unavailable',{status:503}):Response.json({recordsFiltered:2,data:opts.headers.Cookie?.includes('second')?[row(2),row(3)]:[row(1),row(2)]})}if(u.pathname==='/player_api.php'){assert.ok(['line1','line2','line3'].includes(u.searchParams.get('username')));assert.equal(u.searchParams.get('password'),'line-password-test');const action=u.searchParams.get('action');return Response.json(action==='get_vod_streams'?[{stream_id:123,name:'Movie'}]:action==='get_series'?[{series_id:456,name:'Series'}]:{user_info:{auth:1,status:'Active',max_connections:'3',active_cons:'0'}})}return new Response('sample',{headers:{'content-type':'video/mp4'}})};
 const origin='https://snapmovienow-edge.juancanta89.workers.dev';const req=async(b,path='')=>{const r=await worker.fetch(new Request(origin+path,{method:'POST',body:JSON.stringify(b)}),env);return {status:r.status,data:await r.json()}};
 await req({action:'setup',setupSecret:env.ADMIN_SETUP_SECRET,username:'owner',password:'owner-password-test'},'/admin');const login=await req({action:'login',username:'owner',password:'owner-password-test'},'/admin');assert.equal(login.status,200);const admin=(action,b={})=>req({action,access_token:login.data.access_token,...b},'/admin');assert.equal((await admin('provider-save',{mode:'panel',username:'owner',password:'panel-password-test'})).status,200);
 const sessions=[];for(let i=0;i<7;i++){assert.equal((await admin('save',{create:true,username:'customer'+i,password:'customer-password-test',status:'active'})).status,200);sessions.push((await req({op:'auth',username:'customer'+i,password:'customer-password-test'})).data.access_token)}
@@ -14,7 +16,7 @@ console.log('PASS: panel connection → independent login → movie/series catal
 
 assert.equal((await admin('provider-save',{mode:'panel',username:'second',password:'panel-second-test'})).status,200);
 let combined=await admin('overview');assert.equal(combined.data.provider.sourceCount,2);assert.equal(combined.data.provider.activeAccounts,3);assert.equal(combined.data.provider.maxConnections,9);assert.equal(combined.data.connections,6);
-const storage=objects.get('__smn_accounts_v1').state.storage;const pool=await storage.get('pool');pool.syncedAt=0;await storage.put('pool',pool);
+const storage=objects.get('__smn_accounts_v1').state.storage;const pool=await storage.get('pool');pool.attemptedAt=0;await storage.put('pool',pool);
 assert.equal((await req({op:'vod',access_token:sessions[rejected]})).status,200);
 combined=await admin('overview');assert.equal(combined.data.provider.activeAccounts,3);assert.equal(combined.data.provider.maxConnections,9);assert.equal(combined.data.connections,6);
 console.log('PASS: second reseller adds capacity, overlapping line deduplicated, refresh retains both sources and active playback leases.');
@@ -25,6 +27,32 @@ const directory = async body => {
  assert.equal(result.status,200);
 };
 const sources=Object.keys(await storage.get('source-pools'));
+const readPool=()=>env.PLAYBACK_SESSIONS.get('__smn_accounts_v1').fetch('https://private/accounts/pool',{method:'POST',body:'{}'}).then(r=>r.json());
+const refresh=force=>env.PLAYBACK_SESSIONS.get('__smn_provider_refresh_v1').fetch('https://private/refresh-pool',{method:'POST',body:JSON.stringify({force})});
+const goodAt=Date.now()-3600000,legacyAttempt=Date.now()-60000,aged=await storage.get('source-pools');
+for(const snapshot of Object.values(aged)){snapshot.syncedAt=goodAt;snapshot.attemptedAt=legacyAttempt;}
+await storage.put('source-pools',aged);
+await storage.put('pool',{lines:(await storage.get('pool')).lines,syncedAt:legacyAttempt});
+assert.equal((await readPool()).syncedAt,goodAt,'older stored aggregates are reconstructed from successful source timestamps');
+
+inventoryFails=true;
+const readsBeforeFailure=inventoryReads;
+assert.equal((await refresh(false)).status,200);
+assert.equal(inventoryReads,readsBeforeFailure+2);
+const retained=await readPool();
+assert.equal(retained.syncedAt,goodAt,'a failed refresh never advances inventory validity');
+assert.ok(retained.attemptedAt>legacyAttempt);
+assert.equal(await (await openLeaseStore(storage)).count(),6);
+assert.equal((await refresh(false)).status,200);
+assert.equal(inventoryReads,readsBeforeFailure+2,'the failed attempt still enforces the automatic retry cooldown');
+
+inventoryFails=false;
+assert.equal((await refresh(true)).status,200);
+const refreshed=await readPool();
+assert.ok(refreshed.syncedAt>goodAt);
+assert.equal(refreshed.attemptedAt,refreshed.syncedAt);
+const forMixedAge=await storage.get('source-pools');
+
 await directory({source:sources[0],retain:true});
 assert.equal((await storage.get('pool')).lines.length,3);
 assert.equal(await (await openLeaseStore(storage)).count(),6,'a transient source outage preserves authorised running streams');
@@ -37,3 +65,17 @@ const expiredPools=await storage.get('source-pools');expiredPools[sources[1]].sy
 await directory({source:sources[1],retain:true});
 assert.equal((await storage.get('pool')).lines.length,0); assert.equal(await (await openLeaseStore(storage)).count(),0,'inventory retention expires after twelve hours');
 console.log('PASS: transient inventory failure preserves leases; confirmed inactivity revokes them; stale inventory expires after twelve hours.');
+
+const checkAt=Date.now(),expiredAt=checkAt-INVENTORY_MAX_AGE_MS-1000;
+forMixedAge[sources[0]].syncedAt=expiredAt;
+forMixedAge[sources[0]].attemptedAt=checkAt;
+forMixedAge[sources[1]].syncedAt=checkAt;
+await storage.put('source-pools',forMixedAge);
+await storage.put('pool',mergeInventories(forMixedAge,checkAt-2000));
+const mixed=await readPool();
+assert.deepEqual(mixed.lines.map(l=>l.id),['2','3'],'a source crossing its expiry cannot hide the usable inventory of another source');
+assert.equal(mixed.syncedAt,checkAt);
+const staleUser=await storage.get('user:customer0');
+const allocation=await env.PLAYBACK_SESSIONS.get('__smn_accounts_v1').fetch('https://private/accounts/acquire',{method:'POST',body:JSON.stringify({sid:'mixed-age-test',uid:staleUser.id,username:'customer0',version:staleUser.version})});
+assert.equal(allocation.status,200);assert.ok(['2','3'].includes((await allocation.json()).provider_id));
+console.log('PASS: legacy inventory freshness, separate failed-attempt cooldown, successful refresh and isolation of an expired source.');

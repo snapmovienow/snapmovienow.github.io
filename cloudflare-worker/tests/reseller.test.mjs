@@ -51,5 +51,8 @@ for(const i of [6,7])await storage.put('user:customer'+i,{id:'u'+i,username:'cus
 snapshot.syncedAt=Date.now()-120000;await storage.put('pool',snapshot);
 assert.equal((await acquire(6)).status,200,'web playback can use a recent inventory during background refresh');
 snapshot.syncedAt=Date.now()-12*3600000-1000;await storage.put('pool',snapshot);
+const sourceSnapshots=await storage.get('source-pools');
+for(const source of Object.values(sourceSnapshots))source.syncedAt=snapshot.syncedAt;
+await storage.put('source-pools',sourceSnapshots);
 assert.equal((await acquire(7)).status,503,'inventory older than twelve hours cannot allocate capacity');
 console.log('PASS: web/native inventory age agrees with background refresh; stale snapshots remain bounded.');

@@ -2,15 +2,16 @@
 // used by allocation. Never serialize storage records or encrypted credentials.
 import {openLeaseStore} from './lease-store.mjs';
 import {cleanPlaybackActivity} from './playback-activity.mjs';
+import {INVENTORY_MAX_AGE_MS,readInventoryPool} from './provider-inventory.mjs';
 const count=value=>Number.isFinite(Number(value))?Math.max(0,Math.floor(Number(value))):0;
 export async function providerDashboard(store,now=Date.now(),leases=null){
  leases??=await openLeaseStore(store);
  const provider=await store.get('provider'),providers=await store.get('providers')||(provider?[{...provider,source:provider.mode+':'+provider.username}]:[]);
- const pool=await store.get('pool')||{lines:[],syncedAt:0},pools=await store.get('source-pools')||{};
+ const pool=await readInventoryPool(store,now)||{lines:[],syncedAt:0},pools=await store.get('source-pools')||{};
  const rows=new Map(),byKey=new Map((pool.lines||[]).filter(l=>l.key).map(l=>[l.key,l])),byId=new Map((pool.lines||[]).map(l=>[l.id,l])),identities=new Map([...byKey].map(([key,line])=>[key,line.id]));
  for(const source of providers){const snapshot=pools[source.source]||{lines:pool.lines,syncedAt:pool.syncedAt};
   for(const item of snapshot.inventory||snapshot.lines||[]){const line=(item.key&&byKey.get(item.key))||byId.get(item.id),id=line?.id||(item.key&&identities.get(item.key))||item.id;if(item.key)identities.set(item.key,id);
-   const old=rows.get(id),eligible=!!line&&(!item.expiresAt||item.expiresAt>now)&&snapshot.syncedAt>now-12*3600000;
+   const old=rows.get(id),eligible=!!line&&(!item.expiresAt||item.expiresAt>now)&&snapshot.syncedAt>now-INVENTORY_MAX_AGE_MS;
    const next={id,username:line?.username||item.username||'Cuenta '+id,server:line?.server||item.server||'ccf',status:item.expiresAt&&item.expiresAt<=now?'expired':eligible?'active':item.status&&item.status!=='active'?item.status:'unavailable',eligible,maxConnections:Math.min(3,count(line?.maxConnections??item.maxConnections)),reported:count(line?.external??item.reported??item.external),syncedAt:snapshot.syncedAt||0,stale:!!snapshot.attemptedAt||!(snapshot.syncedAt>now-60000),sources:[...(old?.sources||[]),{source:source.source,name:source.name||source.username}],reservations:[]};
    if(!old||next.syncedAt>=old.syncedAt)rows.set(id,next);else old.sources=next.sources;
   }

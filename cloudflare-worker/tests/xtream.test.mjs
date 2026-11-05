@@ -283,7 +283,7 @@ failMedia = false;failMediaStatus=503;
 // A slow reseller refresh must not block a new native playback with a recent
 // inventory, including an hour-old retained pool. Individual playback credentials still receive a fresh check.
 const accountsStore = objects.get('__smn_accounts_v1').state.storage;
-const stale = await accountsStore.get('pool'); stale.syncedAt = Date.now()-3600000; await accountsStore.put('pool', stale);
+const stale = await accountsStore.get('pool'); stale.syncedAt = stale.attemptedAt = Date.now()-3600000; await accountsStore.put('pool', stale);
 const savedFetch = globalThis.fetch;
 let unblockRefresh; const refreshGate = new Promise(resolve => {unblockRefresh=resolve});
 let checkingRefresh = true;
@@ -303,7 +303,7 @@ offset+=120001;failValidation=true;
 const unavailablePlayback=await media('movie',movies[0].stream_id,'mp4');
 assert.equal(unavailablePlayback.status,503);assert.equal((await unavailablePlayback.json()).error,'provider_unavailable');
 assert.equal((await leases()).length,0);
-const retainedInventory=await accountsStore.get('pool');retainedInventory.syncedAt=0;await accountsStore.put('pool',retainedInventory);
+const retainedInventory=await accountsStore.get('pool');retainedInventory.attemptedAt=0;await accountsStore.put('pool',retainedInventory);
 const retainedCatalog=await api('get_vod_categories');assert.equal(retainedCatalog.status,200);
 assert.equal((await accountsStore.get('pool')).lines.length,3,'a provider HTTP 503 with a JSON body does not mark accounts inactive');
 failValidation=false;
