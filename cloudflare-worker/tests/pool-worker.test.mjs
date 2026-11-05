@@ -16,7 +16,7 @@ console.log('PASS: panel connection → independent login → movie/series catal
 
 assert.equal((await admin('provider-save',{mode:'panel',username:'second',password:'panel-second-test'})).status,200);
 let combined=await admin('overview');assert.equal(combined.data.provider.sourceCount,2);assert.equal(combined.data.provider.activeAccounts,3);assert.equal(combined.data.provider.maxConnections,9);assert.equal(combined.data.connections,6);
-const storage=objects.get('__smn_accounts_v1').state.storage;const pool=await storage.get('pool');pool.syncedAt=0;await storage.put('pool',pool);
+const storage=objects.get('__smn_accounts_v1').state.storage;const pool=await storage.get('pool');pool.attemptedAt=0;await storage.put('pool',pool);
 assert.equal((await req({op:'vod',access_token:sessions[rejected]})).status,200);
 combined=await admin('overview');assert.equal(combined.data.provider.activeAccounts,3);assert.equal(combined.data.provider.maxConnections,9);assert.equal(combined.data.connections,6);
 console.log('PASS: second reseller adds capacity, overlapping line deduplicated, refresh retains both sources and active playback leases.');
