@@ -189,10 +189,29 @@ async function refreshProviderPool(env,force=false){
  const providers=await (await directory(env,'/providers')).json();if(!providers.length)throw Error('provider_not_configured');
  const saved=await (await directory(env,'/provider')).json();if(providers.length===1&&saved.mode!=='panel')return null;
  let pool=await (await directory(env,'/pool')).json();if(!force&&pool.syncedAt>Date.now()-30000)return pool.lines;let transient=false;
- await Promise.all(providers.map(async p=>{let raw=[],inventory=[];const origin=p.origin||ORIGIN;try{const d=await unticket(env,p.encrypted||'');if(!d)throw Error('provider_not_configured');
- if(d.kind==='reseller'){const read=await readPanel(d.username,d.password,p.url||'http://ccf.center:8444/NYzkggyG/',{inventory:true});raw=read.lines;inventory=read.inventory}else{const a=await validateAccount(d.username,d.password,origin,6000,undefined,env.CCF_ENTRY_TRANSPORT==='tcp');if(!a)throw Error('provider_inactive');raw=[{id:'single:'+d.username.toLowerCase(),username:d.username,password:d.password,maxConnections:Math.min(3,Number(a.user_info.max_connections)||3),external:Number(a.user_info.active_cons)||0}];inventory=raw.map(l=>({...l,status:'active',expiresAt:Number(a.user_info.exp_date)>0?Number(a.user_info.exp_date)*1000:null}))}
- }catch(error){if(!['panel_invalid','panel_no_active_lines','provider_inactive','provider_not_configured'].includes(error.message)){transient=true;const retained=await directory(env,'/pool-sync',{source:p.source,retain:true});if(!retained.ok)throw Error('panel_unavailable');return}}
- const response=await directory(env,'/pool-sync',{source:p.source,lines:await encryptedLines(env,raw,origin),inventory:await safeInventory(env,inventory,origin)});if(!response.ok)throw Error('panel_unavailable');}));
+ await Promise.all(providers.map(async p=>{
+  let raw=[],inventory=[];const origin=p.origin||ORIGIN;
+  try{
+   const d=await unticket(env,p.encrypted||'');
+   if(d?.kind==='reseller'){
+    const read=await readPanel(d.username,d.password,p.url||'http://ccf.center:8444/NYzkggyG/',{inventory:true});
+    raw=read.lines;inventory=read.inventory;
+   }else if(d?.kind==='provider'){
+    const a=await validateAccount(d.username,d.password,origin,6000,undefined,env.CCF_ENTRY_TRANSPORT==='tcp');
+    if(a){
+     raw=[{id:'single:'+d.username.toLowerCase(),username:d.username,password:d.password,maxConnections:Math.min(3,Number(a.user_info.max_connections)||3),external:Number(a.user_info.active_cons)||0}];
+     inventory=raw.map(l=>({...l,status:'active',expiresAt:Number(a.user_info.exp_date)>0?Number(a.user_info.exp_date)*1000:null}));
+    }
+   }else throw Error('provider_not_configured');
+  }catch{
+   // Failed authentication, parsing or decryption cannot confirm a removal.
+   transient=true;const retained=await directory(env,'/pool-sync',{source:p.source,retain:true});
+   if(!retained.ok)throw Error('panel_unavailable');
+   return;
+  }
+  const response=await directory(env,'/pool-sync',{source:p.source,lines:await encryptedLines(env,raw,origin),inventory:await safeInventory(env,inventory,origin)});
+  if(!response.ok)throw Error('panel_unavailable');
+ }));
  pool=await (await directory(env,'/pool')).json();if(!pool.lines.length)throw Error(transient?'provider_unavailable':'provider_inactive');return pool.lines;
 }
 async function catalogCredentials(env,server,ctx,limit=1){const pool=await providerPool(env,ctx);if(!pool)return [{...await providerCredentials(env),server:'ccf'}];const counts=new Map(),credentials=[];for(const l of pool){const id=l.server||'ccf';if((server&&server!==id)||(counts.get(id)||0)>=limit)continue;const d=await unticket(env,l.encrypted);if(d){credentials.push({...d,server:id});counts.set(id,(counts.get(id)||0)+1)}}return credentials}

@@ -1,22 +1,23 @@
 // Read-only XUI reseller connector. Never logs credentials or modifies provider accounts.
 const BASE="http://ccf.center:8444/NYzkggyG/";
+const PANEL_PAGE_SIZE=1000,PANEL_MAX_PAGES=10;
 const plain=s=>String(s||'').replace(/<[^>]*>/g,'').trim().replace(/&amp;/g,'&').replace(/&quot;/g,'"').replace(/&#0?39;/g,"'").replace(/&lt;/g,'<').replace(/&gt;/g,'>');
 // Administrator metadata never contains a subscription password.
-export function parseInventory(data){
+export function parseInventory(data,now=Date.now()){
  if(!Array.isArray(data?.data))throw Error('panel_format_changed');
  return data.data.flatMap(r=>{if(!Array.isArray(r)||r.length<12||!/^\d+$/.test(plain(r[0]))||!plain(r[1]))return [];
   const date=plain(r[11]).match(/^\d{4}-\d{2}-\d{2}/)?.[0],expiresAt=date?Date.parse(date+'T23:59:59Z'):null;
   const label=String(r[4]).match(/title=["']([^"']+)["']/)?.[1]||'';
-  const status=(expiresAt&&expiresAt<Date.now())||/expired/i.test(label)?'expired':/^active$/i.test(label)?'active':/disabled|banned|suspend/i.test(label)?'suspended':'unavailable';
+  const status=(expiresAt&&expiresAt<now)||/expired/i.test(label)?'expired':/^active$/i.test(label)?'active':/disabled|banned|suspend/i.test(label)?'suspended':'unavailable';
   return [{id:plain(r[0]),username:plain(r[1]),status,expiresAt:Number.isFinite(expiresAt)?expiresAt:null,maxConnections:Math.min(3,Math.max(0,Number(plain(r[8]))||0)),reported:Math.max(0,Number(plain(r[7]))||0)}];
  });
 }
-export function parseLines(data){
+export function parseLines(data,now=Date.now()){
  if(!Array.isArray(data?.data))throw Error('panel_format_changed');
  return data.data.flatMap(r=>{if(!Array.isArray(r)||r.length<12||!/^\d+$/.test(plain(r[0])))return [];
  const username=plain(r[1]),password=plain(String(r[2]).match(/class="table-trunc-copy-cell__text[^"]*"[^>]*title="([^"]+)"/)?.[1]||String(r[2]).match(/<span[^>]*class="table-trunc-copy-cell__text[^"]*"[^>]*>([^<]*)/)?.[1]||r[2]);
- const active=/title=["']Active["']/.test(String(r[4]));const used=Number(plain(r[7])),max=Math.min(3,Number(plain(r[8])));const date=plain(r[11]).match(/^\d{4}-\d{2}-\d{2}/)?.[0];
- if(!active||!username||!password||!Number.isFinite(used)||!Number.isInteger(max)||max<1||(date&&Date.parse(date+'T23:59:59Z')<Date.now()))return [];
+ const active=/title=["']Active["']/i.test(String(r[4]));const used=Number(plain(r[7])),max=Math.min(3,Number(plain(r[8])));const date=plain(r[11]).match(/^\d{4}-\d{2}-\d{2}/)?.[0];
+ if(!active||!username||!password||!Number.isFinite(used)||!Number.isInteger(max)||max<1||(date&&Date.parse(date+'T23:59:59Z')<now))return [];
  const expiresAt=date?Date.parse(date+'T23:59:59Z'):null;
  return [{id:plain(r[0]),username,password,maxConnections:max,external:used,expiresAt:Number.isFinite(expiresAt)?expiresAt:null}];});
 }
@@ -34,13 +35,37 @@ export async function panelSession(username,password,base=BASE,options={}){
  if(/name=["']password["']/.test(text)||!text.includes('dashboard'))throw Error('panel_invalid');
  return {request,base};
 }
+function inventoryTotal(data){
+ const raw=Object.hasOwn(data??{},'recordsFiltered')?data.recordsFiltered:data?.recordsTotal;
+ const total=typeof raw==='string'&&/^\d+$/.test(raw)?Number(raw):raw;
+ if(!Number.isSafeInteger(total)||total<0||(total===0&&Number(data?.recordsTotal)>0))throw Error('panel_inventory_incomplete');
+ if(total>PANEL_PAGE_SIZE*PANEL_MAX_PAGES)throw Error('panel_too_many_lines');
+ return total;
+}
+
 export async function readPanel(username,password,base=BASE,options={}){
  const {request}=await panelSession(username,password,base);
  // Provider-side filters can exclude usable idle active lines. Read the full
  // authenticated inventory and validate status and expiry locally. Playback
  // also validates the selected account before use.
- const lines=[],inventory=[];let total=0;for(let start=0;start<10000;start+=1000){const query=new URLSearchParams({id:'lines',filter:'',reseller:'',draw:'1',start:String(start),length:'1000','search[value]':'','order[0][column]':'0','order[0][dir]':'asc'});let d;try{d=JSON.parse(await request('table?'+query))}catch(e){if(e.message.startsWith('panel_'))throw e;throw Error('panel_format_changed')}
-  total=Number(d.recordsFiltered);lines.push(...parseLines(d));if(options.inventory)inventory.push(...parseInventory(d));if(!d.data?.length||start+1000>=total)break;if(start===9000)throw Error('panel_too_many_lines');}
+ // A replacement can revoke reservations. Reject any page whose contents
+ // cannot account for every row in the reported inventory.
+ const lines=[],inventory=[],seen=new Set(),now=Date.now();let total,start=0;
+ for(let page=0;page<PANEL_MAX_PAGES;page++){
+  const query=new URLSearchParams({id:'lines',filter:'',reseller:'',draw:'1',start:String(start),length:String(PANEL_PAGE_SIZE),'search[value]':'','order[0][column]':'0','order[0][dir]':'asc'});
+  let data;try{data=JSON.parse(await request('table?'+query))}catch(error){if(error.message.startsWith('panel_'))throw error;throw Error('panel_format_changed')}
+  const count=inventoryTotal(data);total??=count;
+  if(!Array.isArray(data.data)||count!==total||data.data.length>Math.min(PANEL_PAGE_SIZE,total-start)||(!data.data.length&&start<total))throw Error('panel_inventory_incomplete');
+  const pageInventory=parseInventory(data,now),pageLines=parseLines(data,now),activeIds=new Set(pageLines.map(line=>line.id));
+  if(pageInventory.length!==data.data.length)throw Error('panel_inventory_incomplete');
+  for(const item of pageInventory){
+   if(seen.has(item.id)||item.status==='unavailable'||(item.status==='active')!==activeIds.has(item.id))throw Error('panel_inventory_incomplete');
+   seen.add(item.id);
+  }
+  lines.push(...pageLines);inventory.push(...pageInventory);start+=data.data.length;
+  if(start===total)break;
+ }
+ if(start!==total)throw Error('panel_inventory_incomplete');
  if(!lines.length&&!options.inventory)throw Error('panel_no_active_lines');return options.inventory?{lines,inventory}:lines;
 }
 
