@@ -7,6 +7,8 @@ import {mediaFailureContext} from './monitor-content-context.mjs';
 
 export const MONITOR_CRON='*/5 * * * *';
 const interval=300000,freshness=36*3600000;
+const sustainedRecovery=new Set(['provider','startup','playback']);
+const trackedReferenceLimit=12;
 const email=value=>typeof value==='string'&&value.length<=254&&/^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?\.[a-zA-Z]{2,63}$/.test(value);
 const defaults=()=>({enabled:true,channel:'panel',to:'',from:'',version:1});
 function canaryState(state,env){
@@ -45,7 +47,8 @@ export function observations(snapshot,now,createdAt){
   const bad=g.failedStarts>=5||g.reports>=5&&g.errors>=5||g.starts>=5&&(g.stallPercent>2||g.startupP95UpperMs>10000);
   const healthy=g.starts>=5&&!g.failedStarts&&!g.errors&&g.stallPercent<=2&&(g.startupP95UpperMs===null||g.startupP95UpperMs<=10000);
   if(!bad&&!healthy)continue;
-  out.push({key:'playback:'+g.server+':'+g.type+':'+g.quality+':'+g.platform,kind:'playback',title:'Fallos repetidos de reproducción',detail:({live:'TV',movie:'Películas',series:'Series'}[g.type])+' · '+(g.platform==='web'?'Web':'Android')+' · '+g.quality+' · '+g.failedStarts+' fallos de inicio · '+g.errors+' errores · '+g.stallPercent+'% cargando',bad,confirm:1});
+  const impact=Math.max(g.failedStarts/5,g.reports>=5?g.errors/5:0,g.starts>=5?Math.max(g.stallPercent/2,g.startupP95UpperMs/10000):0);
+  out.push({key:'playback:'+g.server+':'+g.type+':'+g.quality+':'+g.platform,kind:'playback',title:'Fallos repetidos de reproducción',detail:({live:'TV',movie:'Películas',series:'Series'}[g.type])+' · '+(g.platform==='web'?'Web':'Android')+' · '+g.quality+' · '+g.failedStarts+' fallos de inicio · '+g.errors+' errores · '+g.stallPercent+'% cargando',bad,confirm:1,impact});
  }
  if(snapshot.canary?.enabled)for(const result of snapshot.canary.results||[]){
   if(!['live','movie','series'].includes(result.type)||!['healthy','failed'].includes(result.status)||result.at<now-15*60000)continue;
@@ -59,7 +62,8 @@ export function observations(snapshot,now,createdAt){
  }
  for(const item of out)if(item.bad&&['startup','playback'].includes(item.kind)){
   const parts=item.key.split(':'),type=parts[item.kind==='startup'?1:2],server=item.kind==='playback'?parts[1]:null;
-  const context=mediaFailureContext(snapshot.mediaFailures,type,server,now);if(context)item.diagnosticContext=context+(type==='live'&&snapshot.catalogReferences?.references?.length?'\nReferencia del catálogo (ámbito de una cuenta; no atribuye todos los fallos):\n'+catalogFailureContext({references:snapshot.catalogReferences.references.filter(r=>!server||r.server===server)}):'');
+  if(server)item.references=[];
+  const context=mediaFailureContext(snapshot.mediaFailures,type,server,now,item.references);if(context)item.diagnosticContext=context+(type==='live'&&snapshot.catalogReferences?.references?.length?'\nReferencia del catálogo (ámbito de una cuenta; no atribuye todos los fallos):\n'+catalogFailureContext({references:snapshot.catalogReferences.references.filter(r=>!server||r.server===server)}):'');
  }
  return out;
 }
@@ -72,15 +76,29 @@ export function applyObservations(state,snapshot,now){
   if(item.kind==='playback'&&!item.bad&&!state.incidents[item.key])continue;
   seen.add(item.key);const previous=state.checks[item.key]||{bad:0,good:0};
   // A manual check or duplicate cron in the same slot cannot amplify a streak.
-  if(previous.bucket!==bucket&&(!item.sampleAt||previous.sampleAt!==item.sampleAt)){previous.bad=item.bad?previous.bad+1:0;previous.good=item.bad?0:previous.good+1;previous.bucket=bucket;if(item.sampleAt)previous.sampleAt=item.sampleAt}
+  if(previous.bucket!==bucket&&(!item.sampleAt||previous.sampleAt!==item.sampleAt)){
+   previous.bad=item.bad?previous.bad+1:0;
+   previous.good=item.bad?0:sustainedRecovery.has(item.kind)&&previous.bucket!==bucket-1?1:previous.good+1;
+   previous.bucket=bucket;if(item.sampleAt)previous.sampleAt=item.sampleAt;
+  }
   state.checks[item.key]=previous;const incident=state.incidents[item.key];
   if(item.bad&&previous.bad>=item.confirm){
+   const impact=Number.isFinite(item.impact)?Math.min(4,Math.floor(Math.log2(Math.max(1,item.impact)))):null;
+   const evidence={...(impact!==null?{impact}:{}),...(item.references?{references:item.references.slice(0,trackedReferenceLimit)}:{})};
    if(!incident||incident.status==='resolved'||item.kind==='catalog'&&item.revision&&item.revision!==incident.revision){
     if(Object.values(state.incidents).filter(i=>i.status==='open').length>=80)continue;
-    state.incidents[item.key]={id:crypto.randomUUID(),key:item.key,kind:item.kind,...(item.revision?{revision:item.revision}:{}),title:item.title,detail:item.detail||'',status:'open',openedAt:now,lastObservedAt:now,waitingForSamples:false,...(item.diagnosticContext?{diagnosticContext:item.diagnosticContext}:{})};
+    state.incidents[item.key]={id:crypto.randomUUID(),key:item.key,kind:item.kind,...(item.revision?{revision:item.revision}:{}),title:item.title,detail:item.detail||'',status:'open',openedAt:now,lastObservedAt:now,waitingForSamples:false,...evidence,...(item.diagnosticContext?{diagnosticContext:item.diagnosticContext}:{})};
     changed.push({...state.incidents[item.key],kind:'opened'});
-   }else Object.assign(incident,{title:item.title,detail:item.detail||'',lastObservedAt:now,waitingForSamples:false,...(item.diagnosticContext?{diagnosticContext:item.diagnosticContext}:{})});
-  }else if(!item.bad&&incident?.status==='open'&&previous.good>=item.confirm){incident.status='resolved';incident.resolvedAt=now;incident.lastObservedAt=now;incident.waitingForSamples=false;changed.push({...incident,kind:'resolved',title:({startup:'Inicio de contenido',canary:'Prueba automática de reproducción',playback:'Reproducción',provider:'Disponibilidad del proveedor',monitor:'Comprobación del sistema',backup:'Comprobación de copias',catalog:'Actualización del catálogo observado (no valida reproducción)'}[incident.kind])||'Comprobación del servicio',detail:item.detail||'Comprobación correcta.'})}
+   }else{
+    const worsened=impact!==null&&impact>incident.impact;
+    const newReferences=item.references&&incident.references?.length<trackedReferenceLimit
+     ?item.references.filter(reference=>!incident.references.includes(reference)).slice(0,trackedReferenceLimit-incident.references.length):[];
+    if(impact!==null&&(incident.impact===undefined||worsened))incident.impact=impact;
+    if(item.references)incident.references=incident.references?[...incident.references,...newReferences]:evidence.references;
+    Object.assign(incident,{title:item.title,detail:item.detail||'',lastObservedAt:now,waitingForSamples:false,...(item.diagnosticContext?{diagnosticContext:item.diagnosticContext}:{})});
+    if(worsened||newReferences.length)changed.push({...incident,kind:worsened?'worsened':'evidence'});
+   }
+  }else if(!item.bad&&incident?.status==='open'&&previous.good>=(sustainedRecovery.has(item.kind)?3:item.confirm)){incident.status='resolved';incident.resolvedAt=now;incident.lastObservedAt=now;incident.waitingForSamples=false;changed.push({...incident,kind:'resolved',title:({startup:'Inicio de contenido',canary:'Prueba automática de reproducción',playback:'Reproducción',provider:'Disponibilidad del proveedor',monitor:'Comprobación del sistema',backup:'Comprobación de copias',catalog:'Actualización del catálogo observado (no valida reproducción)'}[incident.kind])||'Comprobación del servicio',detail:item.detail||'Comprobación correcta.'})}
  }
  for(const [key,incident]of Object.entries(state.incidents)){
   if(incident.status!=='open'||seen.has(key))continue;
@@ -90,9 +108,18 @@ export function applyObservations(state,snapshot,now){
  // A small durable outbox, stable notification IDs and a provider idempotency
  // key handle lost acknowledgements and retries without another email.
  if(changed.length){
-  const event={id:crypto.randomUUID(),createdAt:now,changes:changed.map(({kind,id,title,detail,diagnosticContext})=>({kind,id,title,detail,...(diagnosticContext?{diagnosticContext}:{})})),delivery:state.config.channel==='email'?'pending':'panel'};
+  // Use the existing opening format for material updates, so older panel and
+  // Worker versions can still display and retry these events after a rollout.
+  const changes=changed.map(({kind,id,title,detail,diagnosticContext})=>{
+   const label={worsened:'EMPEORAMIENTO',evidence:'EVIDENCIA NUEVA'}[kind];
+   return {kind:label?'opened':kind,id,title:label?label+' · '+title:title,detail,...(diagnosticContext?{diagnosticContext}:{})};
+  });
+  const event={id:crypto.randomUUID(),createdAt:now,changes,delivery:state.config.channel==='email'?'pending':'panel'};
   state.history.unshift(event);state.history=state.history.slice(0,50);
-  if(state.config.channel==='email'&&state.outbox.length<20)state.outbox.push({...event,attempts:0,nextAt:now,version:state.config.version});
+  if(state.config.channel==='email'&&state.outbox.length<20){
+   const mailChanges=changes.map(change=>({...change,detail:'Incidente: '+change.id+(change.detail?'\n'+change.detail:'')}));
+   state.outbox.push({...event,changes:mailChanges,attempts:0,nextAt:now,version:state.config.version});
+  }
   else if(state.config.channel==='email')event.delivery='queue_full';
  }
  state.lastCheckedAt=now;
