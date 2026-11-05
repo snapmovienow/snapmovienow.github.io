@@ -15,7 +15,7 @@ const service=createExclusiveService({
   const headers=new Headers(options.headers);calls.push({url,range:headers.get('Range')});
   if(fail)return new Response('fixture denied',{status:403});
   const text=headers.has('Range')?'partial invalid manifest':'#EXTM3U\n#EXT-X-TARGETDURATION:7\n#EXTINF:7,\nhttps://'+host+'/files/7/abcdef123456/video0.ts\n#EXT-X-ENDLIST\n';
-  return new Response(options.method==='HEAD'?null:text,{status:206,headers:{'content-type':'application/vnd.apple.mpegurl','content-length':String(text.length),'content-range':'bytes 0-31/999','accept-ranges':'bytes',etag:'upstream-identity','last-modified':'Wed, 04 Nov 2026 10:00:00 GMT'}});
+  return new Response(options.method==='HEAD'?null:text,{status:206,headers:{'content-type':'application/vnd.apple.mpegurl','content-length':String(text.length),'content-range':'bytes 0-'+(text.length-1)+'/'+text.length,'accept-ranges':'bytes',etag:'upstream-identity','last-modified':'Wed, 04 Nov 2026 10:00:00 GMT'}});
  }
 });
 const request=(headers={},method='GET')=>new Request('https://api.snaptvnow.com/exclusive-media?t=fixture',{method,headers});

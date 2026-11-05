@@ -89,14 +89,19 @@ export function createExclusiveService(deps){
   if(owned&&(data.exclusiveId!==owned.exclusiveId||data.parentId!==OWNED_MEDIA_SERIES||data.resource))throw error('exclusive_resource',403);
   const allowed=owned?url=>String(url)===owned.url:data.empressPage?url=>empressMediaAllowed(data.empressPage,url,data.empressContext):data.officialPage?url=>officialMediaAllowed(data.officialPage,url):null;if(allowed?!allowed(target):data.resource&&target.origin!==base.origin)throw error('exclusive_resource',403);
   empressStage='upstream';empressResource=target.pathname.endsWith('.m3u8')?'playlist':target.pathname.endsWith('.key')?'key':/\.(?:ts|m4s|mp4|aac)$/.test(target.pathname)?'media':'other';
-  const fetched=owned?{url:target.href,response:await fetchOwnedMedia(target.href,env,playbackTicket,{range:req.headers.get('Range')||undefined,head:req.method==='HEAD',signal:req.signal,fetcher:deps.fetcher})}:await mediaFetch(target.href,{range:data.empressPage&&empressResource==='playlist'?undefined:req.headers.get('Range')||undefined,head:req.method==='HEAD',signal:req.signal,fetcher:deps.fetcher,allowed,...(data.empressPage?{upstreamHeaders:empressMediaHeaders(data.empressPage,data.empressContext)}:{})});const response=fetched.response;empressStatus=response.status;
+  const fetched=owned?{url:target.href,response:await fetchOwnedMedia(target.href,env,playbackTicket,{range:req.headers.get('Range')||undefined,head:req.method==='HEAD',signal:req.signal,fetcher:deps.fetcher})}:await mediaFetch(target.href,{range:/\.m3u8$/i.test(target.pathname)?undefined:req.headers.get('Range')||undefined,head:req.method==='HEAD',signal:req.signal,fetcher:deps.fetcher,allowed,...(data.empressPage?{upstreamHeaders:empressMediaHeaders(data.empressPage,data.empressContext)}:{})});const response=fetched.response;empressStatus=response.status;
   if(owned&&response.status===416){await response.body?.cancel();await deps.directory(env,'/release',{sid:data.sid,lease_id:data.lease_id,request_id:data.request_id});const headers=new Headers({'Cache-Control':'no-store','Accept-Ranges':'bytes'}),range=response.headers.get('content-range');if(/^bytes \*\/\d+$/.test(range||''))headers.set('content-range',range);return new Response(null,{status:416,headers});}
   if(!response.ok){if(owned)console.error({event:'owned_media_failure',stage:'upstream',episode:owned.episode,option:owned.option,status:response.status,method:req.method});await response.body?.cancel();if(data.officialPage)await forgetOfficialLivePage(data.officialPage,{fetcher:deps.fetcher});throw error('media_unavailable',response.status===404?404:502);}
   if(allowed?!allowed(fetched.url):data.resource&&new URL(fetched.url).origin!==base.origin){await response.body?.cancel();throw error('exclusive_resource',403);}
   const out=new Headers({'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});for(const key of ['content-type','content-length','content-range','accept-ranges','etag','last-modified'])if(response.headers.has(key))out.set(key,response.headers.get(key));
   if(!data.resource){out.set('X-SNAP-Playback-Quality',data.monitor);if(data.officialPage)out.set('X-SNAP-Local-Startup','2');}
   const playlist=/mpegurl/i.test(response.headers.get('Content-Type')||'')||new URL(fetched.url).pathname.endsWith('.m3u8');
-  if(playlist&&data.empressPage)for(const header of ['content-length','content-range','accept-ranges','etag','last-modified'])out.delete(header);
+  if(playlist){
+   // Signed resource URLs change the representation and its byte offsets.
+   // A partial upstream body must never become a successful rewritten manifest.
+   if(response.status===206){const range=/^bytes 0-(\d+)\/(\d+)$/.exec(response.headers.get('content-range')||''),end=Number(range?.[1]),total=Number(range?.[2]);if(!range||!Number.isSafeInteger(total)||total<1||end!==total-1){await response.body?.cancel();throw error('invalid_playlist',502);}}
+   for(const header of ['content-length','content-range','accept-ranges','etag','last-modified'])out.delete(header);
+  }
   if(playlist&&req.method!=='HEAD'){
    empressStage='playlist';
    if(data.officialHeartbeat)await officialHeartbeat(data.officialHeartbeat,{fetcher:deps.fetcher,signal:req.signal});
@@ -119,7 +124,7 @@ export function createExclusiveService(deps){
    out.delete('content-length');out.set('content-type','application/vnd.apple.mpegurl');if(!data.resource)report('playlist');return new Response(lines.join('\n'),{headers:out});
   }
   if(!data.resource&&!playlist&&!/^(?:video\/|audio\/|application\/octet-stream)/i.test(response.headers.get('Content-Type')||'')){await response.body?.cancel();throw error('exclusive_not_video',502);}
-  if(req.method==='HEAD'){await response.body?.cancel();if(!data.resource)await deps.directory(env,'/release',{sid:data.sid,lease_id:data.lease_id,request_id:data.request_id});return new Response(null,{status:response.status,headers:out});}
+  if(req.method==='HEAD'){await response.body?.cancel();if(!data.resource)await deps.directory(env,'/release',{sid:data.sid,lease_id:data.lease_id,request_id:data.request_id});return new Response(null,{status:playlist?200:response.status,headers:out});}
   const result=new Response(checked.localVideoProbe?observeFirstChunk(response.body,()=>report('firstVideoBytes'),code=>{if(!req.signal.aborted&&ctx?.waitUntil)ctx.waitUntil(usageFailure(code==='media_empty'?'media_empty':'body_error'));}):response.body,{status:response.status,headers:out});
   if(data.resource)return result;
   return deps.guardXtreamResponse(result,async()=>(await deps.sessionCall(env,data.sid,'/check')).ok&&(await deps.directory(env,'/heartbeat',{sid:data.sid,lease_id:data.lease_id,request_id:data.request_id})).ok,()=>deps.directory(env,'/release',{sid:data.sid,lease_id:data.lease_id,request_id:data.request_id}),ctx,req.signal,data.exp,{waitForRelease:data.type!=='live'});

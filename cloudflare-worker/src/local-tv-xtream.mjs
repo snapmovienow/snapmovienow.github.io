@@ -74,6 +74,9 @@ export function createLocalTvXtream({read,prepare,media},env,ctx){
     const target=new URL(request.url);target.pathname=target.pathname.replace(/\.[^.\/]+$/,'.m3u8');
     return new Response(null,{status:302,headers:{Location:target.href,'Cache-Control':'no-store'}});
    }
+   // HEAD describes this authorized virtual HLS endpoint. A metadata probe must
+   // not begin/release playback and invalidate a GET already using its tickets.
+   if(request.method==='HEAD')return new Response(null,{status:200,headers:{'Content-Type':'application/vnd.apple.mpegurl','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});
    const prepared=await prepare(request,env,auth.session,row.id,{live:true,localRow:row,localStartedAt});
    try{return await media(new Request(prepared.url,request),env,ctx);}
    catch(error){await prepared.release();throw error;}
