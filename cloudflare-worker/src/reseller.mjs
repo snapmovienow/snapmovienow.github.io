@@ -26,11 +26,11 @@ export async function panelSession(username,password,base=BASE,options={}){
  const deadline=Date.now()+(options.timeoutMs||45000),fetcher=options.fetcher||fetch;
  let cookie='';async function request(path,body){let url=new URL(path,base),method=body?'POST':'GET';for(let i=0;i<5;i++){
   if(url.origin!==new URL(base).origin||!url.pathname.startsWith(new URL(base).pathname))throw Error('panel_redirect_denied');
-  const remaining=deadline-Date.now();if(remaining<=0)throw Error('panel_unavailable');
+  const remaining=deadline-Date.now();if(remaining<=0)throw new DOMException('Panel request deadline exceeded','TimeoutError');
   const r=await fetcher(url,{method,redirect:'manual',headers:{'User-Agent':'SnapMovieNow/1.0',...(cookie?{Cookie:cookie}:{}),...(body?{'content-type':'application/x-www-form-urlencoded'}:{})},...(body?{body}:{}),signal:AbortSignal.timeout(Math.min(12000,remaining))});
   const sc=r.headers.get('set-cookie');if(sc){const m=sc.match(/(?:^|,\s*)PHPSESSID=([^;]+)/);if(m)cookie='PHPSESSID='+m[1]}
   if([301,302,303,307,308].includes(r.status)){url=new URL(r.headers.get('location'),url);if([301,302,303].includes(r.status)){method='GET';body=undefined}continue}
-  if(!r.ok)throw Error('panel_unavailable');if(options.maxBytes){const reader=r.body?.getReader();if(!reader)return '';const parts=[];let size=0;try{for(;;){const chunk=await reader.read();if(chunk.done)break;size+=chunk.value.byteLength;if(size>options.maxBytes){await reader.cancel();throw Error('panel_response_size');}parts.push(chunk.value);}}finally{reader.releaseLock();}const raw=new Uint8Array(size);let at=0;for(const part of parts){raw.set(part,at);at+=part.byteLength;}return new TextDecoder().decode(raw);}return r.text();}throw Error('panel_redirect_failed');}
+  if(!r.ok)throw Object.assign(Error('panel_unavailable'),{failureCode:'http_error'});if(options.maxBytes){const reader=r.body?.getReader();if(!reader)return '';const parts=[];let size=0;try{for(;;){const chunk=await reader.read();if(chunk.done)break;size+=chunk.value.byteLength;if(size>options.maxBytes){await reader.cancel();throw Error('panel_response_size');}parts.push(chunk.value);}}finally{reader.releaseLock();}const raw=new Uint8Array(size);let at=0;for(const part of parts){raw.set(part,at);at+=part.byteLength;}return new TextDecoder().decode(raw);}return r.text();}throw Error('panel_redirect_failed');}
  await request('login');const text=await request('login',new URLSearchParams({username,password,login:'',referrer:''}).toString());
  if(/name=["']password["']/.test(text)||!text.includes('dashboard'))throw Error('panel_invalid');
  return {request,base};
@@ -45,15 +45,19 @@ function inventoryTotal(data){
 
 export async function readPanel(username,password,base=BASE,options={}){
  const {request}=await panelSession(username,password,base);
+ options.onProgress?.({receivedRows:null,acceptedRows:null});
  // Provider-side filters can exclude usable idle active lines. Read the full
  // authenticated inventory and validate status and expiry locally. Playback
  // also validates the selected account before use.
  // A replacement can revoke reservations. Reject any page whose contents
  // cannot account for every row in the reported inventory.
- const lines=[],inventory=[],seen=new Set(),now=Date.now();let total,start=0;
+ const lines=[],inventory=[],seen=new Set(),now=Date.now();let total,start=0,receivedRows=0;
+ const report=()=>options.onProgress?.({receivedRows,acceptedRows:lines.length});
  for(let page=0;page<PANEL_MAX_PAGES;page++){
   const query=new URLSearchParams({id:'lines',filter:'',reseller:'',draw:'1',start:String(start),length:String(PANEL_PAGE_SIZE),'search[value]':'','order[0][column]':'0','order[0][dir]':'asc'});
-  let data;try{data=JSON.parse(await request('table?'+query))}catch(error){if(error.message.startsWith('panel_'))throw error;throw Error('panel_format_changed')}
+  const body=await request('table?'+query);
+  let data;try{data=JSON.parse(body)}catch{throw Error('panel_format_changed')}
+  if(Array.isArray(data?.data)){receivedRows+=data.data.length;report()}
   const count=inventoryTotal(data);total??=count;
   if(!Array.isArray(data.data)||count!==total||data.data.length>Math.min(PANEL_PAGE_SIZE,total-start)||(!data.data.length&&start<total))throw Error('panel_inventory_incomplete');
   const pageInventory=parseInventory(data,now),pageLines=parseLines(data,now),activeIds=new Set(pageLines.map(line=>line.id));
@@ -62,7 +66,7 @@ export async function readPanel(username,password,base=BASE,options={}){
    if(seen.has(item.id)||item.status==='unavailable'||(item.status==='active')!==activeIds.has(item.id))throw Error('panel_inventory_incomplete');
    seen.add(item.id);
   }
-  lines.push(...pageLines);inventory.push(...pageInventory);start+=data.data.length;
+  lines.push(...pageLines);inventory.push(...pageInventory);start+=data.data.length;report();
   if(start===total)break;
  }
  if(start!==total)throw Error('panel_inventory_incomplete');

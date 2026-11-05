@@ -4,6 +4,7 @@ import {cleanCanarySettings,defaultCanarySettings,cleanCanaryResult} from './pla
 import {startupTimingObservations} from './playback-timings.mjs';
 import {canaryIncident} from './playback-diagnostics.mjs';
 import {mediaFailureContext} from './monitor-content-context.mjs';
+import {providerMonitorSnapshot,providerDetail,providerTitle} from './provider-monitor.mjs';
 
 export const MONITOR_CRON='*/5 * * * *';
 const interval=300000,freshness=36*3600000;
@@ -37,11 +38,14 @@ async function read(response){if(!response.ok)throw Error('monitor_source_unavai
 
 // Observations contain only bounded aggregates. Missing playback samples are
 // unknown, not proof that a failing stream has recovered.
-export function observations(snapshot,now,createdAt){
+export function observations(snapshot,now,createdAt,providerSnapshot=providerMonitorSnapshot(snapshot.providers)){
  const out=[...catalogReferenceObservations(snapshot.catalogReferences)];
  out.push(...startupTimingObservations(snapshot.playback?.timings));
- for(const part of ['providers','playback','backups'])if(snapshot[part]===null)out.push({key:'monitor:'+part,kind:'monitor',title:'No se pudo comprobar '+({providers:'el proveedor',playback:'las reproducciones',backups:'las copias'}[part]),bad:true,confirm:2});else out.push({key:'monitor:'+part,kind:'monitor',bad:false,confirm:2});
- if(snapshot.providers)for(const p of snapshot.providers.providers||[])if(/^[a-zA-Z0-9_-]{1,80}$/.test(p.id))out.push({key:'provider:'+p.id,kind:'provider',title:'Proveedor sin respuesta o sin cuentas activas',detail:p.label, bad:p.ok!==true,confirm:2});
+ const missingProviders=!providerSnapshot||providerSnapshot.samples.length!==providerSnapshot.configured.size;
+ if(Object.hasOwn(snapshot,'providers'))out.push({key:'monitor:providers',kind:'monitor',title:'No se pudo completar la comprobación de fuentes configuradas',bad:missingProviders,confirm:2,
+  detail:providerSnapshot?'Muestras válidas '+providerSnapshot.samples.length+' de '+providerSnapshot.configured.size:'Lista de fuentes configuradas sin confirmar.'});
+ for(const part of ['playback','backups'])out.push({key:'monitor:'+part,kind:'monitor',title:'No se pudo comprobar '+({playback:'las reproducciones',backups:'las copias'}[part]),bad:snapshot[part]===null,confirm:2});
+ for(const sample of providerSnapshot?.samples||[])out.push({key:'provider:'+sample.id,kind:'provider',title:providerTitle(sample),bad:!sample.ok,confirm:2,sampleAt:sample.observedAt,provider:sample});
  if(snapshot.playback)for(const g of snapshot.playback.groups||[]){
   if(!/^[a-zA-Z0-9_-]{1,80}$/.test(g.server)||!['live','movie','series'].includes(g.type)||!['web','android'].includes(g.platform)||!['1080','720','other'].includes(g.quality))continue;
   const bad=g.failedStarts>=5||g.reports>=5&&g.errors>=5||g.starts>=5&&(g.stallPercent>2||g.startupP95UpperMs>10000);
@@ -68,21 +72,30 @@ export function observations(snapshot,now,createdAt){
  return out;
 }
 
-export function applyObservations(state,snapshot,now){
- const changed=[],bucket=Math.floor(now/interval),seen=new Set();
+export function applyObservations(state,snapshot,now,startedAt=now){
+ const changed=[],bucket=Math.floor(startedAt/interval),seen=new Set(),providerSnapshot=providerMonitorSnapshot(snapshot.providers);
  if(snapshot.catalogReferences)state.catalogReferences={...snapshot.catalogReferences,collectedAt:now,readStatus:'ok'};
  else if(snapshot.catalogReferences===null)state.catalogReferences={readStatus:'unavailable',collectedAt:now};
- for(const item of observations(snapshot,now,state.createdAt)){
+ for(const item of observations(snapshot,now,state.createdAt,providerSnapshot)){
   if(item.kind==='playback'&&!item.bad&&!state.incidents[item.key])continue;
-  seen.add(item.key);const previous=state.checks[item.key]||{bad:0,good:0};
-  // A manual check or duplicate cron in the same slot cannot amplify a streak.
-  if(previous.bucket!==bucket&&(!item.sampleAt||previous.sampleAt!==item.sampleAt)){
-   previous.bad=item.bad?previous.bad+1:0;
-   previous.good=item.bad?0:sustainedRecovery.has(item.kind)&&previous.bucket!==bucket-1?1:previous.good+1;
-   previous.bucket=bucket;if(item.sampleAt)previous.sampleAt=item.sampleAt;
+  const previous=state.checks[item.key]||{bad:0,good:0};
+  if(item.provider&&previous.bucket<bucket&&previous.sampleAt>=item.sampleAt)continue;
+  seen.add(item.key);
+  // Manual checks and repeated canary results cannot count a sample twice.
+  if(previous.bucket>=bucket||item.sampleAt&&previous.sampleAt===item.sampleAt)continue;
+  const consecutive=previous.bucket===bucket-1&&(!item.provider||previous.providerSample);
+  const strict=sustainedRecovery.has(item.kind)||item.kind==='monitor';
+  previous.bad=item.bad?(strict&&!consecutive?1:previous.bad+1):0;
+  previous.good=item.bad?0:strict&&!consecutive?1:previous.good+1;
+  previous.bucket=bucket;if(item.sampleAt)previous.sampleAt=item.sampleAt;
+  if(item.provider){
+   previous.providerSample=true;
+   if(item.provider.validRead)previous.lastValidAt=item.provider.observedAt;
+   item.detail=providerDetail(item.provider,previous.lastValidAt,snapshot.runId);
   }
   state.checks[item.key]=previous;const incident=state.incidents[item.key];
-  if(item.bad&&previous.bad>=item.confirm){
+  if(incident?.status==='open'&&item.provider)incident.waitingForSamples=!item.bad;
+  if(item.bad&&(previous.bad>=item.confirm||item.provider&&incident?.status==='open')){
    const impact=Number.isFinite(item.impact)?Math.min(4,Math.floor(Math.log2(Math.max(1,item.impact)))):null;
    const evidence={...(impact!==null?{impact}:{}),...(item.references?{references:item.references.slice(0,trackedReferenceLimit)}:{})};
    if(!incident||incident.status==='resolved'||item.kind==='catalog'&&item.revision&&item.revision!==incident.revision){
@@ -98,12 +111,17 @@ export function applyObservations(state,snapshot,now){
     Object.assign(incident,{title:item.title,detail:item.detail||'',lastObservedAt:now,waitingForSamples:false,...(item.diagnosticContext?{diagnosticContext:item.diagnosticContext}:{})});
     if(worsened||newReferences.length)changed.push({...incident,kind:worsened?'worsened':'evidence'});
    }
-  }else if(!item.bad&&incident?.status==='open'&&previous.good>=(sustainedRecovery.has(item.kind)?3:item.confirm)){incident.status='resolved';incident.resolvedAt=now;incident.lastObservedAt=now;incident.waitingForSamples=false;changed.push({...incident,kind:'resolved',title:({startup:'Inicio de contenido',canary:'Prueba automática de reproducción',playback:'Reproducción',provider:'Disponibilidad del proveedor',monitor:'Comprobación del sistema',backup:'Comprobación de copias',catalog:'Actualización del catálogo observado (no valida reproducción)'}[incident.kind])||'Comprobación del servicio',detail:item.detail||'Comprobación correcta.'})}
+  }else if(!item.bad&&incident?.status==='open'&&previous.good>=(sustainedRecovery.has(item.kind)?3:item.confirm)){incident.status='resolved';incident.resolvedAt=now;incident.lastObservedAt=now;incident.waitingForSamples=false;changed.push({...incident,kind:'resolved',title:({startup:'Inicio de contenido',canary:'Prueba automática de reproducción',playback:'Reproducción',provider:'Comprobación de la fuente',monitor:'Comprobación del sistema',backup:'Comprobación de copias',catalog:'Actualización del catálogo observado (no valida reproducción)'}[incident.kind])||'Comprobación del servicio',detail:item.detail||'Comprobación correcta.'})}
  }
  for(const [key,incident]of Object.entries(state.incidents)){
   if(incident.status!=='open'||seen.has(key))continue;
   if(incident.kind==='playback'||incident.kind==='canary'||incident.kind==='startup')incident.waitingForSamples=true;
-  if(incident.kind==='provider'&&snapshot.providers){incident.status='resolved';incident.resolvedAt=now;changed.push({...incident,kind:'removed'})}
+  if(incident.kind==='provider'){
+   if(providerSnapshot&&!providerSnapshot.configured.has(key.slice('provider:'.length))){
+    incident.status='resolved';incident.resolvedAt=now;incident.waitingForSamples=false;
+    changed.push({...incident,kind:'removed',title:'Fuente retirada de nuestra configuración',detail:'Fuente '+key.slice('provider:'.length).slice(0,12)});
+   }else incident.waitingForSamples=true;
+  }
  }
  // A small durable outbox, stable notification IDs and a provider idempotency
  // key handle lost acknowledgements and retries without another email.
@@ -126,7 +144,13 @@ export function applyObservations(state,snapshot,now){
  const resolved=Object.values(state.incidents).filter(i=>i.status==='resolved').sort((a,b)=>b.resolvedAt-a.resolvedAt);
  for(const old of resolved.slice(50)){delete state.incidents[old.key];delete state.checks[old.key]}
  // Bound historical checks for providers/groups no longer represented.
- for(const key of Object.keys(state.checks))if(!seen.has(key)&&!state.incidents[key])delete state.checks[key];
+ for(const [key,check] of Object.entries(state.checks)){
+  if(seen.has(key))continue;
+  if(key.startsWith('provider:')){
+   if(!providerSnapshot||providerSnapshot.configured.has(key.slice('provider:'.length)))Object.assign(check,{bad:0,good:0,bucket});
+   else delete state.checks[key];
+  }else if(!state.incidents[key])delete state.checks[key];
+ }
  return state;
 }
 
@@ -213,10 +237,27 @@ export class OperationsMonitor{
    if(state.run&&state.run.at>now-120000||state.lastCheckedAt&&now-state.lastCheckedAt<60000)return null;
    state.run={id:runId,at:now,version:state.config.version};await putState(tx,state);return state.run;
   });
-  if(claim){const snapshot=await this.collect();await store.transaction(async tx=>{
-   const state=await tx.get('monitor');if(state.run?.id!==runId)return;
-   delete state.run;if(state.config.version===claim.version&&state.config.enabled)applyObservations(state,snapshot,Date.now());await putState(tx,state);
-  })}
+  if(claim){
+   const snapshot={...await this.collect(),runId};
+   const evidence=await store.transaction(async tx=>{
+    const state=await tx.get('monitor');if(state.run?.id!==runId)return null;
+    delete state.run;
+    const checkedAt=Date.now(),applied=state.config.version===claim.version&&state.config.enabled;
+    if(applied)applyObservations(state,snapshot,checkedAt,claim.at);
+    await putState(tx,state);
+    if(!applied)return null;
+    const providerSnapshot=providerMonitorSnapshot(snapshot.providers);
+    return {
+     checkedAt,durationMs:checkedAt-claim.at,configuredCount:providerSnapshot?.configured.size??null,
+     samples:(providerSnapshot?.samples||[]).map(sample=>({...sample,lastValidAt:state.checks['provider:'+sample.id]?.lastValidAt??null}))
+    };
+   });
+   if(evidence){
+    const {samples,...summary}=evidence;
+    console.log({event:'monitor_provider_run',runId,...summary,sampleCount:samples.length});
+    for(const sample of samples)console.log({event:'monitor_provider_sample',runId,...sample});
+   }
+  }
   await this.flush();return {ok:true,checked:!!claim};
  }
  async flush(){

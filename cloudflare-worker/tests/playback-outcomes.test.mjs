@@ -58,7 +58,7 @@ for(const current of ['allocation_cancel','relay_cancel','throw_cancel','origin_
 // Recovery must describe a new good sample, preserving the old incident and
 // opening event for audit. An empty aggregate still cannot clear an incident.
 const state={createdAt:Date.now(),config:{channel:'email',version:1},checks:{},incidents:{},history:[],outbox:[]};
-const snapshot=timings=>({providers:{providers:[]},playback:{groups:[],timings},backups:{automaticStatus:'success',lastAutomaticAt:Date.now()}});
+const snapshot=timings=>({providers:{configuredIds:[],providers:[]},playback:{groups:[],timings},backups:{automaticStatus:'success',lastAutomaticAt:Date.now()}});
 const bad={type:'live',platform:'other',requests:10,measuredRequests:10,failures:5,stages:{total:{p95UpperMs:1000}}};
 let now=Date.now();applyObservations(state,snapshot([bad]),now);const opening=structuredClone(state.history[0]);
 applyObservations(state,snapshot([]),now+=300000);assert.equal(state.incidents['startup:live:other'].status,'open');

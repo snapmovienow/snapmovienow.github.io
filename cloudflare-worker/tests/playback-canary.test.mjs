@@ -76,7 +76,7 @@ try{
  const jitter=new OperationsMonitor({storage:new Store()},jitterEnv);now=cycle+45000;await jitter.runCanary();now=cycle+310000;await jitter.runCanary();await jitter.runCanary();
  assert.equal(jitterProbes,2,'a faster provider check in the next five-minute slot cannot skip that playback test; duplicate cron remains single-flight');
  const state={createdAt:now,config:{channel:'panel'},checks:{},incidents:{},history:[],outbox:[]};
- const snapshot={providers:{providers:[]},playback:{groups:[]},backups:{lastAutomaticAt:now},canary:{enabled:true,results:[{type:'live',at:now,status:'failed',reason:'timeout'}]}};
+ const snapshot={providers:{configuredIds:[],providers:[]},playback:{groups:[]},backups:{lastAutomaticAt:now},canary:{enabled:true,results:[{type:'live',at:now,status:'failed',reason:'timeout'}]}};
  applyObservations(state,snapshot,now);assert.equal(Object.keys(state.incidents).length,0);
  now+=300000;applyObservations(state,snapshot,now);assert.equal(Object.keys(state.incidents).length,0,'reusing the same failed probe cannot amplify it into multiple failures');
  snapshot.canary.results[0].at=now;applyObservations(state,snapshot,now);assert.equal(state.incidents['canary:live'].status,'open');
