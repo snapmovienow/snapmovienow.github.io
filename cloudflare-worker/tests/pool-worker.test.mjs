@@ -4,10 +4,10 @@ import assert from 'node:assert/strict';import worker,{PlaybackSession} from '..
 class Store{constructor(){this.data=new Map();this.queue=Promise.resolve()}async get(k){return structuredClone(this.data.get(k))}async put(k,v){this.data.set(k,structuredClone(v))}async delete(k){this.data.delete(k)}async deleteAll(){this.data.clear()}async setAlarm(){}async list({prefix}){return new Map([...this.data].filter(([k])=>k.startsWith(prefix)).map(([k,v])=>[k,structuredClone(v)]))}transaction(fn){const r=this.queue.then(()=>fn(this));this.queue=r.catch(()=>{});return r}}
 const objects=new Map(),env={TICKET_SECRET:'test-ticket-secret-only',ADMIN_SETUP_SECRET:'setup-test-only-123456789012345678901234567890'};env.PLAYBACK_SESSIONS={idFromName:x=>x,get(id){if(!objects.has(id))objects.set(id,new PlaybackSession({storage:new Store()},env));return {fetch:(url,options)=>objects.get(id).fetch(new Request(url,options))}}};
 const row=id=>['<a>'+id+'</a>','<a>line'+id+'</a>','<span class="table-trunc-copy-cell__text tooltip" title="line-password-test">hidden</span>','owner','<i title="Active"></i>','','','0','3','','','2099-01-01'];
-let inventoryReads=0,inventoryFails=false;
-globalThis.fetch=async(url,opts)=>{const u=new URL(url);if(u.pathname.endsWith('/login'))return new Response(opts.method==='POST'?'<a href="dashboard">Welcome</a>':'<input name="password">',{headers:{'set-cookie':'PHPSESSID='+((opts.body||'').includes('username=second')?'second':'first')+'; path=/'}});if(u.pathname.endsWith('/table')){inventoryReads++;return inventoryFails?new Response('Unavailable',{status:503}):Response.json({recordsFiltered:2,data:opts.headers.Cookie?.includes('second')?[row(2),row(3)]:[row(1),row(2)]})}if(u.pathname==='/player_api.php'){assert.ok(['line1','line2','line3'].includes(u.searchParams.get('username')));assert.equal(u.searchParams.get('password'),'line-password-test');const action=u.searchParams.get('action');return Response.json(action==='get_vod_streams'?[{stream_id:123,name:'Movie'}]:action==='get_series'?[{series_id:456,name:'Series'}]:{user_info:{auth:1,status:'Active',max_connections:'3',active_cons:'0'}})}return new Response('sample',{headers:{'content-type':'video/mp4'}})};
-const origin='https://snapmovienow-edge.juancanta89.workers.dev';const req=async(b,path='')=>{const r=await worker.fetch(new Request(origin+path,{method:'POST',body:JSON.stringify(b)}),env);return {status:r.status,data:await r.json()}};
-await req({action:'setup',setupSecret:env.ADMIN_SETUP_SECRET,username:'owner',password:'owner-password-test'},'/admin');const login=await req({action:'login',username:'owner',password:'owner-password-test'},'/admin');assert.equal(login.status,200);const admin=(action,b={})=>req({action,access_token:login.data.access_token,...b},'/admin');assert.equal((await admin('provider-save',{mode:'panel',username:'owner',password:'panel-password-test'})).status,200);
+let inventoryReads=0,inventoryFails=false,inventoryGate=null;
+globalThis.fetch=async(url,opts)=>{const u=new URL(url);if(u.pathname.endsWith('/login'))return new Response(opts.method==='POST'?'<a href="dashboard">Welcome</a>':'<input name="password">',{headers:{'set-cookie':'PHPSESSID='+((opts.body||'').includes('username=second')?'second':'first')+'; path=/'}});if(u.pathname.endsWith('/table')){inventoryReads++;if(inventoryGate)await inventoryGate();return inventoryFails?new Response('Unavailable',{status:503}):Response.json({recordsFiltered:2,data:opts.headers.Cookie?.includes('second')?[row(2),row(3)]:[row(1),row(2)]})}if(u.pathname==='/player_api.php'){assert.ok(['line1','line2','line3'].includes(u.searchParams.get('username')));assert.equal(u.searchParams.get('password'),'line-password-test');const action=u.searchParams.get('action');return Response.json(action==='get_vod_streams'?[{stream_id:123,name:'Movie'}]:action==='get_series'?[{series_id:456,name:'Series'}]:{user_info:{auth:1,status:'Active',max_connections:'3',active_cons:'0'}})}return new Response('sample',{headers:{'content-type':'video/mp4'}})};
+const origin='https://snapmovienow-edge.juancanta89.workers.dev';const req=async(b,path='',ctx)=>{const r=await worker.fetch(new Request(origin+path,{method:'POST',body:JSON.stringify(b)}),env,ctx);return {status:r.status,data:await r.json()}};
+await req({action:'setup',setupSecret:env.ADMIN_SETUP_SECRET,username:'owner',password:'owner-password-test'},'/admin');const login=await req({action:'login',username:'owner',password:'owner-password-test'},'/admin');assert.equal(login.status,200);const admin=(action,b={},ctx)=>req({action,access_token:login.data.access_token,...b},'/admin',ctx);assert.equal((await admin('provider-save',{mode:'panel',username:'owner',password:'panel-password-test'})).status,200);
 const sessions=[];for(let i=0;i<7;i++){assert.equal((await admin('save',{create:true,username:'customer'+i,password:'customer-password-test',status:'active'})).status,200);sessions.push((await req({op:'auth',username:'customer'+i,password:'customer-password-test'})).data.access_token)}
 assert.equal((await req({op:'vod',access_token:sessions[0]})).data[0].name,'Movie');assert.equal((await req({op:'series',access_token:sessions[0]})).data[0].name,'Series');const plays=await Promise.all(sessions.map(access_token=>req({op:'stream_token',access_token,type:'movie',id:123})));assert.equal(plays.filter(p=>p.status===200).length,6);assert.equal(plays.filter(p=>p.status===409).length,1);
 const succeeded=plays.findIndex(p=>p.status===200),rejected=plays.findIndex(p=>p.status===409);assert.equal((await worker.fetch(new Request(plays[succeeded].data.url,{method:'HEAD'}),env)).status,200);await req({op:'logout',access_token:sessions[succeeded]});assert.equal((await worker.fetch(new Request(plays[succeeded].data.url,{method:'HEAD'}),env)).status,410);assert.equal((await req({op:'stream_token',access_token:sessions[rejected],type:'series',id:456})).status,200);const overview=await admin('overview');assert.equal(overview.data.provider.activeAccounts,2);assert.equal(overview.data.provider.maxConnections,6);assert.ok(!JSON.stringify(overview).includes('password'));
@@ -79,3 +79,77 @@ const staleUser=await storage.get('user:customer0');
 const allocation=await env.PLAYBACK_SESSIONS.get('__smn_accounts_v1').fetch('https://private/accounts/acquire',{method:'POST',body:JSON.stringify({sid:'mixed-age-test',uid:staleUser.id,username:'customer0',version:staleUser.version})});
 assert.equal(allocation.status,200);assert.ok(['2','3'].includes((await allocation.json()).provider_id));
 console.log('PASS: legacy inventory freshness, separate failed-attempt cooldown, successful refresh and isolation of an expired source.');
+
+// View calls must stay read-only even with an old attempted timestamp and a
+// context that would run a background refresh.
+const oldPool=await storage.get('pool');
+await storage.put('pool',{...oldPool,attemptedAt:0});
+const viewTasks=[],beforeViews=inventoryReads;
+const views=await Promise.all(Array.from({length:3},()=>admin('provider-dashboard',{refresh:false},{waitUntil:task=>viewTasks.push(task)})));
+assert.ok(views.every(view=>view.status===200));
+assert.equal(viewTasks.length,0);
+assert.equal(inventoryReads,beforeViews);
+await storage.put('pool',oldPool);
+
+// Hold the automatic request just before its freshness decision. An explicit
+// request must still cause exactly one complete refresh.
+const originalGet=storage.get.bind(storage),freshnessEntered=Promise.withResolvers(),freshnessRelease=Promise.withResolvers();
+let holdFreshness=true;
+storage.get=async key=>{
+ if(key==='pool'&&holdFreshness){holdFreshness=false;freshnessEntered.resolve();await freshnessRelease.promise;}
+ return originalGet(key);
+};
+const originalLog=console.log,telemetry=[];
+console.log=event=>telemetry.push(event);
+let beforeRefresh=inventoryReads;
+try{
+ const automatic=refresh(false);
+ await freshnessEntered.promise;
+ const manual=refresh(true);
+ await new Promise(resolve=>setImmediate(resolve));
+ freshnessRelease.resolve();
+ assert.ok((await Promise.all([automatic,manual])).every(result=>result.ok));
+ assert.equal(inventoryReads,beforeRefresh+2);
+ assert.ok(telemetry.some(event=>event.event==='provider_inventory_refresh'&&event.operation==='manual'&&event.outcome==='refreshed'&&event.shared&&Number.isInteger(event.waitMs)));
+}finally{freshnessRelease.resolve();storage.get=originalGet;console.log=originalLog;}
+
+// A monitor that joins an in-flight read must see progress for the current
+// page, and it shares that read with the automatic and manual refresh callers.
+const gated=Promise.withResolvers(),release=Promise.withResolvers();
+let entered=0;
+inventoryGate=()=>{if(++entered===2)gated.resolve();return release.promise};
+await storage.put('pool',{...(await storage.get('pool')),attemptedAt:0});
+beforeRefresh=inventoryReads;
+console.log=event=>telemetry.push(event);
+try{
+ const automatic=refresh(false);
+ await gated.promise;
+ const manual=admin('provider-dashboard',{refresh:true});
+ const check=env.PLAYBACK_SESSIONS.get('__smn_provider_refresh_v1').fetch('https://private/monitor-providers',{method:'POST',body:'{}'});
+ const refreshObject=objects.get('__smn_provider_refresh_v1');
+ for(let tries=0;tries<100&&([...refreshObject.inventoryReads.values()].some(flight=>!flight.observers.size)||!refreshObject.refreshing.force);tries++)await new Promise(resolve=>setTimeout(resolve,5));
+ assert.ok([...refreshObject.inventoryReads.values()].every(flight=>flight.observers.size===1));
+ assert.equal(refreshObject.refreshing.force,true);
+ release.resolve();
+ const [a,m,c]=await Promise.all([automatic,manual,check]);
+ assert.equal(a.status,200);assert.equal(m.status,200);assert.equal(c.status,200);
+ assert.equal(inventoryReads,beforeRefresh+2);
+ const evidence=(await c.json()).providers;
+ assert.ok(evidence.every(sample=>sample.stage==='inventory'&&sample.ok&&sample.receivedRows===2&&sample.acceptedRows===2));
+ const shared=telemetry.filter(event=>event.event==='provider_inventory_read_shared');
+ assert.equal(shared.length,2);
+ assert.ok(shared.every(event=>/^[A-Za-z0-9_-]{43}$/.test(event.sourceId)&&event.operation==='monitor'&&Number.isInteger(event.waitMs)&&event.waitMs>=0));
+ assert.ok(!JSON.stringify(shared).includes('panel:owner'));
+}finally{release.resolve();inventoryGate=null;console.log=originalLog;}
+
+const removalEntered=Promise.withResolvers(),removalRelease=Promise.withResolvers();
+inventoryGate=()=>{removalEntered.resolve();return removalRelease.promise};
+try{
+ const updating=refresh(true);
+ await removalEntered.promise;
+ assert.equal((await admin('provider-remove',{source:sources[0]})).status,200);
+ removalRelease.resolve();
+ assert.equal((await updating).status,200);
+ assert.ok(!Object.hasOwn(await storage.get('source-pools'),sources[0]),'an old refresh cannot restore a removed source');
+}finally{removalRelease.resolve();inventoryGate=null;}
+console.log('PASS: opening the dashboard only reads saved data; manual refresh, background refresh and monitor share reads with safe wait telemetry; a removed source stays removed.');

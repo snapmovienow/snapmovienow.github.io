@@ -3,7 +3,7 @@ const root=process.cwd(),errors=[],requests=[];let browser;const server=http.cre
 try{
  await new Promise(r=>server.listen(0,'127.0.0.1',r));const base='http://127.0.0.1:'+server.address().port;
  browser=await chromium.launch({headless:true,...(process.env.SMN_BROWSER_EXECUTABLE?{executablePath:process.env.SMN_BROWSER_EXECUTABLE}:{}),args:['--no-sandbox','--disable-dev-shm-usage','--disable-gpu']});
- const context=await browser.newContext({viewport:{width:390,height:844}}),profile=new Map();let legacy=false,malformedCatalog=false,mfaEnabled=false,mfaError=null,backups=[],replacing=false,recoveryProof={status:"unknown"},inventoryStale=false;
+ const context=await browser.newContext({viewport:{width:390,height:844}}),profile=new Map();let legacy=false,malformedCatalog=false,mfaEnabled=false,mfaError=null,backups=[],replacing=false,recoveryProof={status:"unknown"},inventoryStale=false,monitorFailure=false;
  await context.route('http://127.0.0.1:8787/**',async route=>{
   const request=route.request();if(request.method()==='OPTIONS'){await route.fulfill({status:204,headers:{'Access-Control-Allow-Origin':base,'Access-Control-Allow-Methods':'POST,GET,OPTIONS','Access-Control-Allow-Headers':'content-type'}});return}
   const b=request.postDataJSON()||{},op=b.op||b.action;requests.push(op);let value=[];
@@ -29,7 +29,8 @@ try{
   if(op==='security-status')value={mfaEnabled,recoveryRemaining:mfaEnabled?8:0};if(op==='playback-health')value={groups:[],alerts:[]};
   if(op==='mfa-confirm'&&mfaError){await route.fulfill({status:401,contentType:'application/json',headers:{'Access-Control-Allow-Origin':base},body:JSON.stringify({error:mfaError})});return}
   if(op==='mfa-confirm'||op==='mfa-recovery-renew'){mfaEnabled=true;value={replaced:op==='mfa-confirm'&&replacing,recoveryCodes:Array.from({length:8},(_,i)=>(op==='mfa-recovery-renew'?'SYNTHETIC-NEW-':'SYNTHETIC-RECOVERY-')+i)}};
-  if(op==='alerts-status'||op==='alerts-check')value={settings:{enabled:true,channel:'panel',to:'',from:'',keyConfigured:false},lastCheckedAt:Date.now(),monitorStale:false,incidents:[{id:'synthetic-outage',key:'provider:synthetic',kind:'provider',title:'Proveedor sin respuesta o sin cuentas activas',detail:'Proveedor 1',status:'open',openedAt:Date.now()}],history:[{id:'synthetic-notice',createdAt:Date.now(),changes:[{kind:'opened',title:'Proveedor sin respuesta o sin cuentas activas'}],delivery:'panel'}],delivery:{status:'not_configured'},pendingEmails:0};
+  if(op==='alerts-status'&&monitorFailure){await route.fulfill({status:503,contentType:'application/json',headers:{'Access-Control-Allow-Origin':base},body:JSON.stringify({error:'monitor_unavailable'})});return}
+  if(op==='alerts-status'||op==='alerts-check')value={settings:{enabled:true,channel:'panel',to:'',from:'',keyConfigured:false},lastCheckedAt:Date.now(),monitorStale:false,monitorReadings:{providers:{status:'unavailable',received:0,expected:1,lastValidAt:Date.now()-300000},playback:{status:'empty',lastValidAt:Date.now()},backups:{status:'valid',lastValidAt:Date.now()},catalogReferences:{status:'empty',lastValidAt:Date.now()}},incidents:[{id:'synthetic-outage',key:'provider:synthetic',kind:'provider',title:'Proveedor sin respuesta o sin cuentas activas',detail:'Proveedor 1',status:'open',openedAt:Date.now()}],history:[{id:'synthetic-notice',createdAt:Date.now(),changes:[{kind:'opened',title:'Proveedor sin respuesta o sin cuentas activas'}],delivery:'panel'}],delivery:{status:'not_configured'},pendingEmails:0};
   if(op==='backup-list')value=backups;
   if(op==='backup-status')value={status:backups.length?'success':'unknown',lastSuccessAt:backups[0]?.createdAt||null,stale:!backups.length,lastAutomaticAt:null,automaticStatus:'unknown',automaticStale:true,recovery:recoveryProof,scheduleUTC:'05:17'};
   if(op==='backup-create'){backups=[{id:'2026-10-10',createdAt:Date.now()}];value={ok:true,...backups[0]}}
@@ -60,7 +61,15 @@ try{
  const panel=await context.newPage();panel.on('pageerror',e=>errors.push(e.message));await panel.goto(base+'/admin.html');await panel.locator('#loginForm [name="username"]').fill('owner');await panel.locator('#loginForm [name="password"]').fill('owner-password-test');await panel.locator('#loginForm button').click();await panel.locator('#securityState').filter({hasText:'desactivado'}).waitFor();
  await panel.locator('#capacityInventory').filter({hasText:'3 cupos totales'}).waitFor();
  await panel.locator('#alertSummary').filter({hasText:'1 incidencias abiertas'}).waitFor();
+ assert.match(await panel.locator('#alertApiStatus').textContent(),/API del panel accesible/);
+ assert.match(await panel.locator('#alertSummary').textContent(),/Última ejecución finalizada:.*Lecturas parciales/);
+ assert.match(await panel.locator('#alertReadings').textContent(),/Fuentes configuradas.*Lectura sin confirmar.*0 de 1 lecturas válidas.*Última lectura válida:/);
  assert.match(await panel.locator('#alertIncidents').textContent(),/Proveedor sin respuesta/);
+ monitorFailure=true;await panel.locator('#alertRefresh').click();
+ await panel.locator('#alertApiStatus').filter({hasText:'API del panel accesible · Estado del monitor no actualizado (HTTP 503)'}).waitFor();
+ assert.match(await panel.locator('#alertSummary').textContent(),/Último estado guardado.*1 incidencias abiertas/);
+ assert.match(await panel.locator('#alertIncidents').textContent(),/Proveedor sin respuesta/);
+ monitorFailure=false;
  assert.equal(await panel.locator('#alertTest').isDisabled(),true,'mail cannot be sent without a configured recipient and encrypted key');
  await panel.locator('#automaticAlerts').getByText('Configurar avisos',{exact:true}).click();
  await panel.locator('#alertForm [name="channel"]').selectOption('email');
