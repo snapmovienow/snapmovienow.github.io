@@ -1,14 +1,15 @@
 import assert from 'node:assert/strict';import {test} from 'node:test';
 import {traceRequest} from '../src/request-diagnostics.mjs';
 import {createXtreamBridge} from '../src/xtream-bridge.mjs';
+import {playbackErrorHeaders} from '../src/playback-outcomes.mjs';
 import * as correlation from '../src/failure-correlation.mjs';
 const m={traceRequest,createXtreamBridge,...correlation};
 globalThis.fetch=()=>{throw Error('NETWORK FORBIDDEN')};
-const json=(b,s=200)=>Response.json(b,{status:s});
-async function run({status=502,slow=false,kind='movie',method='GET',range='bytes=100-199',missing=false,deny=false,throwing=false,api=m}={}){
+const json=(b,s=200)=>Response.json(b,{status:s,headers:playbackErrorHeaders(b,s)});
+async function run({status=502,slow=false,kind='movie',method='GET',range='bytes=100-199',ifRange=true,missing=false,deny=false,throwing=false,api=m}={}){
  let tick=0,calls=0;const logs=[],reports=[],timings=[];
  const deps={json,directory:async(e,p,b)=>{if(p==='/xtream-config')return json({enabled:true,version:1});if(p==='/xtream-login')return json({id:'PRIVATE-ACCOUNT',username:'PRIVATE-USER',version:1,permissions:{movies:!deny,tv:!deny,series:!deny,adults:true}});if(p==='/provider-result')reports.push(b);if(['/playback-begin','/provider-result','/release'].includes(p))return json({ok:true});throw Error('unexpected '+p)},sessionCall:async()=>json({exp:Date.now()+60000}),registry:async()=>json(missing?null:{kind:kind==='series'?'episode':kind,server:'PRIVATE-SERVER',upstreamId:'999',ext:'mp4',activity:{title:'PRIVATE-TITLE'}}),managedPlayback:async()=>({r:json({lease_id:'PRIVATE-LEASE'}),...(status===410?{provider_id:'PRIVATE-PROVIDER'}:{}),credentials:{username:'PRIVATE-UPUSER',password:'PRIVATE-UPPASS',origin:'https://synthetic.invalid'}}),ticket:async()=>'PRIVATE-TICKET',serverStream:async()=>{calls++;if(slow)tick=3000;if(throwing)throw Error('synthetic');return new Response(status===200?'ok':null,{status,headers:{'content-range':'bytes */100','X-SMN-Error-Code':status===410?'playback_superseded':'live_signal_unavailable'}})}};
- const req=new Request(`https://synthetic.invalid/${kind}/PRIVATE-USER/PRIVATE-PASS/123.mp4?secret=PRIVATE-QUERY`,{method,headers:{range,'if-range':'PRIVATE-VALIDATOR','x-smn-request-id':'FORGED-ID','CF-Connecting-IP':'192.0.2.42','user-agent':'PRIVATE-UA'}});
+ const req=new Request(`https://synthetic.invalid/${kind}/PRIVATE-USER/PRIVATE-PASS/123.mp4?secret=PRIVATE-QUERY`,{method,headers:{range,...(ifRange?{'if-range':'PRIVATE-VALIDATOR'}:{}),'x-smn-request-id':'FORGED-ID','CF-Connecting-IP':'192.0.2.42','user-agent':'PRIVATE-UA'}});
  const res=await api.traceRequest(req,t=>api.createXtreamBridge(deps)(req,{TICKET_SECRET:'fixture-only',PLAYBACK_SESSIONS:{}},{},t),{now:()=>tick,logger:x=>logs.push(x),onTiming:x=>timings.push(x)});
  return {res,logs,calls,reports,timings};
 }
@@ -25,6 +26,13 @@ test('existing movie 504 includes only the resolved public id and the response r
 });
 test('slow 416 gains numeric initial Range with same response and one request',async()=>{const x=await run({status:416,slow:true});assert.equal(x.logs.length,1);assert.equal(x.calls,1);const f=x.logs[0].media_failure;assert.equal(f.phase,'initial');assert.deepEqual(f.rangeEvidence.incomingRange,{kind:'bytes',start:100,end:199});assert.equal(f.rangeEvidence.reportedTotal,100);assert.equal(x.res.headers.get('content-range'),'bytes */100');assert.equal(x.reports.length,0)});
 test('fast 416 is intentionally not a new event',async()=>{const x=await run({status:416});assert.equal(x.logs.length,0);assert.equal(x.calls,1);assert.equal(x.res.status,416)});
+test('only a confirmed out-of-bounds movie GET changes the private timing code',async()=>{
+ for(const [overrides,code] of [[{},'range_out_of_bounds'],[{range:'bytes=99-'},'upstream_unavailable'],[{ifRange:true},'upstream_unavailable'],[{method:'HEAD'},'upstream_unavailable'],[{range:'bytes=100-,0-1'},'upstream_unavailable']]){
+  const x=await run({status:416,slow:true,range:'bytes=100-',ifRange:false,...overrides});
+  assert.equal(x.res.status,416);assert.equal(x.res.headers.get('content-range'),'bytes */100');assert.equal(x.calls,1);
+  assert.equal(x.timings[0].errorCode,code);assert.equal(x.logs[0].playback.errorCode,code);
+ }
+});
 test('private strings, URLs, IDs, address and forged reference do not enter logs/timings',async()=>{const x=await run({status:416,slow:true});const text=JSON.stringify([...x.logs,...x.timings]);for(const s of ['PRIVATE','192.0.2.42','FORGED-ID','https:','999'])assert.ok(!text.includes(s),s);assert.ok(!JSON.stringify(x.timings).includes('content_public_id'))});
 test('cancel410 has no provider penalty, extra calls or failure correlation',async()=>{const x=await run({status:410,slow:true});assert.equal(x.res.status,410);assert.equal(x.reports.length,0);assert.equal(x.calls,1);assert.equal(x.logs.length,1);assert.equal(x.logs[0].media_failure,undefined)});
 test('permission denied and missing record never obtain content correlation',async()=>{for(const opt of [{deny:true},{missing:true}]){const x=await run(opt);assert.equal(x.calls,0);assert.ok(x.logs.every(l=>!l.media_failure));}});

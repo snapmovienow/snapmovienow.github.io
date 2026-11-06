@@ -1,4 +1,5 @@
 import {takeFailureCorrelation} from './failure-correlation.mjs';
+import {initialRangeOutOfBounds} from './initial-range-evidence.mjs';
 import {setGatewayReference,takeGatewayFailure} from './portal-gateway-diagnostics.mjs';
 import {PlaybackTimings} from './playback-timings.mjs';
 import {playbackErrorCode} from './playback-outcomes.mjs';
@@ -22,7 +23,9 @@ export async function traceRequest(req, handler, {logger = console.error, now = 
   const portalFailure=takeGatewayFailure(req);
   const headers = new Headers(response.headers);
   const elapsedMs=Math.max(0,now()-started);
-  const errorCode=playbackErrorCode(headers.get('X-SMN-Error-Code'));
+  const mediaFailure=takeFailureCorrelation(trace,response.status);
+  const errorCode=response.status===416&&mediaFailure?.type!=='live'&&initialRangeOutOfBounds(mediaFailure?.rangeEvidence)
+    ?'range_out_of_bounds':playbackErrorCode(headers.get('X-SMN-Error-Code'));
   const upstreamTiming=(headers.get('Server-Timing')||'').split(',').filter(x=>x.trim()&&!/^smn_(auth|catalog|allocation|validation|origin|first_byte);/.test(x.trim())).join(',');if(upstreamTiming)headers.set('Server-Timing',upstreamTiming);else headers.delete('Server-Timing');
   headers.append('Server-Timing','smn;dur='+elapsedMs);
   const stageHeader=trace.header();if(stageHeader)headers.append('Server-Timing',stageHeader);
@@ -31,7 +34,6 @@ export async function traceRequest(req, handler, {logger = console.error, now = 
   const exposed = new Set((headers.get('Access-Control-Expose-Headers') || '').split(',').map(x => x.trim()).filter(Boolean));
   for (const name of ['X-SMN-Request-ID', 'X-SMN-Version', 'CF-Ray','Server-Timing']) exposed.add(name);
   headers.set('Access-Control-Expose-Headers', [...exposed].join(', '));
-  const mediaFailure=takeFailureCorrelation(trace,response.status);
   const existingEvent=response.status===403||response.status>=500||elapsedMs>=2500;
   let fastMediaEvent=false;
   if(!existingEvent&&mediaFailure&&[404,416].includes(response.status)&&fastMediaFailureBudget)try{fastMediaEvent=fastMediaFailureBudget.take()===true}catch{}

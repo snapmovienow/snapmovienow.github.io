@@ -31,7 +31,13 @@ export async function panelSession(username,password,base=BASE,options={}){
   const sc=r.headers.get('set-cookie');if(sc){const m=sc.match(/(?:^|,\s*)PHPSESSID=([^;]+)/);if(m)cookie='PHPSESSID='+m[1]}
   if([301,302,303,307,308].includes(r.status)){url=new URL(r.headers.get('location'),url);if([301,302,303].includes(r.status)){method='GET';body=undefined}continue}
   if(!r.ok)throw Object.assign(Error('panel_unavailable'),{failureCode:'http_error'});if(options.maxBytes){const reader=r.body?.getReader();if(!reader)return '';const parts=[];let size=0;try{for(;;){const chunk=await reader.read();if(chunk.done)break;size+=chunk.value.byteLength;if(size>options.maxBytes){await reader.cancel();throw Error('panel_response_size');}parts.push(chunk.value);}}finally{reader.releaseLock();}const raw=new Uint8Array(size);let at=0;for(const part of parts){raw.set(part,at);at+=part.byteLength;}return new TextDecoder().decode(raw);}return r.text();}throw Error('panel_redirect_failed');}
- await request('login');const text=await request('login',new URLSearchParams({username,password,login:'',referrer:''}).toString());
+ const login=async()=>{await request('login');return request('login',new URLSearchParams({username,password,login:'',referrer:''}).toString())};
+ let text;
+ try{text=await login()}catch(error){
+  if(!options.retryLoginTimeout||!['TimeoutError','AbortError'].includes(error?.name)||deadline-Date.now()<=12000)throw error;
+  cookie='';
+  text=await login();
+ }
  if(/name=["']password["']/.test(text)||!text.includes('dashboard'))throw Error('panel_invalid');
  return {request,base};
 }
@@ -44,7 +50,7 @@ function inventoryTotal(data){
 }
 
 export async function readPanel(username,password,base=BASE,options={}){
- const {request}=await panelSession(username,password,base);
+ const {request}=await panelSession(username,password,base,{retryLoginTimeout:options.retryLoginTimeout});
  options.onProgress?.({receivedRows:null,acceptedRows:null});
  // Provider-side filters can exclude usable idle active lines. Read the full
  // authenticated inventory and validate status and expiry locally. Playback
