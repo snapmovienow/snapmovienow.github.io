@@ -215,6 +215,14 @@ export class PlaybackSession {
  if(path.startsWith("/accounts/"))return accountsFetch(this.state,this.env,req);if(path==="/create"){const {exp,identity,sid}=await req.json();await this.state.storage.put("exp",exp);if(sid)await this.state.storage.put("sid",sid);if(identity)await this.state.storage.put("identity",identity);await this.state.storage.setAlarm(exp);return new Response("ok")}
  if(path==="/logout"){await this.state.storage.deleteAll();return new Response("ok")}
  if(path==='/ensure'){const {exp,identity,sid}=await req.json(),oldExp=await this.state.storage.get('exp'),old=await this.state.storage.get('identity');if(oldExp>Date.now()&&old?.uid===identity.uid&&old.version===identity.version&&old.xtreamVersion===identity.xtreamVersion)return Response.json({exp:oldExp});await this.state.storage.put('exp',exp);if(sid)await this.state.storage.put('sid',sid);await this.state.storage.put('identity',identity);await this.state.storage.setAlarm(exp);return Response.json({exp})}
+ if(path==='/xtream-movie-check'){
+  const {sid,lease_id,request_id}=await req.json();
+  const values=await this.state.storage.get(['exp','identity','sid']),exp=values.get('exp'),identity=values.get('identity');
+  if(!(exp>Date.now())||!identity?.xtream||sid!==values.get('sid')||!lease_id||!request_id)return new Response('Expired',{status:410});
+  const checked=await directory(this.env,'/heartbeat',{sid,lease_id,request_id,xtreamIdentity:identity});
+  if(exp>Date.now())return checked;
+  void checked.body?.cancel().catch(()=>{});return new Response('Expired',{status:410});
+ }
  const exp=await this.state.storage.get("exp");const identity=await this.state.storage.get("identity");if(identity&&!(await directory(this.env,"/check",identity)).ok)return new Response("Inactive",{status:401});if(path.startsWith('/owner-access/'))return ownerAccessState(this.state.storage,path,await req.json(),exp,identity?.admin===true);return new Response(exp>Date.now()?"ok":"expired",{status:exp>Date.now()?200:401})}
  async alarm(){if(await this.state.storage.get(LOCAL_AUDIT_KEY)){await this.localAudit().step();return;}const sid=await this.state.storage.get("sid");if(sid)await directory(this.env,"/release-session",{sid});await this.state.storage.deleteAll()}
 }
@@ -416,8 +424,20 @@ async function serverStreamDirect(req,env,u,ctx,trace){
  let flowPhase='access';
  const leaseReason=async response=>{if(response.status>=500)return 'access_unavailable';let reason='lease_denied';try{const code=(await response.json()).error;if(['playback_superseded','playback_expired'].includes(code))reason=code}catch{}return reason};
  try{
- const [access,lease]=await timed(trace,'auth',()=>Promise.all([sessionCall(env,d.sid,'/check'),d.lease_id?directory(env,d.xtream?'/heartbeat':'/lease-check',{lease_id:d.lease_id,sid:d.sid,request_id:d.request_id}):Promise.resolve({ok:true})]));
- if(!access.ok){flow?.finish(access.status>=500?'access_unavailable':'session_denied',{status:410});return new Response('Expired',{status:410,headers:cors})}if(!lease.ok){if(flow)flow.finish(await leaseReason(lease),{status:410});return json({error:'playback_expired'},410)}
+ let movieAccessChecked=false;
+ if(d.xtream&&d.type==='movie'&&!d.resource&&d.lease_id&&req.headers.get('X-SMN-Prepare')==='1'){
+  // The session checks local expiry and the directory checks revocation and
+  // capacity together, avoiding two startup calls to the same directory.
+  const access=await timed(trace,'auth',()=>sessionCall(env,d.sid,'/xtream-movie-check',{lease_id:d.lease_id,request_id:d.request_id}));
+  void access.body?.cancel().catch(()=>{});
+  if(!access.ok)return json({error:'playback_expired'},410);
+  // An older session or directory object may return success without checking both.
+  movieAccessChecked=access.headers.get('X-SMN-Xtream-Movie-Access')==='checked';
+ }
+ if(!movieAccessChecked){
+  const [access,lease]=await timed(trace,'auth',()=>Promise.all([sessionCall(env,d.sid,'/check'),d.lease_id?directory(env,d.xtream?'/heartbeat':'/lease-check',{lease_id:d.lease_id,sid:d.sid,request_id:d.request_id}):Promise.resolve({ok:true})]));
+  if(!access.ok){flow?.finish(access.status>=500?'access_unavailable':'session_denied',{status:410});return new Response('Expired',{status:410,headers:cors})}if(!lease.ok){if(flow)flow.finish(await leaseReason(lease),{status:410});return json({error:'playback_expired'},410)}
+ }
  const warm=liveStarts.get(u.href);if(warm){liveStarts.delete(u.href);if(warm.until>Date.now()&&req.method==='GET'){flow?.finish('playlist_response',{status:200});return new Response(warm.body,{headers:{...cors,'content-type':'application/vnd.apple.mpegurl',[INITIAL_EVIDENCE_HEADER]:'manifest'}})}}
  const folder=d.type==='series'?'series':d.type==='live'?'live':'movie',start=d.resource||(d.origin||ORIGIN)+'/'+folder+'/'+encodeURIComponent(d.username)+'/'+encodeURIComponent(d.password)+'/'+d.id+'.'+cleanExt(d.ext);
  const sourceOrigin=d.origin||ORIGIN;
