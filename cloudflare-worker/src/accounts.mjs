@@ -2,7 +2,7 @@ import {usageChannel,readChannelUsage,observeChannelUsage} from './channel-usage
 import {runPublicTvImport,publicTvImportStatus} from './public-tv-import.mjs';
 import {runEmpressImport,empressImportStatus} from './empress-import.mjs';
 import {runOwnedMediaMigration,ownedMediaMigrationStatus} from './owned-media-migration.mjs';
-import {isOwnedMediaSeries,OWNED_MEDIA_SERIES} from './owned-media-source.mjs';
+import {isOwnedMediaSeries,ownedMediaDescriptor,ownedRangeRequestId,OWNED_MEDIA_SERIES} from './owned-media-source.mjs';
 import {runUnivisionNyImport,univisionNyImportStatus} from './univision-ny-import.mjs';
 import {runBrandingTestWithdrawal,brandingTestImportStatus} from './branding-test-import.mjs';
 import {boundedTsQuota} from './bounded-ts-route.mjs';
@@ -255,7 +255,15 @@ export async function accountsFetch(state,env,req){
   if(!b.request_id||(await tx.get('playback:'+b.sid))?.request_id!==b.request_id)return answer({error:'playback_superseded'},410);
   const user=await tx.get('user:'+normal(b.username));if(!alive(user)||user.id!==b.uid||user.version!==b.version)return answer({error:'account_inactive'},401);
   const found=selectExclusive((await exclusiveSnapshot(tx)).items,b.exclusiveId);if(!found||!(b.live===true?visibleLocalTv(found.row,contentPermissions(user.permissions)):visibleExclusive(found.row,contentPermissions(user.permissions)))||found.row.playbackRevision!==b.playbackRevision)return answer({error:'title_not_allowed'},404);
-  const local=leases.in(tx);await local.prune();await local.removeFor({sid:b.sid});const used=await local.count({uid:b.uid});
+  const local=leases.in(tx);await local.prune();
+  const owned=ownedMediaDescriptor(found.media.page);
+  if(b.xtream===true&&owned?.exclusiveId===b.exclusiveId&&b.request_id===ownedRangeRequestId(owned,b.playbackRevision)){
+   for(const [id,lease]of await local.active({sid:b.sid,uid:b.uid,xtream:true})){
+    if(lease.version!==b.version||lease.request_id!==b.request_id||lease.exclusiveId!==b.exclusiveId||lease.exclusiveParentId!==found.row.id||lease.playbackRevision!==b.playbackRevision)continue;
+    await local.renew(id,Date.now()+90000);await recordCustomerActivity(tx,user.id,Date.now(),b.client);return answer({lease_id:id});
+   }
+  }
+  await local.removeFor({sid:b.sid});const used=await local.count({uid:b.uid});
   const mediaKey=found.row.type+'|'+found.row.profileServer+'|'+b.exclusiveId+'|'+(found.media.mode==='gnula'?'m3u8':new URL(found.media.page).pathname.split('.').at(-1));
   if(used>=3){await recordConnectionLimit(tx,user,{...b,mediaKey,activity:{title:found.media===found.row?found.row.name:found.row.name+' · '+found.media.title}},used);return answer({error:'user_connection_limit'},409);}
   const id=crypto.randomUUID();await local.put(id,{sid:b.sid,uid:b.uid,username:user.username,version:user.version,request_id:b.request_id,exclusiveId:b.exclusiveId,exclusiveParentId:found.row.id,playbackRevision:b.playbackRevision,mediaKey,activity:{title:found.media===found.row?found.row.name:found.row.name+' · '+found.media.title},client:cleanConnectionClient(b.client),...(usageChannel(found.row)?{channel:usageChannel(found.row)}:{}),startedAt:Date.now(),until:Date.now()+90000,...(b.xtream?{xtream:true}:{})});await recordCustomerActivity(tx,user.id,Date.now(),b.client);return answer({lease_id:id});

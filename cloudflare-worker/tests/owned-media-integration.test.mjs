@@ -41,20 +41,36 @@ try{
   assert.equal(response.status,206);assert.equal(response.headers.get('content-type'),'video/mp4');assert.deepEqual(new Uint8Array(await response.arrayBuffer()),body);assert.equal(served.at(-1),file.exclusiveId);
   assert.equal([...response.headers.values()].join(' ').includes(env.SNAP_OWNED_MEDIA_SITE_TOKEN),false);
  }
- const webLogin=await post({op:'auth',...customer});assert.equal(webLogin.status,200);let revision=0;
+ const webLogin=await post({op:'auth',...customer});assert.equal(webLogin.status,200);let revision=0,previous;
  for(const file of OWNED_MEDIA_FILES){
   const prepared=await post({op:'gnula_token',access_token:webLogin.data.access_token,id:file.exclusiveId,request_id:crypto.randomUUID(),revision:++revision});assert.equal(prepared.status,200);
   assert.equal(new URL(prepared.data.url).origin,origin);assert.equal(JSON.stringify(prepared.data).includes('.chatgpt.site'),false);
-  const response=await worker.fetch(new Request(prepared.data.url,{headers:{Range:'bytes=0-15'}}),env);assert.equal(response.status,206);assert.deepEqual(new Uint8Array(await response.arrayBuffer()),body);assert.equal(served.at(-1),file.exclusiveId);
+  const appRange=(range,method='GET')=>worker.fetch(new Request(prepared.data.url,{method,headers:{Range:range}}),env);
+  if(previous){const stale=await worker.fetch(new Request(previous),env);assert.equal(stale.status,410,'an option change revokes the previous ticket');await stale.body?.cancel();}
+  const head=await appRange('bytes=0-15','HEAD');assert.equal(head.status,206);
+  const first=await appRange('bytes=0-15');assert.equal(first.status,206);assert.deepEqual(new Uint8Array(await first.arrayBuffer()),body);
+  const cancelled=await appRange('bytes=0-15');assert.equal(cancelled.status,206);await cancelled.body.cancel();
+  assert.equal((await appRange('bytes=9999999999-')).status,416);
+  const retry=await appRange('bytes=0-15');assert.equal(retry.status,206);assert.deepEqual(new Uint8Array(await retry.arrayBuffer()),body);assert.equal(served.at(-1),file.exclusiveId);
+  previous=prepared.data.url;
+  if(file===OWNED_MEDIA_FILES.at(-1)){
+   const released=await post({op:'playback_release',access_token:webLogin.data.access_token,lease_id:prepared.data.lease_id,request_id:prepared.data.request_id});assert.equal(released.status,200);
+   const stale=await appRange('bytes=0-15');assert.equal(stale.status,410,'closing playback still revokes the ticket');await stale.body?.cancel();
+  }
  }
  const wrong=await post({...savedTicket,id:OWNED_MEDIA_FILES.find(file=>file.id!==savedTicket.id).id},'/exclusive-owned-authorize');assert.equal(wrong.status,403);
  assert.equal((await post({ticket:'x'.repeat(60),id:OWNED_MEDIA_FILES[0].id},'/exclusive-owned-authorize')).status,403);
  assert.equal((await post({ticket:'',id:OWNED_MEDIA_FILES[0].id},'/exclusive-owned-authorize')).status,401);
  const oversized=await worker.fetch(new Request(origin+'/exclusive-owned-authorize',{method:'POST',body:'x'.repeat(20001)}),env);assert.equal(oversized.status,413);
- const invalidRange=await worker.fetch(new Request(origin+'/series/'+customer.username+'/'+customer.password+'/'+ids[0]+'.mp4',{headers:{Range:'bytes=9999999999-','User-Agent':'Owned-DNS-Fixture/1','CF-Connecting-IP':'198.51.100.30'}}),env);assert.equal(invalidRange.status,416);assert.equal(invalidRange.headers.get('content-range'),'bytes */'+OWNED_MEDIA_FILES[0].size);
- const active=await(await openLeaseStore(objects.get('__smn_accounts_v1').state.storage)).active();assert.equal(active.size,0,'completed or invalid range requests release their leases');
+ const dnsRange=range=>worker.fetch(new Request(origin+'/series/'+customer.username+'/'+customer.password+'/'+ids[0]+'.mp4',{headers:{Range:range,'User-Agent':'Owned-DNS-Fixture/1','CF-Connecting-IP':'198.51.100.30'}}),env);
+ const invalidRange=await dnsRange('bytes=9999999999-');assert.equal(invalidRange.status,416);assert.equal(invalidRange.headers.get('content-range'),'bytes */'+OWNED_MEDIA_FILES[0].size);
+ const leases=await openLeaseStore(objects.get('__smn_accounts_v1').state.storage),[dnsLease]=await leases.active();
+ assert.ok(dnsLease,'the DNS playback survives an unsatisfiable range');assert.equal(dnsLease[1].exclusiveId,OWNED_MEDIA_FILES[0].exclusiveId);
+ for(const response of await Promise.all([dnsRange('bytes=0-15'),dnsRange('bytes=0-15')])){assert.equal(response.status,206);assert.deepEqual(new Uint8Array(await response.arrayBuffer()),body);}
+ assert.deepEqual([...(await leases.active()).keys()],[dnsLease[0]],'parallel requests reuse the DNS lease');
  const info=await post({op:'gnula_catalog',access_token:webLogin.data.access_token});assert.equal(info.status,200);assert.ok(JSON.stringify(info.data).includes(item.name),'legacy app catalog retains the migrated series');assert.equal(JSON.stringify(info.data).includes(OWNED_MEDIA_ORIGIN),false);
  assert.equal((await admin('exclusive-save',{item:{...item,visible:false},revision:1})).status,200);
  const hidden=await worker.fetch(new Request(origin+'/series/'+customer.username+'/'+customer.password+'/'+ids[0]+'.mp4'),env);assert.equal(hidden.status,404);
- console.log('PASS: eight DNS routes and eight app playback routes use private copies with scoped tickets, exact episode selection, no credential exposure, bounded authorization, seeking, lease cleanup and immediate hide revocation.');
+ assert.equal((await leases.active()).size,0);
+ console.log('PASS: eight DNS and eight app routes preserve the selected copy across range completion, cancellation, HEAD, 416 and concurrent DNS reads. Explicit close and hide revoke playback.');
 }finally{globalThis.fetch=originalFetch;Date.now=originalNow;}

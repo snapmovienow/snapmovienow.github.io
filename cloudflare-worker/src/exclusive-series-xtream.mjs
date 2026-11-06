@@ -72,7 +72,7 @@ export function createExclusiveSeriesXtream({read,prepare,media},env,ctx){
    if(record.ext!=='m3u8'&&!(isOwnedMediaSeries(row)&&record.ext==='mp4'))return Response.json({error:'invalid_stream'},{status:400});
    const prepared=await prepare(request,env,auth.session,choice.id);
    try{return await media(new Request(prepared.url,request),env,ctx);}
-   catch(error){await prepared.release?.();throw error;}
+   catch(error){if(!isOwnedMediaSeries(row))await prepared.release?.();throw error;}
   }
  };
 }

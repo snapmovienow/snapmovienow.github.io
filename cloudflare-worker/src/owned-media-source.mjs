@@ -13,6 +13,7 @@ export function ownedMediaDescriptor(value){
  return byUrl.get(value)||null;
 }
 export const ownedMediaForEpisode=id=>OWNED_MEDIA_FILES.find(item=>item.exclusiveId===id)||null;
+export const ownedRangeRequestId=(file,revision)=>'owned-range-'+file.exclusiveId+'-'+revision;
 export function isOwnedMediaSeries(row){
  return row?.id===OWNED_MEDIA_SERIES&&row.type==='series'&&row.mode==='direct'&&row.episodes?.length===4&&row.episodes.every(episode=>{
   const primary=ownedMediaForEpisode(episode.id),alternate=episode.alternatives?.[0],secondary=alternate&&ownedMediaForEpisode(alternate.id);
@@ -44,8 +45,14 @@ async function privateFetch(target,init,fetcher){
 export async function fetchOwnedMedia(target,env,playbackTicket,{range,head=false,signal,fetcher=fetch}={}){
  const headers=new Headers(ownedMediaHeaders(target,env,playbackTicket));
  if(range)headers.set('Range',range);
- const response=await privateFetch(target,{method:head?'HEAD':'GET',headers,signal:signal?AbortSignal.any([signal,AbortSignal.timeout(20000)]):AbortSignal.timeout(20000)},fetcher);
- return response;
+ // Bound startup only. The client signal remains connected during the body.
+ const startup=new AbortController();
+ const timer=setTimeout(()=>startup.abort(new DOMException('Media startup timeout','TimeoutError')),20000);
+ try{
+  return await privateFetch(target,{method:head?'HEAD':'GET',headers,signal:signal?AbortSignal.any([signal,startup.signal]):startup.signal},fetcher);
+ }finally{
+  clearTimeout(timer);
+ }
 }
 export async function probeOwnedMedia(env,{fetcher=fetch}={}){
  const headers={'OAI-Sites-Authorization':'Bearer '+siteSecret(env)};

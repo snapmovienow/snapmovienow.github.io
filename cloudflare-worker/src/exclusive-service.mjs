@@ -4,7 +4,7 @@ import {exclusiveURL,exclusiveId,exclusivePublic,visibleExclusive,selectExclusiv
 import {observeFirstChunk} from './local-startup-observations.mjs';
 import {createExclusiveSeriesXtream} from './exclusive-series-xtream.mjs';
 import {isEmpressPage,resolveEmpressSource,empressMediaAllowed,empressMediaHeaders} from './empress-source.mjs';
-import {ownedMediaDescriptor,isOwnedMediaSeries,assertOwnedMediaConnected,fetchOwnedMedia,fetchOwnedPreview,readBoundedJson,OWNED_MEDIA_SERIES,OWNED_MEDIA_UNTIL} from './owned-media-source.mjs';
+import {ownedMediaDescriptor,ownedRangeRequestId,isOwnedMediaSeries,assertOwnedMediaConnected,fetchOwnedMedia,fetchOwnedPreview,readBoundedJson,OWNED_MEDIA_SERIES,OWNED_MEDIA_UNTIL} from './owned-media-source.mjs';
 const error=(code,status=400)=>Object.assign(Error(code),{status});
 async function mediaFetch(url,{range,head=false,signal,fetcher=fetch,allowed,upstreamHeaders={}}={}){
  let target=exclusiveURL(url);for(let i=0;i<4;i++){
@@ -29,7 +29,9 @@ export function createExclusiveService(deps){
   // current permission, source identity and revision in the account store.
   const selected=options.live&&options.localRow?selectExclusive([options.localRow],id):null;
   if(selected&&!visibleLocalTv(selected.row,session.permissions))throw error('title_not_allowed',404);
-  const {row,media}=selected||await lookup(env,id,session.permissions,options),request_id=options.request_id||crypto.randomUUID();
+  const {row,media}=selected||await lookup(env,id,session.permissions,options);
+  const reusableRange=session.xtream===true&&ownedMediaDescriptor(media.page);
+  const request_id=reusableRange?ownedRangeRequestId(reusableRange,row.playbackRevision):options.request_id||crypto.randomUUID();
   const begun=await deps.directory(env,'/playback-begin',{sid:session.sid,request_id,...(Number.isSafeInteger(options.revision)?{revision:options.revision}:{})});if(!begun.ok)throw error('playback_superseded',begun.status);
   let resolved;
   try{resolved=await resolve(media,session,req.signal);}catch(e){if(!req.signal.aborted)await deps.directory(env,'/channel-startup-failure',{...session,request_id,exclusiveId:id,playbackRevision:row.playbackRevision,live:options.live===true,client:deps.requestConnectionClient(req)}).then(r=>r.body?.cancel()).catch(()=>{});throw e;}
@@ -41,7 +43,7 @@ export function createExclusiveService(deps){
    const monitor=await deps.ticket(env,{kind:'playback-quality',uid:session.uid,version:session.version,sid:session.sid,lease_id,request_id,exp:session.exp});
    const value={kind:'exclusive-media',sid:session.sid,uid:session.uid,version:session.version,exclusiveId:id,parentId:row.id,playbackRevision:row.playbackRevision,lease_id,request_id,source,...(resolved.empressPage?{empressPage:resolved.empressPage,empressContext:resolved.empressContext}:{}),...(resolved.officialPage?{officialPage:resolved.officialPage,officialHeartbeat:resolved.officialHeartbeat,localStartedAt}:{}),monitor,type:row.type,xtream:!!session.xtream,exp:Math.min(session.exp,Date.now()+3*3600000)};
    const token=await deps.ticket(env,value);return {url:new URL('/exclusive-media?t='+encodeURIComponent(token),req.url).href,lease_id,request_id};
-  }catch(e){await deps.directory(env,'/release',{sid:session.sid,lease_id,request_id});throw e;}
+  }catch(e){if(!reusableRange)await deps.directory(env,'/release',{sid:session.sid,lease_id,request_id});throw e;}
  };
  const authorizeOwned=async(req,env)=>{
   if(req.method!=='POST')throw error('method_not_allowed',405);
@@ -90,7 +92,7 @@ export function createExclusiveService(deps){
   const allowed=owned?url=>String(url)===owned.url:data.empressPage?url=>empressMediaAllowed(data.empressPage,url,data.empressContext):data.officialPage?url=>officialMediaAllowed(data.officialPage,url):null;if(allowed?!allowed(target):data.resource&&target.origin!==base.origin)throw error('exclusive_resource',403);
   empressStage='upstream';empressResource=target.pathname.endsWith('.m3u8')?'playlist':target.pathname.endsWith('.key')?'key':/\.(?:ts|m4s|mp4|aac)$/.test(target.pathname)?'media':'other';
   const fetched=owned?{url:target.href,response:await fetchOwnedMedia(target.href,env,playbackTicket,{range:req.headers.get('Range')||undefined,head:req.method==='HEAD',signal:req.signal,fetcher:deps.fetcher})}:await mediaFetch(target.href,{range:/\.m3u8$/i.test(target.pathname)?undefined:req.headers.get('Range')||undefined,head:req.method==='HEAD',signal:req.signal,fetcher:deps.fetcher,allowed,...(data.empressPage?{upstreamHeaders:empressMediaHeaders(data.empressPage,data.empressContext)}:{})});const response=fetched.response;empressStatus=response.status;
-  if(owned&&response.status===416){await response.body?.cancel();await deps.directory(env,'/release',{sid:data.sid,lease_id:data.lease_id,request_id:data.request_id});const headers=new Headers({'Cache-Control':'no-store','Accept-Ranges':'bytes'}),range=response.headers.get('content-range');if(/^bytes \*\/\d+$/.test(range||''))headers.set('content-range',range);return new Response(null,{status:416,headers});}
+  if(owned&&response.status===416){await response.body?.cancel();const headers=new Headers({'Cache-Control':'no-store','Accept-Ranges':'bytes'}),range=response.headers.get('content-range');if(/^bytes \*\/\d+$/.test(range||''))headers.set('content-range',range);return new Response(null,{status:416,headers});}
   if(!response.ok){if(owned)console.error({event:'owned_media_failure',stage:'upstream',episode:owned.episode,option:owned.option,status:response.status,method:req.method});await response.body?.cancel();if(data.officialPage)await forgetOfficialLivePage(data.officialPage,{fetcher:deps.fetcher});throw error('media_unavailable',response.status===404?404:502);}
   if(allowed?!allowed(fetched.url):data.resource&&new URL(fetched.url).origin!==base.origin){await response.body?.cancel();throw error('exclusive_resource',403);}
   const out=new Headers({'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});for(const key of ['content-type','content-length','content-range','accept-ranges','etag','last-modified'])if(response.headers.has(key))out.set(key,response.headers.get(key));
@@ -124,10 +126,13 @@ export function createExclusiveService(deps){
    out.delete('content-length');out.set('content-type','application/vnd.apple.mpegurl');if(!data.resource)report('playlist');return new Response(lines.join('\n'),{headers:out});
   }
   if(!data.resource&&!playlist&&!/^(?:video\/|audio\/|application\/octet-stream)/i.test(response.headers.get('Content-Type')||'')){await response.body?.cancel();throw error('exclusive_not_video',502);}
-  if(req.method==='HEAD'){await response.body?.cancel();if(!data.resource)await deps.directory(env,'/release',{sid:data.sid,lease_id:data.lease_id,request_id:data.request_id});return new Response(null,{status:playlist?200:response.status,headers:out});}
+  if(req.method==='HEAD'){await response.body?.cancel();if(!data.resource&&!owned)await deps.directory(env,'/release',{sid:data.sid,lease_id:data.lease_id,request_id:data.request_id});return new Response(null,{status:playlist?200:response.status,headers:out});}
   const result=new Response(checked.localVideoProbe?observeFirstChunk(response.body,()=>report('firstVideoBytes'),code=>{if(!req.signal.aborted&&ctx?.waitUntil)ctx.waitUntil(usageFailure(code==='media_empty'?'media_empty':'body_error'));}):response.body,{status:response.status,headers:out});
   if(data.resource)return result;
-  return deps.guardXtreamResponse(result,async()=>(await deps.sessionCall(env,data.sid,'/check')).ok&&(await deps.directory(env,'/heartbeat',{sid:data.sid,lease_id:data.lease_id,request_id:data.request_id})).ok,()=>deps.directory(env,'/release',{sid:data.sid,lease_id:data.lease_id,request_id:data.request_id}),ctx,req.signal,data.exp,{waitForRelease:data.type!=='live'});
+  // A progressive MP4 can span several requests for the same signed playback.
+  // Keep its lease through range completion, seeks and transport reconnects.
+  const release=owned?undefined:()=>deps.directory(env,'/release',{sid:data.sid,lease_id:data.lease_id,request_id:data.request_id});
+  return deps.guardXtreamResponse(result,async()=>(await deps.sessionCall(env,data.sid,'/check')).ok&&(await deps.directory(env,'/heartbeat',{sid:data.sid,lease_id:data.lease_id,request_id:data.request_id})).ok,release,ctx,req.signal,data.exp,{waitForRelease:data.type!=='live',allowBufferedPause:!!owned});
   }catch(e){
    if(isEmpressPage(data.empressPage)&&!req.signal.aborted)try{
     const range=req.headers.get('Range')||'',codes=new Set(['media_unavailable','invalid_playlist','exclusive_resource','exclusive_media','exclusive_redirect','exclusive_not_video']);
@@ -152,7 +157,7 @@ export function createExclusiveService(deps){
   if(url.pathname.startsWith('/exclusive/')&&!play)throw error('invalid_path');
   const username=play?decodeURIComponent(play[1]):url.searchParams.get('username'),password=play?decodeURIComponent(play[2]):url.searchParams.get('password');if(!username||!password)throw error('credentials_required',401);
   const auth=await authenticate(username,password);if(auth instanceof Response)return auth;
-  if(play){const prepared=await prepare(req,env,auth.session,play[3]);try{return await media(new Request(prepared.url,req),env,ctx);}catch(e){await deps.directory(env,'/release',{sid:auth.session.sid,...prepared});throw e;}}
+  if(play){const prepared=await prepare(req,env,auth.session,play[3]);try{return await media(new Request(prepared.url,req),env,ctx);}catch(e){if(!prepared.request_id.startsWith('owned-range-'))await deps.directory(env,'/release',{sid:auth.session.sid,...prepared});throw e;}}
   return Response.json(action==='get_exclusive_catalog'?await catalog(env,auth.session.permissions,url.origin):await episodes(env,url.searchParams.get('series_id'),auth.session.permissions,url.origin));
  };
  const liveXtream=(env,ctx)=>createLocalTvXtream({read,media,prepare:async(...args)=>{const prepared=await prepare(...args);return {...prepared,release:()=>deps.directory(env,'/release',{sid:args[2].sid,lease_id:prepared.lease_id,request_id:prepared.request_id})};}},env,ctx);

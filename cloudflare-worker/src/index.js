@@ -12,7 +12,7 @@ import {createCcfExporter} from './ccf-record.mjs';
 import {createOwnerAdminAccess,ownerAccessState} from './owner-admin-access.mjs';
 import {selectExclusive,visibleExclusive} from './exclusive-catalog.mjs';
 import {createExclusiveService} from './exclusive-service.mjs';
-import {ownedVerificationEnabled,runOwnedMediaVerification} from './owned-media-verification.mjs';
+import {ownedVerificationEnabled,runOwnedMediaVerification,OWNED_VERIFICATION_KEY,OWNED_VERIFICATION_OBJECT} from './owned-media-verification.mjs';
 import {createOwnedMediaBootstrap} from './owned-media-bootstrap.mjs';
 import {createLocalTvAudit,LOCAL_AUDIT_KEY,localAuditEnabled} from './local-tv-audit.mjs';
 import {probeLocalChannel} from './local-channel-probe.mjs';
@@ -164,7 +164,7 @@ export class PlaybackSession {
   if(!diagnosticEnabled(this.env))return Response.json({error:'diagnostic_disabled'},{status:403});
   await runEmpressOriginDiagnostic(this.state.storage,this.env,{ticket,delegate:body=>this.env.PLAYBACK_SESSIONS.get(this.env.PLAYBACK_SESSIONS.idFromName('__smn_empress_diagnostic_peer_20261104')).fetch('https://private/empress-origin-diagnostic-resource',{method:'POST',body:JSON.stringify(body)})});return Response.json({ok:true});
  }
- if(path==='/owned-media-verification-status'){const value=await this.state.storage.get('owned-media-verification:20261104-v2');return Response.json({state:value?.state||'pending',passed:value?.passed||0,rangeChecks:value?.rangeChecks||0});}
+ if(path==='/owned-media-verification-status'){const value=await this.state.storage.get(OWNED_VERIFICATION_KEY);return Response.json({state:value?.state||'pending',passed:value?.passed||0,rangeChecks:value?.rangeChecks||0,checkedAt:value?.finishedAt||null});}
  if(path==='/owned-media-verification-run'){
   if(!ownedVerificationEnabled(this.env))return Response.json({error:'verification_disabled'},{status:403});
   const connected=await directory(this.env,'/owned-media-connect');const connection=await connected.json();
@@ -501,7 +501,7 @@ if(u.pathname==='/local-tv-health'&&req.method==='GET'){
 }
 // Read-only feature health: no titles, sources, tickets or customer data.
 if(u.pathname==='/exclusive-owned-health'&&req.method==='GET'){
- try{const [connected,verified]=await Promise.all([directory(env,'/owned-media-status'),env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_owned_media_verification_20261104')).fetch('https://private/owned-media-verification-status')]);return json({...await connected.json(),verification:await verified.json()});}catch{return json({connected:false,verification:{state:'unavailable'}},503)}
+ try{const [connected,verified]=await Promise.all([directory(env,'/owned-media-status'),env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName(OWNED_VERIFICATION_OBJECT)).fetch('https://private/owned-media-verification-status')]);return json({...await connected.json(),verification:await verified.json()});}catch{return json({connected:false,verification:{state:'unavailable'}},503)}
 }
 if(u.pathname==='/exclusive-owned-authorize'){try{return await exclusives.authorizeOwned(req,env)}catch(e){return json({error:e.status?e.message:'authorization_unavailable'},e.status||503)}}
 if(u.pathname==='/exclusive-media'&&['GET','HEAD'].includes(req.method)){try{return await exclusives.media(req,env,ctx)}catch(e){return json({error:e.message},e.status||502)}}

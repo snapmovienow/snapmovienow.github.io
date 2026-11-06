@@ -122,10 +122,10 @@ export function createXtreamBridge(deps) {
 
 // Native players do not send the web player's heartbeat. Keep an open media
 // response authorised and release its reservation when the client disconnects.
-export function guardXtreamResponse(response, check, release, ctx, signal, expiresAt, {waitForRelease=true,flowMonitor}={}) {
+export function guardXtreamResponse(response, check, release, ctx, signal, expiresAt, {waitForRelease=true,flowMonitor,allowBufferedPause=false}={}) {
   if (!response.body) return response;
   const reader=response.body.getReader();let closed=false,checking=false,controller,timer,expiryTimer,cleanupTask,lastDemand=Date.now();
-  let deliveredAt=null;
+  let deliveredAt=null,reading=false;
   const observe=(method,...args)=>{if(flowMonitor)try{flowMonitor[method]?.(...args)}catch{}};
   const failureReason=error=>error?.message==='media_timeout'?'origin_silence':error?.message==='truncated_http_body'?'origin_truncated':'relay_error';
   const cleanup=()=>{
@@ -149,7 +149,7 @@ export function guardXtreamResponse(response, check, release, ctx, signal, expir
       timer=setInterval(async()=>{
         if(closed)return;
         observe('checkpoint');
-        if(Date.now()-lastDemand>45000){await stop(Error('stream_idle'),'stream_idle');return}
+        if(Date.now()-lastDemand>45000&&(!allowBufferedPause||reading)){await stop(Error('stream_idle'),'stream_idle');return}
         if(checking)return;
         checking=true;
         try{const checked=await check();const allowed=flowMonitor?checked===true||checked?.ok===true:!!checked;if(!allowed)await stop(Error('access_revoked'),checked?.reason||'session_denied')}
@@ -158,7 +158,8 @@ export function guardXtreamResponse(response, check, release, ctx, signal, expir
       },25000);
     },
     async pull(c){if(closed)return;lastDemand=Date.now();if(flowMonitor&&deliveredAt!==null)observe('consumerPause',lastDemand-deliveredAt);const readAt=flowMonitor?Date.now():0;try{
-      const next=await reader.read();if(closed)return;
+      reading=true;
+      const next=await reader.read();reading=false;if(closed)return;
       if(flowMonitor)observe('relayReadWait',Date.now()-readAt);
       // A live source ending must reach the player even if capacity release stalls.
       // cleanup still clears timers and retains the exact release with waitUntil.

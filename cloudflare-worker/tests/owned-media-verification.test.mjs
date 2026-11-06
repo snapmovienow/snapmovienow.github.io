@@ -12,7 +12,7 @@ test('one bounded verification reads all 24 ranges through scoped public API rou
  const storage=new Store();let active=0,maximum=0,released=0,requests=0;const events=[],prepared=new Map();
  const deps={read:async()=>({items:[row]}),authenticate:async()=>{active++;maximum=Math.max(maximum,active);return{sid:crypto.randomUUID()};},prepare:async(session,id)=>{await new Promise(resolve=>setImmediate(resolve));const ticket=crypto.randomUUID();prepared.set(ticket,files.find(file=>file.exclusiveId===id));return{url:'https://api.snaptvnow.com/exclusive-media?t='+ticket};},request:async request=>{requests++;const file=prepared.get(new URL(request.url).searchParams.get('t'));assert.ok(file);const range=request.headers.get('range').replace('bytes=','');return new Response(bytes,{status:206,headers:{'content-type':'video/mp4','content-range':'bytes '+range+'/'+file.size}});},release:async()=>{released++;active--;}};
  const result=await runOwnedMediaVerification(storage,env,deps,{files,now:()=>Date.parse('2026-11-04T19:00:00Z'),onResult:value=>events.push(value)});
- assert.equal(result.state,'completed');assert.equal(result.passed,8);assert.equal(result.rangeChecks,24);assert.equal(requests,24);assert.equal(released,8);assert.equal(active,0);assert.ok(maximum<=2);
+ assert.equal(result.state,'completed');assert.equal(result.passed,8);assert.equal(result.rangeChecks,24);assert.equal(requests,24);assert.equal(prepared.size,8);assert.equal(released,8);assert.equal(active,0);assert.ok(maximum<=2);
  assert.equal(events.length,1);assert.equal(JSON.stringify(events).includes('https://'),false);assert.equal(JSON.stringify(events).includes(env.SNAP_OWNED_MEDIA_SITE_TOKEN),false);
  await runOwnedMediaVerification(storage,env,{read:deps.read,authenticate:()=>{throw Error('must not repeat');}},{files,now:()=>Date.parse('2026-11-04T19:00:00Z'),onResult:()=>{throw Error('must not repeat');}});
 });
@@ -24,6 +24,6 @@ test('corrupt served bytes fail verification and still release every test sessio
 test('staging, missing credential, expired window and unconnected catalog cannot run',async()=>{
  const deps={read:async()=>({items:[]}),authenticate:()=>{throw Error('must not authenticate');}};
  for(const config of [{...env,ENVIRONMENT:'staging'},{...env,SNAP_OWNED_MEDIA_SITE_TOKEN:''}])assert.equal(await runOwnedMediaVerification(new Store(),config,deps),undefined);
- assert.equal(await runOwnedMediaVerification(new Store(),env,deps,{now:()=>Date.parse('2026-11-06T00:00:00Z')}),undefined);
+ assert.equal(await runOwnedMediaVerification(new Store(),env,deps,{now:()=>Date.parse('2026-11-08T00:00:00Z')}),undefined);
  assert.equal(await runOwnedMediaVerification(new Store(),env,deps),undefined);
 });
