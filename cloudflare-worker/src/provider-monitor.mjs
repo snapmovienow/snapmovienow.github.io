@@ -40,7 +40,7 @@ export async function probeProviders(providers,{decrypt,readPanel,validateAccoun
     if(typeof credentials?.username!=='string'||!credentials.username||typeof credentials.password!=='string'||!credentials.password)throw Error('credentials_unreadable');
     if(credentials.kind==='reseller'){
      stage='panel_login';
-     const {lines,inventory}=await share(p,onProgress=>readPanel(credentials.username,credentials.password,p.url||'http://ccf.center:8444/NYzkggyG/',{inventory:true,onProgress}),
+     const {lines,inventory}=await share(p,onProgress=>readPanel(credentials.username,credentials.password,p.url||'http://ccf.center:8444/NYzkggyG/',{inventory:true,retryLoginTimeout:true,onProgress}),
       progress=>{stage='inventory';receivedRows=progress.receivedRows;acceptedRows=progress.acceptedRows});
      stage='inventory';receivedRows=inventory.length;acceptedRows=lines.length;reason=acceptedRows?'ok':'no_active_accounts';
     }else if(credentials.kind==='provider'){

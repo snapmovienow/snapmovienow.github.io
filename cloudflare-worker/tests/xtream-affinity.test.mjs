@@ -27,7 +27,11 @@ globalThis.fetch=async(url,opts={})=>{const u=new URL(url);
   const action=u.searchParams.get('action');if(action==='get_vod_streams')return Response.json([{stream_id:44,name:'Fixture movie',container_extension:'mp4'}]);if(action==='get_live_streams')return Response.json([10,11,12,13].map(stream_id=>({stream_id,name:'Channel '+stream_id})));
   if(action)return Response.json([]);validations.push(u.searchParams.get('username'));return Response.json({user_info:{auth:1,status:'Active',max_connections:'3',active_cons:'0'}});
  }
- if(u.pathname.startsWith('/movie/')){signals.push(u.pathname.split('/')[2]);return new Response('fixture video',{status:206,headers:{'content-type':'video/mp4','content-length':'13','content-range':'bytes 0-12/100'}});}
+ if(u.pathname.startsWith('/movie/')){
+  signals.push(u.pathname.split('/')[2]);
+  if(new Headers(opts.headers).get('range')==='bytes=100-')return new Response(null,{status:416,headers:{'content-range':'bytes */100'}});
+  return new Response('fixture video',{status:206,headers:{'content-type':'video/mp4','content-length':'13','content-range':'bytes 0-12/100'}});
+ }
  if(u.pathname.startsWith('/live/')){
   const source=u.pathname.split('/')[2];signals.push(source);
   if(failedSource==='*'||source===failedSource)return new Response('unavailable',{status:503});
@@ -75,6 +79,17 @@ assert.equal((await storage.get('playback:'+initial.sid)).affinities.ccf,undefin
 const moviesResponse=await worker.fetch(new Request(origin+'/player_api.php?username=fixture-user&password=viewer-password-test&action=get_vod_streams',{headers:headers('smarters')}),env,ctx),movies=await moviesResponse.json();
 const vodUrl=origin+'/movie/fixture-user/viewer-password-test/'+movies[0].stream_id+'.mp4',beforeValidation=validations.length;
 for(let i=0;i<3;i++){const vod=await worker.fetch(new Request(vodUrl,{headers:{...headers('smarters'),Range:'bytes=0-12'}}),env,ctx);assert.equal(vod.status,206);assert.equal(await vod.text(),'fixture video');assert.equal(validations.length,beforeValidation,'fresh media proof avoids another metadata validation when opening VOD');}
+const affinityBeforeRange=(await storage.get('playback:'+initial.sid)).affinities.ccf;
+assert.ok(affinityBeforeRange);
+const beforeInvalidRange=signals.length;
+const rangeRejected=await worker.fetch(new Request(vodUrl,{headers:{...headers('smarters'),Range:'bytes=100-'}}),env,ctx);
+assert.equal(rangeRejected.status,416);assert.equal(rangeRejected.headers.get('content-range'),'bytes */100');
+await rangeRejected.body.cancel();
+assert.equal(signals.length,beforeInvalidRange+1,'an unsatisfiable byte range must not open another account');
+const affinityAfterRange=(await storage.get('playback:'+initial.sid)).affinities.ccf;
+assert.equal(affinityAfterRange?.provider_id,affinityBeforeRange.provider_id,'the 416 does not discard the existing source');
+assert.equal(affinityAfterRange.validatedAt,affinityBeforeRange.validatedAt,'the 416 does not refresh validation proof');
+assert.equal(await leases.count(),0);
 const playMovie=()=>worker.fetch(new Request(vodUrl,{headers:{...headers('smarters'),Range:'bytes=0-12'}}),env,ctx);
 movieAccessCase='slow_directory_check';
 const delayedAccess=await playMovie();

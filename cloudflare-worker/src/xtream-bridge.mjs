@@ -2,7 +2,7 @@ import {setResolvedMedia,resetMediaPhase,recordInitialMediaResponse} from './fai
 import {playbackStartup,reportLiveResult,deferPlaybackReport} from './live-startup.mjs';
 import {initialMediaEvidence} from './initial-media-evidence.mjs';
 import {responseMediaFailure} from './media-failure-cause.mjs';
-import {initialRangeEvidence} from './initial-range-evidence.mjs';
+import {initialRangeEvidence,initialRangeOutOfBounds} from './initial-range-evidence.mjs';
 import {timed} from './playback-timings.mjs';
 import {playbackMonitorClient,attachPlaybackQuality} from './native-playback-quality.mjs';
 import {requestConnectionClient} from './connection-monitor.mjs';
@@ -81,8 +81,10 @@ export function createXtreamBridge(deps) {
         if(!response.ok){
           lastFailure=response.status;
           const cause=responseMediaFailure(response);lastServiceError=cause.serviceError||null;
-          if(startup&&response.status!==410)await reportLiveResult(deps.directory,env,mediaSession,allocation,false,Date.now()-signalAt,'signal',{httpStatus:response.status,...cause,...(response.status===416?{rangeEvidence:initialRangeEvidence(request,response)}:{})});
-          await privateCall('/release',{sid:session.sid,lease_id,request_id,reason:'upstream_failed'});await response.body?.cancel();
+          const rangeEvidence=initialRangeEvidence(request,response);
+          const reason=item.type!=='live'&&initialRangeOutOfBounds(rangeEvidence)?'range_out_of_bounds':'upstream_failed';
+          if(startup&&response.status!==410)await reportLiveResult(deps.directory,env,mediaSession,allocation,false,Date.now()-signalAt,'signal',{httpStatus:response.status,...cause,...(rangeEvidence?{rangeEvidence}:{})});
+          await privateCall('/release',{sid:session.sid,lease_id,request_id,reason});await response.body?.cancel();
           const code=response.headers.get('X-SMN-Error-Code');
           if(response.status===410&&['playback_superseded','playback_expired','session_expired'].includes(code))return deps.json({error:code},410);
           if(retryableSourceStatus(response.status)&&allocation.provider_id&&attempt<2){

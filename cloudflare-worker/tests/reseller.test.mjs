@@ -21,6 +21,31 @@ globalThis.fetch=async(url,opts)=>{
 const idle=await readPanel('idle-reseller','test-password');
 assert.equal(idle.length,12);assert.equal(idle.reduce((n,l)=>n+l.maxConnections-l.external,0),36);
 assert.ok(idle.every(l=>l.external===0),'idle active accounts contribute capacity');
+const timeout=()=>new DOMException('fixture deadline','TimeoutError');
+let loginAttempts=0,inventoryAttempts=0,mode='recover';
+globalThis.fetch=async(url,{method,headers})=>{
+ const path=new URL(url).pathname;
+ if(path.endsWith('/login')&&method==='GET'){
+  loginAttempts++;assert.equal(headers.Cookie,undefined,'each login starts with a new session');
+  return new Response('<input name="password">',{headers:{'set-cookie':'PHPSESSID=fixture-'+loginAttempts+'; path=/'}});
+ }
+ if(path.endsWith('/login')){
+  assert.equal(headers.Cookie,'PHPSESSID=fixture-'+loginAttempts);
+  if(mode==='timeout'||mode==='recover'&&loginAttempts===1)throw timeout();
+  return new Response(mode==='denied'?'<input name="password">':'<a href="dashboard">Welcome</a>');
+ }
+ inventoryAttempts++;
+ if(mode==='inventory_timeout')throw timeout();
+ return Response.json({recordsFiltered:1,data:[row(1)]});
+};
+const backgroundRead=()=>readPanel('owner','fake-password',undefined,{inventory:true,retryLoginTimeout:true});
+assert.equal((await backgroundRead()).lines.length,1);assert.equal(loginAttempts,2);assert.equal(inventoryAttempts,1);
+for(const [next,attempts,reads,reason] of [['timeout',2,0,/fixture deadline/],['denied',1,0,/panel_invalid/],['inventory_timeout',1,1,/fixture deadline/]]){
+ mode=next;loginAttempts=inventoryAttempts=0;
+ await assert.rejects(backgroundRead(),reason);assert.equal(loginAttempts,attempts);assert.equal(inventoryAttempts,reads);
+}
+mode='timeout';loginAttempts=inventoryAttempts=0;
+await assert.rejects(readPanel('owner','fake-password'),/fixture deadline/);assert.equal(loginAttempts,1);
 console.log('PASS: Provider-side inventory filters cannot hide idle active subscriptions; disabled and expired subscriptions stay excluded.');
 class Store{constructor(){this.data=new Map();this.queue=Promise.resolve()}async get(k){return structuredClone(this.data.get(k))}async put(k,v){this.data.set(k,structuredClone(v))}async delete(k){this.data.delete(k)}async list({prefix}){return new Map([...this.data].filter(([k])=>k.startsWith(prefix)).map(([k,v])=>[k,structuredClone(v)]))}transaction(fn){const r=this.queue.then(()=>fn(this));this.queue=r.catch(()=>{});return r}}
 const storage=new Store(),state={storage};const call=async(path,b={})=>{const r=await accountsFetch(state,{},new Request('https://internal/accounts'+path,{method:'POST',body:JSON.stringify(b)}));return {status:r.status,data:await r.json()}};

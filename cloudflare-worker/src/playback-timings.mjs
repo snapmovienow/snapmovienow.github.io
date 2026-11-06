@@ -35,12 +35,15 @@ export function startupTimingObservations(groups){
   const labels={auth:'acceso',catalog:'catálogo',allocation:'asignación',validation:'validación del origen',origin:'respuesta del origen',first_byte:'llegada de vídeo'};
   const slow=Object.entries(group.stages||{}).filter(([name,v])=>stages.has(name)&&Number.isFinite(v.p95UpperMs)).sort((a,b)=>b[1].p95UpperMs-a[1].p95UpperMs)[0];
   const title=repeatedFailures&&slowStarts?'Demoras y fallos repetidos al iniciar contenido':repeatedFailures?'Fallos repetidos al iniciar contenido':slowStarts?'Demoras al iniciar contenido':'Inicio de contenido dentro del tiempo esperado';
-  const trigger=[...(repeatedFailures?['Alerta por respuestas con error']:[]),...(slowStarts?['Alerta por demora: P95 hasta '+(total/1000)+' s (límite '+(budget/1000)+' s)']:[])].join(' · ');
+  const lower=limits[limits.indexOf(total)-1];
+  const estimatedP95=lower===undefined?'límite superior '+(total/1000)+' s':'más de '+(lower/1000)+' y hasta '+(total/1000)+' s';
+  const trigger=[...(repeatedFailures?['Alerta por respuestas con error']:[]),...(slowStarts?['Alerta por demora: P95 estimado ('+estimatedP95+' según el histograma) · Objetivo de inicio: '+(budget/1000)+' s']:[])].join(' · ');
   const outcomes=[group.accessRejected?'Rechazos de acceso: '+group.accessRejected:null,group.cancelled?'Solicitudes canceladas o vencidas: '+group.cancelled:null,group.clientCapacity?'Límite del cliente: '+group.clientCapacity:null,group.legacyFailures?'Errores anteriores sin clasificar: '+group.legacyFailures:null].filter(Boolean).join(' · ');
   const http=Object.entries(group.statusCounts||{}).filter(([status,count])=>Number(status)>=400&&Number.isSafeInteger(count)&&count>0).map(([status,count])=>'HTTP '+status+': '+count).join(', ');
   const codes=Object.entries(group.errorCounts||{}).filter(([code,count])=>playbackErrorCode(code)&&Number.isSafeInteger(count)&&count>0).map(([code,count])=>code+': '+count).join(', ');
+  const ranges=group.errorCounts?.range_out_of_bounds;
   const impact=Math.max(group.failures/Math.max(3,Math.ceil(requests*.2)),total/budget);
-  result.push({key:'startup:'+group.type+':'+group.platform,kind:'startup',title,detail:({live:'TV',movie:'Películas',series:'Series'}[group.type])+' · '+({other:'Reproductor sin identificar',canary:'Prueba automática',web:'Web',android:'Android'}[group.platform])+' · '+group.failures+' respuestas con error de '+requests+' solicitudes de reproducción'+(outcomes?' · '+outcomes:'')+(http?' · Respuestas registradas: '+http:'')+(codes?' · Códigos registrados: '+codes:'')+(trigger?' · '+trigger:'')+(slow?' · Etapa con mayor P95: '+labels[slow[0]]:''),bad,confirm:1,impact});
+  result.push({key:'startup:'+group.type+':'+group.platform,kind:'startup',title,detail:({live:'TV',movie:'Películas',series:'Series'}[group.type])+' · '+({other:'Reproductor sin identificar',canary:'Prueba automática',web:'Web',android:'Android'}[group.platform])+' · '+group.failures+' respuestas con error de '+requests+' solicitudes de reproducción'+(outcomes?' · '+outcomes:'')+(http?' · Respuestas registradas: '+http:'')+(Number.isSafeInteger(ranges)&&ranges>0?' · HTTP 416 con inicio del rango fuera del tamaño declarado: '+ranges:'')+(codes?' · Códigos registrados: '+codes:'')+(trigger?' · '+trigger:'')+(slow?' · Etapa con mayor límite superior de P95: '+labels[slow[0]]:''),bad,confirm:1,impact});
  }
  return result;
 }

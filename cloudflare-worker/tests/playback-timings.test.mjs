@@ -22,10 +22,13 @@ assert.equal(startupTimingObservations([{...report.groups[0],requests:1}]).lengt
 assert.equal(startupTimingObservations([{...report.groups[0],failures:0}])[0].bad,false);
 for(const [type,requests,failures,stage] of [['series',9,1,'catalog'],['movie',21,2,'origin']]){
  const observation=startupTimingObservations([{type,platform:'other',requests,failures,stages:{total:{p95UpperMs:20000},[stage]:{p95UpperMs:20000}}}])[0];
- assert.equal(observation.bad,true);assert.equal(observation.title,'Demoras al iniciar contenido');assert.match(observation.detail,/Alerta por demora: P95 hasta 20 s \(límite 12 s\)/);assert.match(observation.detail,/Reproductor sin identificar/);assert.ok(!observation.detail.includes('Alerta por respuestas con error'),'a latency alert cannot misrepresent a below-threshold error count as repeated failures');
+ assert.equal(observation.bad,true);assert.equal(observation.title,'Demoras al iniciar contenido');assert.match(observation.detail,/P95 estimado \(más de 12 y hasta 20 s según el histograma\) · Objetivo de inicio: 12 s/);assert.match(observation.detail,/Reproductor sin identificar/);assert.ok(!observation.detail.includes('Alerta por respuestas con error'),'a latency alert cannot misrepresent a below-threshold error count as repeated failures');
  assert.equal(startupTimingObservations([{type,platform:'other',requests,failures,stages:{total:{p95UpperMs:12000}}}]).length,0,'existing error and startup thresholds remain unchanged');
 }
 const failedStarts=startupTimingObservations([{type:'series',platform:'web',requests:9,failures:3,stages:{total:{p95UpperMs:8000}}}])[0];assert.equal(failedStarts.title,'Fallos repetidos al iniciar contenido');assert.match(failedStarts.detail,/Alerta por respuestas con error/);assert.ok(!failedStarts.detail.includes('Alerta por demora'));
+const mixed=startupTimingObservations([{type:'movie',platform:'other',requests:15,failures:3,stages:{total:{p95UpperMs:60000}},statusCounts:{416:3},errorCounts:{range_out_of_bounds:2,upstream_unavailable:1}}])[0];
+assert.match(mixed.detail,/P95 estimado \(más de 20 y hasta 60 s según el histograma\) · Objetivo de inicio: 12 s/);
+assert.match(mixed.detail,/HTTP 416: 3 · HTTP 416 con inicio del rango fuera del tamaño declarado: 2/);
 let clock=0,resolveA,resolveB;const parallel=new PlaybackTimings(()=>clock).identify('movie','web');
 const one=parallel.run('catalog',()=>new Promise(r=>{resolveA=r}));clock=10;
 const two=parallel.run('catalog',()=>new Promise(r=>{resolveB=r}));clock=30;resolveA();await one;

@@ -11,6 +11,7 @@ import {runLocalTvImport,localTvImportStatus,runLocalTvExpansion,localTvExpansio
 import {localTvXtreamStatus,visibleLocalTv} from './local-tv-xtream.mjs';
 import {gatewayRotationStore} from './gateway-rotation-store.mjs';
 import {recordProviderHealth,rankProviderCandidates,providerCircuitState,claimProviderTrial,providerHealthSummary,failedLive404Sample} from './provider-health.mjs';
+import {initialRangeOutOfBounds} from './initial-range-evidence.mjs';
 import {recordChannelObservation,readChannelObservations} from './provider-channel-observations.mjs';
 import {affinityGroup,providerAffinity,rememberProvider,forgetProvider,recentlyValidated,pruneAffinities} from './provider-affinity.mjs';
 import {assignmentKey,usableProvider,assignedProvider,saveAssignment,mediaRecentlyFailed,recentAccountProof} from './provider-assignment.mjs';
@@ -277,7 +278,10 @@ export async function accountsFetch(state,env,req){
   if(lease.until<=Date.now()||state?.request_id!==b.request_id)return answer({error:'playback_superseded'},410);
   if(lease.providerReports?.[b.stage]!==undefined)return answer({ok:true,duplicate:true});
   lease.providerReports={...lease.providerReports,[b.stage]:b.ok};
-  if(!b.ok){lease.providerFailed=true;forgetProvider(state,lease);}
+  if(!b.ok){
+   const rangeRejection=b.stage==='signal'&&b.httpStatus===416&&!lease.mediaKey.startsWith('live|')&&initialRangeOutOfBounds(b.rangeEvidence);
+   if(!rangeRejection){lease.providerFailed=true;forgetProvider(state,lease);}
+  }
   else if(b.stage==='validation'&&!b.capacityBusy){lease.validatedAt=Date.now();rememberProvider(state,lease);}else if(b.capacityBusy)lease.validatedAt=0;
   await local.put(b.lease_id,lease);await tx.put(key,pruneAffinities(state));
   const health=recordProviderHealth(await tx.get('provider-health'),lease.provider_id,lease.mediaKey,b.ok,b.elapsedMs,b.stage,Date.now(),b.lease_id,lease.providerCredentialKey,b.httpStatus,b);
@@ -369,7 +373,8 @@ export async function accountsFetch(state,env,req){
    // A delayed close/failure from the previous channel cannot replace the
    // newer binding. A failed source must never be restored by body cleanup.
    if(state&&(!state.request_id||state.request_id===l.request_id)){
-    if(b.reason==='upstream_failed'||l.providerFailed)forgetProvider(state,l);else rememberProvider(state,l);
+    if(b.reason==='upstream_failed'||l.providerFailed)forgetProvider(state,l);
+    else if(b.reason!=='range_out_of_bounds')rememberProvider(state,l);
     await tx.put(key,pruneAffinities(state));
    }
    await local.remove(b.lease_id,'player_closed');return answer({ok:true});

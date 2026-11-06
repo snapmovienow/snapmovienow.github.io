@@ -28,3 +28,11 @@ export function rangeFailureDetail(status,detail){
  const evidence=status===416?cleanInitialRangeEvidence(own(detail,'rangeEvidence')):null;
  return evidence?{rangeEvidence:evidence}:{};
 }
+
+// A single, unchanged GET range that starts at or past a positive reported
+// length is unsatisfiable for that representation. Conditional or incomplete
+// evidence cannot establish this classification.
+export function initialRangeOutOfBounds(value){
+ const evidence=cleanInitialRangeEvidence(value),range=evidence?.incomingRange;
+ return evidence?.method==='GET'&&evidence.ifRangePresent===false&&evidence.reportedTotal>0&&range.kind==='bytes'&&range.start>=evidence.reportedTotal;
+}
