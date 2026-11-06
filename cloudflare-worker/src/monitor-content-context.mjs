@@ -9,7 +9,8 @@ export function mediaFailureContext(items,type,server,now,references){
   const key=row.server+':'+row.id;if(seen.has(key))continue;seen.add(key);
   let title=typeof row.title==='string'?row.title.replace(/[\u0000-\u001f\u007f]/g,' ').trim().slice(0,60):'';
   if(/(?:https?:\/\/|password=|username=|access_token=)/i.test(title))title='';
-  const line='ID '+row.id+' · '+(title||'Nombre no disponible')+' · HTTP '+statuses.join(', ')+' · '+new Date(row.lastObservedAt).toISOString();
+  const publicId=row.type==='series'&&typeof row.publicId==='string'&&/^[1-9]\d{0,9}$/.test(row.publicId)?' · ID público '+row.publicId:'';
+  const line='ID '+row.id+publicId+' · '+(title||'Nombre no disponible')+' · HTTP '+statuses.join(', ')+' · '+new Date(row.lastObservedAt).toISOString();
   if(new TextEncoder().encode([...lines,line].join('\n')).length>600)break;
   if(references)references.push(...statuses.map(status=>`${row.id}:${status}`));
   lines.push(line);if(lines.length>=3)break;

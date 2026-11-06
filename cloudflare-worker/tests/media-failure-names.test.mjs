@@ -13,6 +13,24 @@ assert.equal((await cachedFailureNames(async()=>{throw Error('series lists are n
 assert.equal(named[0].title,'Named channel');assert.equal(named[1].title,null,'do not match the same numeric ID on another server');assert.equal(named[2].title,null);
 assert.equal((await cachedFailureNames(async()=>{throw Error('cache unavailable')},failures))[0].title,null);
 assert.equal((await cachedFailureNames(async()=>[],Array.from({length:90},()=>failures[0]))).length,30);
+const episode={type:'series',server:'ccf',id:'66860'};
+const reads=[];
+const resolved=await cachedFailureNames(async()=>{assert.fail('registered episode metadata needs no catalog scan')},[
+ episode,episode,{...episode,server:'other'},{...episode,id:'8'},{...episode,id:'9'}
+],async(server,id)=>{
+ reads.push([server,id]);
+ return Response.json({kind:'episode',server:'ccf',upstreamId:id,id:24455,activity:{seriesTitle:'Series fixture',season:2,episode:3,title:id==='8'?'https://private.invalid/?access_token=hidden':'Episode fixture'}});
+});
+assert.deepEqual(reads,[['ccf','66860'],['other','66860'],['ccf','8']]);
+assert.deepEqual(resolved[0],{...episode,publicId:'24455',title:'Series fixture · T2 E3 · Episode fixture'});
+assert.deepEqual(resolved[1],resolved[0]);assert.equal(resolved[2].publicId,undefined);
+assert.ok(!JSON.stringify(resolved[3]).includes('hidden'));assert.equal(resolved[4].title,null);
+const retained=await cachedFailureNames(async(action,server,params,options)=>{
+ assert.equal(action,'get_series_info');assert.equal(server,'ccf');assert.deepEqual(params,{series_id:'700'});assert.deepEqual(options,{cachedOnly:true});
+ return {info:{name:'Cached series'},episodes:{1:[{id:'66860',title:'Cached episode',episode_num:4}]}};
+},[episode],async()=>Response.json({kind:'episode',server:'ccf',upstreamId:'66860',id:24455,parentId:'700'}));
+assert.equal(retained[0].title,'Cached series · T1 E4 · Cached episode');
+assert.equal((await cachedFailureNames(async()=>[],[episode],async()=>{throw Error('registry down')}))[0].title,null);
 let providerRequests=0;const originalFetch=globalThis.fetch;
 globalThis.fetch=async()=>{providerRequests++;throw Error('diagnostics must never fetch upstream')};
 try{
