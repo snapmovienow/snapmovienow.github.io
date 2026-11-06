@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import {chromium} from 'playwright';
-const root=process.cwd(),errors=[],saves=[],canaryCalls=[];let browser,launchCalls=0;
+const root=process.cwd(),errors=[],saves=[],canaryCalls=[],inventoryCalls=[];let browser,launchCalls=0;
 const canary={configured:true,enabled:true,username:'own-test-account',types:['live','series'],intervalMinutes:5,lastCheckedAt:Date.now(),status:'healthy',running:false,lastResult:{ok:true,type:'live',at:Date.now(),totalMs:1600,firstMediaByteMs:1400},results:[{ok:true,type:'live',at:Date.now(),totalMs:1600,firstMediaByteMs:1400,stages:{authenticationMs:25,catalogPrepareMs:400,mediaHeadersMs:800,firstMediaByteMs:175}}]};
 const users=['cliente-demo1','cliente-demo2','cliente-demo3'].map((username,i)=>({username,name:['Cliente de ejemplo 1','Cliente de ejemplo 2','Cliente de ejemplo 3'][i],comments:i?'':'Cliente mensual.\nUsa Fire TV Cube.',status:'active',expiresAt:Date.now()+86400000+12345,updatedAt:Date.now()+i,permissions:{movies:true,series:true,tv:true,adults:false}}));
 const assignments=[{username:'cliente-demo1',accountUsername:'cuenta-demo1',type:'live',activity:{title:'ESPN 1 · 1080'}},{username:'cliente-demo2',accountUsername:'cuenta-demo2',type:'series',activity:{title:'El regreso',seriesTitle:'La casa de papel',season:2,episode:3}}].map(a=>({...a,client:'xtream',lastSeenAt:Date.now(),until:Date.now()+90000}));
@@ -24,7 +24,7 @@ try{
   if(action==='users')value=users;
   if(action==='overview')value={provider:null,connections:2};
   if(action==='xtream-settings')value={enabled:true,url:'https://api.snaptvnow.com',port:'443'};
-  if(action==='provider-dashboard')value=inventory;
+  if(action==='provider-dashboard'){inventoryCalls.push(body.refresh);value=inventory;}
   if(action==='security-status')value={mfaEnabled:false,recoveryRemaining:0};
   if(action==='backup-status')value={status:'unknown',automaticStatus:'unknown',automaticStale:true,recovery:{status:'unknown'},scheduleUTC:'05:17'};
   if(action==='playback-health')value={groups:[],alerts:[]};
@@ -38,6 +38,12 @@ try{
  const page=await context.newPage();page.on('pageerror',error=>errors.push(error.message));
  await page.goto(base+'/admin.html');await page.locator('#loginForm [name="username"]').fill('owner');await page.locator('#loginForm [name="password"]').fill('synthetic-preview-password');await page.locator('#loginForm button').click();await page.locator('#notice').filter({hasText:'Sesión iniciada'}).waitFor();
  assert.equal(await page.locator('#rows .admin-user-card').count(),3);
+ assert.equal(inventoryCalls[0],false,'the first panel visit displays saved inventory');
+ const [manualInventory]=await Promise.all([
+  page.waitForResponse(response=>response.request().method()==='POST'&&response.request().postDataJSON()?.action==='provider-dashboard'),
+  page.locator('#providerRefresh').click()
+ ]);
+ assert.equal(manualInventory.request().postDataJSON().refresh,true,'the explicit inventory button requests a fresh check');
  assert.match(await page.locator('#canarySummary').textContent(),/correcta/);assert.match(await page.locator('#canaryResults').textContent(),/Serie: Todavía sin prueba/);assert.equal(canaryCalls.length,0,'reading canary status never starts or changes a test');
  await page.locator('#canaryToggle').click();await page.waitForFunction(()=>document.querySelector('#canarySummary').textContent.includes('pausada'));assert.equal(await page.locator('#canaryRun').isDisabled(),true);
  await page.locator('#canaryToggle').click();await page.waitForFunction(()=>!document.querySelector('#canaryRun').disabled);await page.locator('#canaryRun').click();await page.waitForFunction(()=>document.querySelector('#canarySummary').textContent.includes('no se completó'));assert.match(await page.locator('#canaryResults').textContent(),/superó el tiempo de espera/);assert.deepEqual(canaryCalls,['playback-canary-settings','playback-canary-settings','playback-canary-run']);

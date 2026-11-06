@@ -5,6 +5,7 @@ import {startupTimingObservations} from './playback-timings.mjs';
 import {canaryIncident} from './playback-diagnostics.mjs';
 import {mediaFailureContext} from './monitor-content-context.mjs';
 import {providerMonitorSnapshot,providerDetail,providerTitle} from './provider-monitor.mjs';
+import {cleanOwnerDiagnostic,retainOwnerDiagnostic,ownerDiagnosticStatus} from './owner-diagnostic-status.mjs';
 
 export const MONITOR_CRON='*/5 * * * *';
 const interval=300000,freshness=36*3600000;
@@ -34,20 +35,69 @@ async function putState(store,state){
 }
 const request=(path,body={})=>({method:'POST',body:JSON.stringify(body),signal:AbortSignal.timeout(45000)});
 function directory(env,path,body={},timeoutMs=45000){return env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_accounts_v1')).fetch('https://private/accounts'+path,{...request(path,body),signal:AbortSignal.timeout(timeoutMs)})}
-async function read(response){if(!response.ok)throw Error('monitor_source_unavailable');return response.json()}
+const record=value=>value!==null&&typeof value==='object'&&!Array.isArray(value);
+const timestamp=value=>Number.isSafeInteger(value)&&value>0&&value<=8640000000000000;
+const metric=value=>Number.isFinite(value)&&value>=0;
+async function read(response){
+ if(!response.ok)throw Error('monitor_source_unavailable');
+ const value=await response.json();
+ if(!record(value)||Object.hasOwn(value,'error'))throw Error('monitor_source_invalid');
+ return value;
+}
+const serverId=value=>typeof value==='string'&&/^[a-zA-Z0-9_-]{1,80}$/.test(value);
+const mediaType=['live','movie','series'];
+const validPlaybackGroup=g=>record(g)&&serverId(g.server)&&mediaType.includes(g.type)&&['web','android'].includes(g.platform)&&['1080','720','other'].includes(g.quality)&&
+ ['failedStarts','starts','reports','errors','stallPercent'].every(key=>metric(g[key]))&&(g.startupP95UpperMs===null||metric(g.startupP95UpperMs));
+function playbackRead(value){
+ if(!value)return {status:'unavailable',data:null};
+ const timingValid=g=>{
+  if(!record(g)||!mediaType.includes(g.type)||!['android','web','other','canary'].includes(g.platform)||!record(g.stages))return false;
+  const requests=g.measuredRequests??g.requests;
+  return Number.isSafeInteger(requests)&&requests>=0&&Number.isSafeInteger(g.failures)&&g.failures>=0&&g.failures<=requests&&
+   Object.values(g.stages).every(stage=>record(stage)&&metric(stage.p95UpperMs))&&(!requests||metric(g.stages.total?.p95UpperMs));
+ };
+ const groups=Array.isArray(value.groups)?value.groups.filter(validPlaybackGroup):[],timings=Array.isArray(value.timings)?value.timings.filter(timingValid):[];
+ const groupsValid=Array.isArray(value.groups)&&groups.length===value.groups.length;
+ const timingsValid=Array.isArray(value.timings)&&timings.length===value.timings.length;
+ const complete=groupsValid&&timingsValid,data=groupsValid||timingsValid||groups.length||timings.length?{groups,timings}:null;
+ return {status:complete?(groups.length||timings.some(group=>(group.measuredRequests??group.requests)>0)?'valid':'empty'):data?'partial':'unavailable',data};
+}
+const backupState=value=>['unknown','running','success','failed'].includes(value);
+const backupRead=value=>value&&backupState(value.automaticStatus)&&(!Object.hasOwn(value,'status')||backupState(value.status))&&
+ (value.lastAutomaticAt==null?value.automaticStatus!=='success':timestamp(value.lastAutomaticAt))&&(!value.recovery||backupState(value.recovery.status))?value:null;
+const catalogRead=value=>value&&Array.isArray(value.references)&&Array.isArray(value.servers)&&
+ value.references.every(r=>record(r)&&serverId(r.server)&&/^\d{1,16}$/.test(r.id)&&(!r.lastSuccessAt||timestamp(r.lastSuccessAt)))&&
+ value.servers.every(s=>record(s)&&serverId(s.server)&&timestamp(s.lastSuccessAt)&&(!s.change||timestamp(s.change.at)))?value:null;
+function providerRead(data,state){
+ if(!data)return {status:'unavailable'};
+ const expected=data.configured.size;
+ if(!expected)return {status:'not_configured',received:0,expected};
+ const received=data.samples.filter(s=>s.validRead&&s.observedAt>(state.checks['provider:'+s.id]?.sampleAt||0)).length;
+ return {status:received===expected?'valid':received?'partial':'unavailable',received,expected};
+}
+function recordMonitorReads(state,snapshot,now,providerSnapshot){
+ if(!snapshot.readStates)return;
+ const previous=state.monitorReadings||{},providers={...snapshot.readStates.providers,...providerRead(providerSnapshot,state)};
+ state.monitorReadings=Object.fromEntries(Object.entries({...snapshot.readStates,providers}).map(([key,{readAt,...entry}])=>{
+  const lastValidAt=['valid','empty','not_configured'].includes(entry.status)?readAt??now:previous[key]?.lastValidAt||null;
+  return [key,{...entry,lastValidAt}];
+ }));
+}
 
 // Observations contain only bounded aggregates. Missing playback samples are
 // unknown, not proof that a failing stream has recovered.
-export function observations(snapshot,now,createdAt,providerSnapshot=providerMonitorSnapshot(snapshot.providers)){
+export function observations(snapshot,now,createdAt,providerSnapshot=providerMonitorSnapshot(snapshot.providers),diagnostic=null){
  const out=[...catalogReferenceObservations(snapshot.catalogReferences)];
+ if(diagnostic)out.push({key:'monitor:owner-diagnostic',kind:'monitor',title:'Diagnóstico privado sin una lectura válida reciente',bad:diagnostic.stale,confirm:1,
+  detail:diagnostic.lastValidAt?'Última lectura válida '+new Date(diagnostic.lastValidAt).toISOString():'Aún no hay una lectura válida del diagnóstico privado.'});
  out.push(...startupTimingObservations(snapshot.playback?.timings));
  const missingProviders=!providerSnapshot||providerSnapshot.samples.length!==providerSnapshot.configured.size;
  if(Object.hasOwn(snapshot,'providers'))out.push({key:'monitor:providers',kind:'monitor',title:'No se pudo completar la comprobación de fuentes configuradas',bad:missingProviders,confirm:2,
   detail:providerSnapshot?'Muestras válidas '+providerSnapshot.samples.length+' de '+providerSnapshot.configured.size:'Lista de fuentes configuradas sin confirmar.'});
- for(const part of ['playback','backups'])out.push({key:'monitor:'+part,kind:'monitor',title:'No se pudo comprobar '+({playback:'las reproducciones',backups:'las copias'}[part]),bad:snapshot[part]===null,confirm:2});
+ for(const part of ['playback','backups'])out.push({key:'monitor:'+part,kind:'monitor',title:'No se pudo comprobar '+({playback:'las reproducciones',backups:'las copias'}[part]),bad:snapshot[part]===null||part==='playback'&&snapshot.readStates?.playback?.status==='partial',confirm:2});
  for(const sample of providerSnapshot?.samples||[])out.push({key:'provider:'+sample.id,kind:'provider',title:providerTitle(sample),bad:!sample.ok,confirm:2,sampleAt:sample.observedAt,provider:sample});
- if(snapshot.playback)for(const g of snapshot.playback.groups||[]){
-  if(!/^[a-zA-Z0-9_-]{1,80}$/.test(g.server)||!['live','movie','series'].includes(g.type)||!['web','android'].includes(g.platform)||!['1080','720','other'].includes(g.quality))continue;
+ if(Array.isArray(snapshot.playback?.groups))for(const g of snapshot.playback.groups){
+  if(!validPlaybackGroup(g))continue;
   const bad=g.failedStarts>=5||g.reports>=5&&g.errors>=5||g.starts>=5&&(g.stallPercent>2||g.startupP95UpperMs>10000);
   const healthy=g.starts>=5&&!g.failedStarts&&!g.errors&&g.stallPercent<=2&&(g.startupP95UpperMs===null||g.startupP95UpperMs<=10000);
   if(!bad&&!healthy)continue;
@@ -74,9 +124,10 @@ export function observations(snapshot,now,createdAt,providerSnapshot=providerMon
 
 export function applyObservations(state,snapshot,now,startedAt=now){
  const changed=[],bucket=Math.floor(startedAt/interval),seen=new Set(),providerSnapshot=providerMonitorSnapshot(snapshot.providers);
+ recordMonitorReads(state,snapshot,now,providerSnapshot);
  if(snapshot.catalogReferences)state.catalogReferences={...snapshot.catalogReferences,collectedAt:now,readStatus:'ok'};
  else if(snapshot.catalogReferences===null)state.catalogReferences={readStatus:'unavailable',collectedAt:now};
- for(const item of observations(snapshot,now,state.createdAt,providerSnapshot)){
+ for(const item of observations(snapshot,now,state.createdAt,providerSnapshot,ownerDiagnosticStatus(state.ownerDiagnostic,now))){
   if(item.kind==='playback'&&!item.bad&&!state.incidents[item.key])continue;
   const previous=state.checks[item.key]||{bad:0,good:0};
   if(item.provider&&previous.bucket<bucket&&previous.sampleAt>=item.sampleAt)continue;
@@ -154,7 +205,7 @@ export function applyObservations(state,snapshot,now,startedAt=now){
  return state;
 }
 
-function publicStatus(state,env){return {settings:settings(state.config),createdAt:state.createdAt,lastCheckedAt:state.lastCheckedAt,intervalMinutes:5,catalogReferences:state.catalogReferences||{readStatus:'not_observed'},monitorStale:!state.lastCheckedAt||Date.now()-state.lastCheckedAt>15*60000,incidents:Object.values(state.incidents).sort((a,b)=>b.openedAt-a.openedAt),history:state.history,delivery:state.delivery,pendingEmails:state.outbox.length,canary:canaryStatus(state,env),thresholds:{failedStarts:5,errors:5,minStarts:5,stallPercent:2,startupMs:10000,backupHours:36,playbackWindowMinutes:15}}}
+function publicStatus(state,env){return {settings:settings(state.config),createdAt:state.createdAt,lastCheckedAt:state.lastCheckedAt,lastStartedAt:state.lastStartedAt||null,monitorRunning:!!state.run&&state.run.at>Date.now()-120000,monitorReadings:state.monitorReadings||{},intervalMinutes:5,ownerDiagnostic:ownerDiagnosticStatus(state.ownerDiagnostic,Date.now()),catalogReferences:state.catalogReferences||{readStatus:'not_observed'},monitorStale:!state.lastCheckedAt||Date.now()-state.lastCheckedAt>15*60000,incidents:Object.values(state.incidents).sort((a,b)=>b.openedAt-a.openedAt),history:state.history,delivery:state.delivery,pendingEmails:state.outbox.length,canary:canaryStatus(state,env),thresholds:{failedStarts:5,errors:5,minStarts:5,stallPercent:2,startupMs:10000,backupHours:36,playbackWindowMinutes:15}}}
 function mail(event,config){return {from:config.from,to:[config.to],subject:'SNAPTVNOW · '+(event.changes.every(c=>c.kind!=='opened')?'Recuperación / comprobación':'Aviso del sistema'),text:'SNAPTVNOW\n'+new Date(event.createdAt).toISOString()+'\n\n'+event.changes.map(c=>({opened:'INCIDENCIA',resolved:'RECUPERADO',removed:'CONEXIÓN RETIRADA',test:'PRUEBA'}[c.kind])+': '+c.title+(c.detail?'\n'+c.detail:'')+(c.diagnosticContext?'\n\n'+(c.kind==='resolved'?'Referencia del fallo anterior; esta recuperación agrupada no confirma la reparación de cada contenido:':'Contenidos con fallos observados del mismo tipo; no atribuye toda la alerta a estos contenidos:')+'\n'+c.diagnosticContext:'')).join('\n\n')+'\n\nRevisa el panel: https://app.snaptvnow.com/admin.html'} }
 
 export class OperationsMonitor{
@@ -162,6 +213,20 @@ export class OperationsMonitor{
  async fetch(req){
   const path=new URL(req.url).pathname,b=await req.json(),store=this.state.storage;
   if(path==='/tick'){if(!this.running)this.running=this.tick().finally(()=>{this.running=null});return Response.json(await this.running)}
+  if(path==='/owner-diagnostic'){
+   if(this.env.ENVIRONMENT==='staging')return Response.json({ok:true,skipped:true});
+   const now=Date.now(),sample=cleanOwnerDiagnostic(b,now);
+   if(!sample)return Response.json({error:'invalid_owner_diagnostic'},{status:400});
+   const recorded=await store.transaction(async tx=>{
+    const state=await tx.get('monitor')||empty(now),previous=state.ownerDiagnostic;
+    state.ownerDiagnostic=retainOwnerDiagnostic(previous,sample,now);
+    if(state.ownerDiagnostic===previous)return null;
+    await putState(tx,state);
+    return ownerDiagnosticStatus(state.ownerDiagnostic,now);
+   });
+   if(recorded)console.log({event:'owner_diagnostic_sample',...recorded});
+   return Response.json({ok:true});
+  }
   if(path==='/canary/settings'){
    const config=cleanCanarySettings(b,this.env.PLAYBACK_CANARY_USERNAME);if(config.error)return Response.json(config,{status:400});
    await store.transaction(async tx=>{const state=await tx.get('monitor')||empty(Date.now()),c=canaryState(state,this.env);c.config={...config,version:c.config.version+1};delete c.run;await putState(tx,state)});return this.status();
@@ -197,19 +262,27 @@ export class OperationsMonitor{
  async status(){const state=await this.state.storage.get('monitor')||empty(Date.now());return Response.json(publicStatus(state,this.env))}
  async collect(){
   const binding=this.env.PLAYBACK_SESSIONS;
-  const responses=await Promise.allSettled([
-   binding.get(binding.idFromName('__smn_provider_refresh_v1')).fetch('https://private/monitor-providers',request('/monitor-providers')).then(read),
-   binding.get(binding.idFromName('__smn_operations_v1')).fetch('https://private/operations/monitor',request('/operations/monitor')).then(read),
-   directory(this.env,'/backup-status').then(read)
-  ]);
-  const snapshot=Object.fromEntries(['providers','playback','backups'].map((key,i)=>[key,responses[i].status==='fulfilled'?responses[i].value:null]));
+  const reads=[
+   ()=>binding.get(binding.idFromName('__smn_provider_refresh_v1')).fetch('https://private/monitor-providers',request('/monitor-providers')),
+   ()=>binding.get(binding.idFromName('__smn_operations_v1')).fetch('https://private/operations/monitor',request('/operations/monitor')),
+   ()=>directory(this.env,'/backup-status')
+  ];
+  const responses=await Promise.allSettled(reads.map(async fetch=>{
+   const data=await read(await fetch());return {data,readAt:Date.now()};
+  }));
+  const [sources,measurements,copies]=responses.map(response=>response.status==='fulfilled'?response.value:null);
+  const playback=playbackRead(measurements?.data),backups=backupRead(copies?.data);
+  const snapshot={providers:sources?.data??null,playback:playback.data,backups,readStates:{
+   providers:{readAt:sources?.readAt},playback:{status:playback.status,readAt:measurements?.readAt},backups:{status:backups?'valid':'unavailable',readAt:copies?.readAt}
+  }};
   snapshot.canary=await this.runCanary();
   // Read retained metadata only when an existing observation is failing. This
   // adds no playback probes and cannot prevent ordinary alerts on read failure.
   if(observations(snapshot,Date.now(),Date.now()).some(item=>item.bad&&['startup','playback'].includes(item.kind))){
    try{const data=await read(await binding.get(binding.idFromName('__smn_provider_refresh_v1')).fetch('https://private/monitor-media-failures',{...request('/monitor-media-failures'),signal:AbortSignal.timeout(2000)}));snapshot.mediaFailures=Array.isArray(data.items)?data.items:[]}catch{snapshot.mediaFailures=[]}
   }
-  try{const references=(snapshot.mediaFailures||[]).filter(r=>r.type==='live'&&r.lastObservedAt>Date.now()-15*60000&&r.lastObservedAt<=Date.now()&&r.httpStatuses?.includes(404)).slice(0,3).map(({server,id})=>({server,id}));snapshot.catalogReferences=await read(await directory(this.env,'/catalog-references-status',{references},2000))}catch{snapshot.catalogReferences=null}
+  try{const references=(snapshot.mediaFailures||[]).filter(r=>r.type==='live'&&r.lastObservedAt>Date.now()-15*60000&&r.lastObservedAt<=Date.now()&&r.httpStatuses?.includes(404)).slice(0,3).map(({server,id})=>({server,id}));snapshot.catalogReferences=catalogRead(await read(await directory(this.env,'/catalog-references-status',{references},2000)))}catch{snapshot.catalogReferences=null}
+  snapshot.readStates.catalogReferences={status:snapshot.catalogReferences?snapshot.catalogReferences.servers.length?'valid':'empty':'unavailable',readAt:Date.now()};
   return snapshot;
  }
  async runCanary(manual=false){
@@ -235,6 +308,7 @@ export class OperationsMonitor{
    const state=await tx.get('monitor')||empty(now);
    if(!state.config.enabled){await putState(tx,state);return null}
    if(state.run&&state.run.at>now-120000||state.lastCheckedAt&&now-state.lastCheckedAt<60000)return null;
+   state.lastStartedAt=now;
    state.run={id:runId,at:now,version:state.config.version};await putState(tx,state);return state.run;
   });
   if(claim){

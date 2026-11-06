@@ -205,6 +205,12 @@ export async function accountsFetch(state,env,req){
  if(p==='/pool-sync')return store.transaction(async tx=>{
   const {lines}=b,now=Date.now();
   if(b.source){
+   if(Object.hasOwn(b,'expectedCredential')){
+    const configured=await tx.get('providers'),legacy=configured?null:await tx.get('provider');
+    const source=configured?configured.find(item=>item.source===b.source)
+     :legacy&&b.source===(legacy.mode==='panel'?'panel:':'single:')+normal(legacy.username)?legacy:null;
+    if(!source||(source.encrypted??null)!==b.expectedCredential)return answer({error:'source_changed'},409);
+   }
    const pools=await tx.get('source-pools')||{};
    if(b.retain){
     const old=pools[b.source]||{lines:[],inventory:[],syncedAt:0};

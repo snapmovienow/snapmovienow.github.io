@@ -24,7 +24,7 @@ await store.put('user:revoked',{id:'r',username:'revoked',version:2,status:'susp
 await store.put('leases',{current:{provider_id:'1',uid:'n',username:'nito',version:1,mediaKey:'live|ccf|10|m3u8',until:now+90000,sid:'private-sid',request_id:'private-request'},expired:{provider_id:'2',uid:'n',username:'nito',version:1,until:now-1},revoked:{provider_id:'2',uid:'r',username:'revoked',version:1,until:now+90000}});
 let view=await providerDashboard(store,now);
 assert.equal(view.accounts.length,4,'overlapping subscription belongs to both sources but is counted once');
-assert.deepEqual(view.summary,{accounts:4,activeAccounts:2,totalCapacity:6,reported:1,reserved:1,available:4});
+assert.deepEqual(view.summary,{accounts:4,receivedRows:5,activeAccounts:2,usableAccounts:2,totalCapacity:6,reported:1,reserved:1,available:4});
 assert.equal(view.accounts.find(a=>a.id==='1').sources.length,2);
 assert.equal(view.assignments.length,1);assert.equal(view.assignments[0].username,'nito');assert.equal(view.assignments[0].accountUsername,'provider-one');assert.equal(view.assignments[0].type,'live');
 const activityLeaseStore=await openLeaseStore(store),current=await activityLeaseStore.get('current');await activityLeaseStore.put('current',{...current,activity:{title:'ESPN 1 · 1080',password:'activity-secret',url:'private-url'}});
@@ -39,6 +39,45 @@ assert.equal(selectAccounts(view.accounts,{source:'a'}).length,2);
 assert.equal(selectAccounts(view.accounts,{query:'missing'}).length,0);
 await (await openLeaseStore(store)).clear();view=await providerDashboard(store,now);assert.equal(view.assignments.length,0);assert.equal(view.summary.available,5,'closing playback removes the assignment and restores its slot');
 const pools=await store.get('source-pools');pools.a.attemptedAt=now;await store.put('source-pools',pools);assert.equal((await providerDashboard(store,now)).stale,true);
+// The merged pool can establish capacity, but never membership in a source.
+const attribution=new Store(),shared=line('7','shared'),old=line('8','previous-owner'),reused=line('8','new-owner');
+const sources=[
+ {source:'current',name:'Actual'},
+ {source:'unknown',name:'Sin lectura'},
+ {source:'empty',name:'Vacío'},
+ {source:'historical',name:'Histórico'},
+ {source:'contradictory',name:'Coincidente'}
+];
+await attribution.put('providers',sources);
+await attribution.put('pool',{lines:[shared,reused],syncedAt:now,attemptedAt:now,sourceBacked:true});
+await attribution.put('source-pools',{
+ current:{lines:[shared,reused],inventory:[{...shared,status:'active'},{...shared,id:'77',status:'active'},{...reused,status:'active'}],syncedAt:now},
+ unknown:{lines:[],inventory:[],syncedAt:0,attemptedAt:now},
+ empty:{lines:[],inventory:[],syncedAt:now},
+ historical:{lines:[old],inventory:[{...old,status:'active'}],syncedAt:now-12*3600000},
+ contradictory:{lines:[],inventory:[{...shared,status:'suspended'}],syncedAt:now}
+});
+const attributed=await providerDashboard(attribution,now),bySource=Object.fromEntries(attributed.sources.map(s=>[s.source,s]));
+assert.deepEqual(attributed.summary,{accounts:3,receivedRows:null,activeAccounts:3,usableAccounts:2,totalCapacity:6,reported:0,reserved:0,available:6});
+assert.deepEqual([bySource.current.receivedRows,bySource.current.activeAccounts,bySource.current.usableAccounts],[3,2,2],'received rows and distinct accounts are separate');
+assert.equal(attributed.accounts.find(a=>a.username==='shared').sources.length,2,'a duplicate row cannot duplicate source attribution');
+assert.deepEqual([bySource.unknown.inventoryStatus,bySource.unknown.receivedRows,bySource.unknown.activeAccounts,bySource.unknown.usableAccounts],['missing',null,null,null]);
+assert.deepEqual([bySource.empty.inventoryStatus,bySource.empty.receivedRows,bySource.empty.activeAccounts,bySource.empty.usableAccounts],['verified',0,0,0]);
+assert.deepEqual([bySource.historical.receivedRows,bySource.historical.activeAccounts,bySource.historical.usableAccounts],[1,1,0]);
+assert.deepEqual([bySource.contradictory.receivedRows,bySource.contradictory.activeAccounts,bySource.contradictory.usableAccounts],[1,0,0]);
+assert.equal(selectAccounts(attributed.accounts,{source:'unknown'}).length,0,'a failed first refresh cannot assign the merged pool to that source');
+const retiredView=selectAccounts(attributed.accounts,{source:'contradictory'})[0];
+assert.equal(retiredView.status,'suspended','a different source cannot override this source’s observed state');
+assert.equal(retiredView.available,0);
+assert.equal(selectAccounts(attributed.accounts,{source:'historical',status:'active'})[0].username,'previous-owner','a reused numeric ID cannot override historical account identity');
+assert.equal(selectAccounts(attributed.accounts,{source:'historical',status:'usable'}).length,0);
+const legacy=new Store();
+await legacy.put('provider',{mode:'panel',username:'Owner'});
+assert.equal((await providerDashboard(legacy,now)).sources[0].inventoryStatus,'missing');
+await legacy.put('pool',{lines:[shared],syncedAt:now});
+const legacyView=await providerDashboard(legacy,now);
+assert.deepEqual(legacyView.sources.map(({source,inventoryStatus,receivedRows,usableAccounts})=>({source,inventoryStatus,receivedRows,usableAccounts})),[{source:'panel:owner',inventoryStatus:'partial',receivedRows:null,usableAccounts:1}]);
+assert.equal(legacyView.accounts[0].username,'shared','the single-source legacy pool remains visible as partial inventory');
 const row=(id,status='Active',date='2099-01-01')=>[String(id),'line'+id,'<span title="upstream-secret" class="table-trunc-copy-cell__text">hidden</span>','owner','<i title="'+status+'"></i>','','','0','3','','',date];
 const inventory=parseInventory({data:[row(1),row(2,'Disabled'),row(3,'Active','2000-01-01')]});assert.deepEqual(inventory.map(a=>a.status),['active','suspended','expired']);assert.ok(!JSON.stringify(inventory).includes('upstream-secret'));
 const objects=new Map(),env={TICKET_SECRET:'dashboard-test-secret-only',ADMIN_SETUP_SECRET:'test-only-setup-secret-longer-than-32-characters'};

@@ -26,7 +26,7 @@ function reasonFor(error,stage){
 }
 const count=value=>Number.isSafeInteger(value)&&value>=0?value:null;
 
-export async function probeProviders(providers,{decrypt,readPanel,validateAccount,identifier}){
+export async function probeProviders(providers,{decrypt,readPanel,validateAccount,identifier,share=(_provider,read,onProgress)=>read(onProgress)}){
  if(!Array.isArray(providers)||providers.some(p=>typeof p?.source!=='string'||!p.source.trim())||new Set(providers.map(p=>p.source)).size!==providers.length)throw Error('monitor_provider_directory_invalid');
  const configuredIds=await Promise.all(providers.map(p=>identifier(p.source)));
  const results=new Array(providers.length);let cursor=0;
@@ -40,13 +40,12 @@ export async function probeProviders(providers,{decrypt,readPanel,validateAccoun
     if(typeof credentials?.username!=='string'||!credentials.username||typeof credentials.password!=='string'||!credentials.password)throw Error('credentials_unreadable');
     if(credentials.kind==='reseller'){
      stage='panel_login';
-     const {lines,inventory}=await readPanel(credentials.username,credentials.password,p.url||'http://ccf.center:8444/NYzkggyG/',{
-      inventory:true,onProgress:progress=>{stage='inventory';receivedRows=progress.receivedRows;acceptedRows=progress.acceptedRows}
-     });
+     const {lines,inventory}=await share(p,onProgress=>readPanel(credentials.username,credentials.password,p.url||'http://ccf.center:8444/NYzkggyG/',{inventory:true,onProgress}),
+      progress=>{stage='inventory';receivedRows=progress.receivedRows;acceptedRows=progress.acceptedRows});
      stage='inventory';receivedRows=inventory.length;acceptedRows=lines.length;reason=acceptedRows?'ok':'no_active_accounts';
     }else if(credentials.kind==='provider'){
      stage='validation';
-     const account=await validateAccount(credentials.username,credentials.password,p.origin||credentials.origin||'http://ccf.center:8444');
+     const account=await share(p,()=>validateAccount(credentials.username,credentials.password,p.origin||credentials.origin||'http://ccf.center:8444'));
      receivedRows=1;acceptedRows=account?1:0;reason=account?'ok':'account_inactive';
     }
    }catch(error){reason=reasonFor(error,stage)}

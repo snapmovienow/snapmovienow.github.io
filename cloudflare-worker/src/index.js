@@ -86,6 +86,55 @@ async function unticket(env,t){try{if(!env.TICKET_SECRET)return null;const raw=u
 
 export class PlaybackSession {
  constructor(state,env){this.state=state;this.env=env}
+ async inventoryRead(provider,operation,read,onProgress){
+  const source=provider.source,startedAt=Date.now(),reads=this.inventoryReads??=new Map();
+  let flight=reads.get(source);
+  const shared=!!flight&&flight.credential===provider.encrypted;
+  if(!shared){
+   const active={credential:provider.encrypted,observers:new Set()};
+   flight=active;
+   reads.set(source,active);
+   active.work=Promise.resolve().then(()=>read(progress=>{
+    active.progress=progress;
+    for(const observer of active.observers)observer(progress);
+   })).finally(()=>{if(reads.get(source)===active)reads.delete(source)});
+  }
+  if(onProgress){
+   flight.observers.add(onProgress);
+   if(flight.progress)onProgress(flight.progress);
+  }
+  try{return await flight.work}finally{
+   if(onProgress)flight.observers.delete(onProgress);
+   if(shared){const waitMs=inventoryWaitMs(startedAt);console.log({event:'provider_inventory_read_shared',sourceId:await hashId(source),operation,waitMs});}
+  }
+ }
+ async refreshPool(force){
+  const startedAt=Date.now(),shared=!!this.refreshing;
+  let outcome='failed';
+  try{
+   for(;;){
+    if(this.refreshing)this.refreshing.force||=force;
+    else{
+     const run={force};
+     this.refreshing=run;
+     run.work=refreshProviderPool(this.env,()=>run.force,(p,read)=>this.inventoryRead(p,'refresh',read))
+      .finally(()=>{this.refreshing=null});
+    }
+    const result=await this.refreshing.work;
+    // A manual refresh arriving after an automatic freshness decision still
+    // needs a real read. Concurrent manual requests share that read.
+    if(force&&result.state==='fresh')continue;
+    outcome=result.state;
+    return {ok:true,single:result.state==='single'};
+   }
+  }catch(error){
+   if(error?.message==='provider_inactive')outcome='empty';
+   if(error?.message==='provider_not_configured')outcome='not_configured';
+   throw error;
+  }finally{
+   if(force||shared||outcome!=='fresh')console.log({event:'provider_inventory_refresh',operation:force?'manual':'automatic',shared,outcome,waitMs:inventoryWaitMs(startedAt)});
+  }
+ }
  localAudit(){
   const ctx={waitUntil:p=>this.state.waitUntil?.(p)},request=request=>traceRequest(request,trace=>handleRequest(request,this.env,ctx,trace));
   const adapter=ownPlaybackCanaryAdapter({env:this.env,storage:this.state.storage,directory,ownSession,ticket,sessionCall,request});
@@ -128,7 +177,10 @@ export class PlaybackSession {
  if(path==='/boxpanel/private')return boxpanelFetch(this.state,req);
  if(path==='/ccf-origin-snapshot')return originSnapshotResponse(this,async()=>{const body=await req.json();let p,credential;if(body.monitor){p=(await originMonitorProviders([body.monitor]))[0];if(p.source!==body.source)throw Error('panel_origin_source');credential=p.credential;}else{const providers=await (await directory(this.env,'/providers')).json();p=providers.find(p=>p.mode==='panel'&&p.source===body.source);if(!p)throw Error('panel_origin_source');credential=await unticket(this.env,p.encrypted);}if(await originProviderKey(p)!==body.key)throw Error('panel_origin_source');if(credential?.kind!=='reseller')throw Error('panel_invalid');return readOriginSnapshot({username:credential.username,password:credential.password,base:p.url||'http://ccf.center:8444/NYzkggyG/'});});
  if(path==='/stream'&&['GET','HEAD'].includes(req.method)){const trace=new PlaybackTimings();try{return trace.response(await observedWebStream(this,req,{waitUntil:promise=>this.state.waitUntil?.(promise)},trace))}catch(error){const owned=await unticket(this.env,new URL(req.url).searchParams.get('t')||'');if(error.message==='media_origin_unapproved'&&!owned?.canary)throw error;const response=json({error:['media_origin_unapproved','live_startup_timeout','media_empty'].includes(error.message)?error.message:'stream_unavailable'},error.message==='live_startup_timeout'?504:502);if(owned?.canary)response.headers.set('X-SMN-Canary-Failure',comparisonError(error));return trace.response(response)}}
- if(path==='/refresh-pool'){const force=req.method==='POST'&&(await req.json()).force===true;if(!this.refreshing)this.refreshing=refreshProviderPool(this.env,force).finally(()=>{this.refreshing=null});try{const lines=await this.refreshing;return Response.json({ok:true,single:lines===null})}catch(e){return Response.json({error:e.message},{status:503})}}
+ if(path==='/refresh-pool'){
+  try{return Response.json(await this.refreshPool(req.method==='POST'&&(await req.json()).force===true))}
+  catch(error){return Response.json({error:['provider_not_configured','provider_inactive','provider_unavailable'].includes(error?.message)?error.message:'panel_unavailable'},{status:503})}
+ }
  if(path==='/canary-comparison-status')return Response.json({...await this.state.storage.get('owner-comparison-20261024-tcp-relay-v1')||{state:'waiting'},failure404:await this.state.storage.get('owner-live404-audit-v1')||null,targetedCase:await targetedComparisonStatus(this.state.storage)});
  if(path==='/targeted-cases/status')return Response.json(await targetedCasesStatus(this.state.storage,this.env));
  if(path==='/targeted-cases/run'){
@@ -153,7 +205,7 @@ export class PlaybackSession {
  if(path==='/monitor-providers'){
   try{
    const response=await directory(this.env,'/providers');if(!response.ok)throw Error('monitor_provider_directory_unavailable');
-   return Response.json(await probeProviders(await response.json(),{decrypt:value=>unticket(this.env,value),readPanel,validateAccount:(username,password,origin,timeout,signal)=>validateAccount(username,password,origin,timeout,signal,this.env.CCF_ENTRY_TRANSPORT==='tcp'),identifier:hashId}));
+   return Response.json(await probeProviders(await response.json(),{decrypt:value=>unticket(this.env,value),readPanel,validateAccount:(username,password,origin)=>validateAccount(username,password,origin,6000,undefined,this.env.CCF_ENTRY_TRANSPORT==='tcp'),identifier:hashId,share:(p,read,onProgress)=>this.inventoryRead(p,'monitor',read,onProgress)}));
   }catch{return Response.json({error:'monitor_provider_directory_unavailable'},{status:503})}
  }
  if(path.startsWith('/profile/'))return profileRoute(this.state.storage,req);
@@ -182,7 +234,14 @@ async function safeInventory(env,raw,origin){
  return Promise.all(raw.map(async l=>({id:server==='ccf'?l.id:server+':'+l.id,server,key:await hashId(origin+'|'+l.username.toLowerCase()),username:l.username,status:l.status||'active',expiresAt:l.expiresAt||null,maxConnections:l.maxConnections,reported:l.reported??l.external??0})));
 }
 const poolRefreshes=new WeakMap();
-async function isolatedPoolRefresh(env,force=false){const response=await env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_provider_refresh_v1')).fetch('https://private/refresh-pool',{method:'POST',body:JSON.stringify({force})});const status=await response.json();if(!response.ok)throw Error(status.error||'provider_unavailable');return status.single?null:(await (await directory(env,'/pool')).json()).lines}
+const inventoryWaitMs=startedAt=>Math.min(120000,Math.max(0,Date.now()-startedAt));
+async function requestPoolRefresh(env,force=false){
+ const response=await env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_provider_refresh_v1')).fetch('https://private/refresh-pool',{method:'POST',body:JSON.stringify({force})});
+ const status=await response.json();if(!response.ok)throw Error(status.error||'provider_unavailable');return status;
+}
+async function isolatedPoolRefresh(env){
+ const status=await requestPoolRefresh(env);return status.single?null:(await (await directory(env,'/pool')).json()).lines;
+}
 async function providerPool(env,ctx){
  const key=env.PLAYBACK_SESSIONS;
  if(ctx?.waitUntil){const snapshot=await (await directory(env,'/pool')).json();if(snapshot.lines?.length){
@@ -191,34 +250,40 @@ async function providerPool(env,ctx){
  }}
  if(poolRefreshes.has(key))return poolRefreshes.get(key);const work=isolatedPoolRefresh(env);poolRefreshes.set(key,work);try{return await work}finally{poolRefreshes.delete(key)}
 }
-async function refreshProviderPool(env,force=false){
+async function refreshProviderPool(env,force,share){
  const providers=await (await directory(env,'/providers')).json();if(!providers.length)throw Error('provider_not_configured');
- const saved=await (await directory(env,'/provider')).json();if(providers.length===1&&saved.mode!=='panel')return null;
- let pool=await (await directory(env,'/pool')).json();if(!force&&pool.attemptedAt>Date.now()-INVENTORY_REFRESH_MS)return pool.lines;let transient=false;
- await Promise.all(providers.map(async p=>{
-  let raw=[],inventory=[];const origin=p.origin||ORIGIN;
+ const saved=await (await directory(env,'/provider')).json();if(providers.length===1&&saved.mode!=='panel')return {state:'single'};
+ let pool=await (await directory(env,'/pool')).json();if(!force()&&pool.attemptedAt>Date.now()-INVENTORY_REFRESH_MS)return {state:'fresh'};
+ const results=await Promise.allSettled(providers.map(async p=>{
+  let raw=[],inventory=[],retain=false,origin=p.origin||ORIGIN;
   try{
-   const d=await unticket(env,p.encrypted||'');
-   if(d?.kind==='reseller'){
-    const read=await readPanel(d.username,d.password,p.url||'http://ccf.center:8444/NYzkggyG/',{inventory:true});
+   const credentials=await unticket(env,p.encrypted||'');
+   origin=p.origin||credentials?.origin||ORIGIN;
+   if(credentials?.kind==='reseller'){
+    const read=await share(p,onProgress=>readPanel(credentials.username,credentials.password,p.url||'http://ccf.center:8444/NYzkggyG/',{inventory:true,onProgress}));
     raw=read.lines;inventory=read.inventory;
-   }else if(d?.kind==='provider'){
-    const a=await validateAccount(d.username,d.password,origin,6000,undefined,env.CCF_ENTRY_TRANSPORT==='tcp');
-    if(a){
-     raw=[{id:'single:'+d.username.toLowerCase(),username:d.username,password:d.password,maxConnections:Math.min(3,Number(a.user_info.max_connections)||3),external:Number(a.user_info.active_cons)||0}];
-     inventory=raw.map(l=>({...l,status:'active',expiresAt:Number(a.user_info.exp_date)>0?Number(a.user_info.exp_date)*1000:null}));
+   }else if(credentials?.kind==='provider'){
+    const account=await share(p,()=>validateAccount(credentials.username,credentials.password,origin,6000,undefined,env.CCF_ENTRY_TRANSPORT==='tcp'));
+    if(account){
+     raw=[{id:'single:'+credentials.username.toLowerCase(),username:credentials.username,password:credentials.password,maxConnections:Math.min(3,Number(account.user_info.max_connections)||3),external:Number(account.user_info.active_cons)||0}];
+     inventory=raw.map(l=>({...l,status:'active',expiresAt:Number(account.user_info.exp_date)>0?Number(account.user_info.exp_date)*1000:null}));
     }
    }else throw Error('provider_not_configured');
   }catch{
-   // Failed authentication, parsing or decryption cannot confirm a removal.
-   transient=true;const retained=await directory(env,'/pool-sync',{source:p.source,retain:true});
-   if(!retained.ok)throw Error('panel_unavailable');
-   return;
+   // A failed check cannot confirm removal of previously usable accounts.
+   retain=true;
   }
-  const response=await directory(env,'/pool-sync',{source:p.source,lines:await encryptedLines(env,raw,origin),inventory:await safeInventory(env,inventory,origin)});
+  const replacement=retain?{retain:true}:{lines:await encryptedLines(env,raw,origin),inventory:await safeInventory(env,inventory,origin)};
+  const response=await directory(env,'/pool-sync',{source:p.source,expectedCredential:p.encrypted??null,...replacement});
+  if(response.status===409)return 'superseded';
   if(!response.ok)throw Error('panel_unavailable');
+  return retain?'retained':'refreshed';
  }));
- pool=await (await directory(env,'/pool')).json();if(!pool.lines.length)throw Error(transient?'provider_unavailable':'provider_inactive');return pool.lines;
+ // Do not release the shared refresh while another source is still writing.
+ if(results.some(result=>result.status==='rejected'))throw Error('panel_unavailable');
+ const transient=results.some(result=>result.value==='retained'||result.value==='superseded');
+ pool=await (await directory(env,'/pool')).json();if(!pool.lines.length)throw Error(transient?'provider_unavailable':'provider_inactive');
+ return {state:transient?'retained':'refreshed'};
 }
 async function catalogCredentials(env,server,ctx,limit=1){const pool=await providerPool(env,ctx);if(!pool)return [{...await providerCredentials(env),server:'ccf'}];const counts=new Map(),credentials=[];for(const l of pool){const id=l.server||'ccf';if((server&&server!==id)||(counts.get(id)||0)>=limit)continue;const d=await unticket(env,l.encrypted);if(d){credentials.push({...d,server:id});counts.set(id,(counts.get(id)||0)+1)}}return credentials}
 async function providerCredentials(env){const pool=await providerPool(env);if(pool){const d=await unticket(env,pool[0].encrypted);if(!d)throw Error("panel_unavailable");return {...d,maxConnections:pool[0].maxConnections}}
@@ -278,9 +343,10 @@ async function adminRequest(req,env,ctx){
  const record=async(action,target=null)=>directory(env,'/audit-write',{actor:s.username,action,target});
  const paths={users:"/users",save:"/save",delete:"/delete",overview:"/overview"};
  if(action==='provider-dashboard'){
-  let refreshError=null;const configured=(await (await directory(env,'/providers')).json()).length>0;
-  if(configured&&b.refresh===true){try{await isolatedPoolRefresh(env,true)}catch(error){refreshError=error.message==='provider_inactive'?'El proveedor no tiene cuentas activas disponibles.':'No se pudo revalidar el proveedor. Se muestra el último inventario guardado.'}}
-  else if(configured&&ctx?.waitUntil)ctx.waitUntil(isolatedPoolRefresh(env).catch(()=>{}));
+  let refreshError=null;
+  if(b.refresh===true&&(await (await directory(env,'/providers')).json()).length){
+   try{await requestPoolRefresh(env,true)}catch(error){refreshError=error.message==='provider_inactive'?'El proveedor no tiene cuentas activas disponibles.':'No se pudo revalidar el proveedor. Se muestra el último inventario guardado.'}
+  }
   const r=await directory(env,'/provider-dashboard');return json({...await r.json(),refreshError},r.status);
  }
  if(action==='connections'){const list=await (await directory(env,'/providers')).json();return json(list.map(p=>({source:p.source,name:p.name||p.username,username:p.username,mode:p.mode,url:p.url||(p.mode==='panel'?'http://ccf.center:8444/NYzkggyG/':ORIGIN),origin:p.origin||ORIGIN})))}
@@ -536,7 +602,12 @@ export default {scheduled(event,env,ctx){
  ownedMediaBootstrap(env,ctx);
  localAuditBootstrap(env,ctx);
  if(event.cron===MONITOR_CRON&&diagnosticEnabled(env))ctx.waitUntil(env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_empress_diagnostic_20261104')).fetch('https://private/empress-origin-diagnostic-run',{method:'POST',body:'{}'}).then(r=>r.body?.cancel()).catch(()=>console.error({event:'empress_origin_diagnostic',reason:'diagnostic_unavailable'})));
- if(event.cron===MONITOR_CRON){ctx.waitUntil(directory(env,'/service-monitor-sample').then(r=>r.body?.cancel()).catch(()=>console.error({event:'service_monitor_sample_failed'})));ctx.waitUntil(isolatedPoolRefresh(env).catch(()=>console.error({event:'provider_inventory_refresh_failed'})));ctx.waitUntil(telegramTick(env).catch(()=>console.error({event:'telegram_tick_failed'})));ctx.waitUntil(monitorCall(env,'/tick').then(async response=>{if(!response.ok)console.error({event:'monitor_failed'});await response.body?.cancel()}).catch(()=>console.error({event:'monitor_failed'})));if(env.CATALOG_MAINTENANCE_ENABLED==='true')ctx.waitUntil(directory(env,'/catalog-maintenance-tick').then(async r=>{await r.body?.cancel()}).catch(()=>console.error({event:'catalog_maintenance_failed'})));return}
+ if(event.cron===MONITOR_CRON){ctx.waitUntil(directory(env,'/service-monitor-sample').then(r=>r.body?.cancel()).catch(()=>console.error({event:'service_monitor_sample_failed'})));ctx.waitUntil(isolatedPoolRefresh(env).catch(()=>console.error({event:'provider_inventory_refresh_failed'})));ctx.waitUntil(telegramTick(env).then(async ({diagnostic})=>{
+  if(!diagnostic)return;
+  const response=await monitorCall(env,'/owner-diagnostic',diagnostic).catch(()=>null);
+  if(!response?.ok)console.error({event:'owner_diagnostic_record_failed'});
+  await response?.body?.cancel();
+ }).catch(()=>console.error({event:'telegram_tick_failed'})));ctx.waitUntil(monitorCall(env,'/tick').then(async response=>{if(!response.ok)console.error({event:'monitor_failed'});await response.body?.cancel()}).catch(()=>console.error({event:'monitor_failed'})));if(env.CATALOG_MAINTENANCE_ENABLED==='true')ctx.waitUntil(directory(env,'/catalog-maintenance-tick').then(async r=>{await r.body?.cancel()}).catch(()=>console.error({event:'catalog_maintenance_failed'})));return}
  if(event.cron&&event.cron!=='17 5 * * *')return;
  ctx.waitUntil(directory(env,'/backup-automatic').then(async response=>{const result=await response.json();if(result.error)console.error({event:'backup_failed',reason:result.error});if(result.recovery?.error)console.error({event:'backup_drill_failed',reason:result.recovery.error})}).catch(()=>console.error({event:'backup_failed',reason:'backup_service_unavailable'})).finally(async()=>{const response=await monitorCall(env,'/tick');await response.body?.cancel()}));
 },async fetch(req, env, ctx) {ownedMediaBootstrap(env,ctx);localAuditBootstrap(env,ctx);await markServiceVerification(req);const response=await traceRequest(req, trace => handleRequest(req, env, ctx,trace), {allowedOrigin: SITE,fastMediaFailureBudget:env.ENVIRONMENT==='production'&&env.FAST_MEDIA_FAILURE_LOGS_ENABLED==='true'?fastMediaFailureBudget:undefined,onTiming:timing=>{if(new URL(req.url).pathname!=='/stream'&&ctx?.waitUntil&&env.PLAYBACK_SESSIONS)ctx.waitUntil(env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_operations_v1')).fetch('https://private/operations/timing-ingest',{method:'POST',body:JSON.stringify({timing})}).then(r=>r.body?.cancel()).catch(()=>{}))}});return browserResponse(response,req,env);}};
