@@ -10,7 +10,14 @@ class Store{
  transaction(fn){const r=this.queue.then(()=>fn(this));this.queue=r.catch(()=>{});return r}
 }
 const objects=new Map(),env={TICKET_SECRET:'test-affinity-secret-only',ADMIN_SETUP_SECRET:'test-affinity-setup-12345678901234567890'};
-env.PLAYBACK_SESSIONS={idFromName:x=>x,get(id){if(!objects.has(id))objects.set(id,new PlaybackSession({storage:new Store()},env));return {fetch:(url,options)=>objects.get(id).fetch(new Request(url,options))}}};
+let movieAccessCase;
+env.PLAYBACK_SESSIONS={idFromName:x=>x,get(id){if(!objects.has(id))objects.set(id,new PlaybackSession({storage:new Store()},env));return {async fetch(url,options){
+ const request=new Request(url,options),path=new URL(request.url).pathname;
+ if(movieAccessCase==='slow_directory_check'&&path==='/accounts/check')offset+=13000;
+ if(movieAccessCase==='revoked_xtream_version'&&path==='/stream')await storage.put('xtream-config',{enabled:true,version:2});
+ if(movieAccessCase==='closed_session'&&path==='/xtream-movie-check')await objects.get(id).state.storage.deleteAll();
+ return objects.get(id).fetch(request);
+}}}};
 const validations=[],signals=[];let failedSource=null,offset=0;const now=Date.now;Date.now=()=>now()+offset;
 const row=id=>['<a>'+id+'</a>','<a>source'+id+'</a>','<span class="table-trunc-copy-cell__text tooltip" title="source-password-test">hidden</span>','owner','<i title="Active"></i>','','','0','3','','','2099-01-01'];
 globalThis.fetch=async(url,opts={})=>{const u=new URL(url);
@@ -68,6 +75,25 @@ assert.equal((await storage.get('playback:'+initial.sid)).affinities.ccf,undefin
 const moviesResponse=await worker.fetch(new Request(origin+'/player_api.php?username=fixture-user&password=viewer-password-test&action=get_vod_streams',{headers:headers('smarters')}),env,ctx),movies=await moviesResponse.json();
 const vodUrl=origin+'/movie/fixture-user/viewer-password-test/'+movies[0].stream_id+'.mp4',beforeValidation=validations.length;
 for(let i=0;i<3;i++){const vod=await worker.fetch(new Request(vodUrl,{headers:{...headers('smarters'),Range:'bytes=0-12'}}),env,ctx);assert.equal(vod.status,206);assert.equal(await vod.text(),'fixture video');assert.equal(validations.length,beforeValidation,'fresh media proof avoids another metadata validation when opening VOD');}
+const playMovie=()=>worker.fetch(new Request(vodUrl,{headers:{...headers('smarters'),Range:'bytes=0-12'}}),env,ctx);
+movieAccessCase='slow_directory_check';
+const delayedAccess=await playMovie();
+assert.equal(delayedAccess.status,206,'movie startup must not spend its origin deadline on a redundant directory check');
+movieAccessCase=null;
+assert.equal(await delayedAccess.text(),'fixture video');
+assert.equal(await leases.count(),0);
+movieAccessCase='revoked_xtream_version';
+const beforeRevocation=signals.length,revokedMovie=await playMovie();
+movieAccessCase=null;
+assert.equal(revokedMovie.status,410,'the combined check still rejects a session revoked after allocation');
+assert.equal(signals.length,beforeRevocation,'revocation prevents the origin request');
+assert.equal(await leases.count(),0,'rejected movie startup releases its reservation');
+movieAccessCase='closed_session';
+const closedMovie=await playMovie();
+movieAccessCase=null;
+assert.equal(closedMovie.status,410,'a still-active lease cannot reopen a closed session');
+assert.equal(signals.length,beforeRevocation,'closing the session prevents the origin request');
+assert.equal(await leases.count(),0);
 const auth=(await post({op:'auth',username:'fixture-user',password:'viewer-password-test'})).data.access_token;
 await admin('save',{username:'fixture-user',password:'changed-viewer-password-test',status:'active'});
 const stale=await worker.fetch(new Request(origin+'/player_api.php?username=fixture-user&password=viewer-password-test',{headers:headers('smarters')}),env,ctx);assert.equal(stale.status,401);

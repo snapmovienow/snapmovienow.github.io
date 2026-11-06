@@ -377,6 +377,10 @@ export async function accountsFetch(state,env,req){
   if(b.request_id&&l.request_id!==b.request_id)return answer({error:'playback_superseded'},410);
   if(b.request_id&&(await tx.get('playback:'+b.sid))?.request_id!==b.request_id)return answer({error:'playback_superseded'},410);
   const u=await tx.get('user:'+normal(l.username));if(l.until<=Date.now()||!alive(u)||u.id!==l.uid||u.version!==l.version){await local.remove(b.lease_id);return answer({error:'playback_expired'},410)}
+  if(p==='/heartbeat'&&b.xtreamIdentity){
+   const identity=b.xtreamIdentity,config=await tx.get('xtream-config')||{enabled:true,version:1};
+   if(!l.xtream||!l.mediaKey?.startsWith('movie|')||u.id!==identity.uid||u.version!==identity.version||normal(u.username)!==normal(identity.username)||!config.enabled||config.version!==identity.xtreamVersion)return answer({error:'playback_expired'},410);
+  }
   let localVideoProbe=false,exclusiveScopeChecked=false;
   if((p==='/heartbeat'&&b.exclusiveId)||p==='/local-startup-observe'||p==='/channel-usage-observe'){
    // Current catalog scope and lease renewal share one transaction/RPC. This
@@ -405,7 +409,10 @@ export async function accountsFetch(state,env,req){
    if(b.localVideo===true&&!l.localVideoClaimed&&visibleLocalTv(current.row,contentPermissions(u.permissions))){l.localVideoClaimed=true;await local.put(b.lease_id,l);localVideoProbe=true;}
   }
   if(p==='/lease-check')await safelyRecord(()=>touchPlayback(tx,store.sql,b.lease_id,Date.now(),true));
-  if(p==='/heartbeat'){await local.renew(b.lease_id,Date.now()+90000);await recordCustomerActivity(tx,u.id);}return answer({ok:true,...(exclusiveScopeChecked?{exclusiveScopeChecked:true}:{}),...(localVideoProbe?{localVideoProbe:true}:{})});
+  if(p==='/heartbeat'){await local.renew(b.lease_id,Date.now()+90000);await recordCustomerActivity(tx,u.id);}
+  const result=answer({ok:true,...(exclusiveScopeChecked?{exclusiveScopeChecked:true}:{}),...(localVideoProbe?{localVideoProbe:true}:{})});
+  if(p==='/heartbeat'&&b.xtreamIdentity)result.headers.set('X-SMN-Xtream-Movie-Access','checked');
+  return result;
  });
  if(p==='/release-session'){await store.transaction(async tx=>{await leases.in(tx).removeFor({sid:b.sid});await tx.delete('playback:'+b.sid)});return answer({ok:true})}
  return answer({error:'not_found'},404);
