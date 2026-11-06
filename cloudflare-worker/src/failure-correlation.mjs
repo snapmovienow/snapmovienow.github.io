@@ -20,7 +20,7 @@ export function recordInitialMediaResponse(trace,request,response){
 }
 export function takeFailureCorrelation(trace,status){
  try{const value=validTrace(trace)?contexts.get(trace):null;contexts.delete(trace);
-  if(!value||![404,416,502].includes(status))return null;
+  if(!value||![404,416,502,504].includes(status))return null;
   const range=status===416&&value.phase==='initial'?cleanInitialRangeEvidence(value.rangeEvidence):null;
   const result={type:value.type,content_public_id:value.content_public_id,phase:value.phase,...(range?{rangeEvidence:range}:{})};
   // Hard maximum in UTF-8 bytes: all permitted output is ASCII.

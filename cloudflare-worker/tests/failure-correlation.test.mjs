@@ -13,6 +13,16 @@ async function run({status=502,slow=false,kind='movie',method='GET',range='bytes
  return {res,logs,calls,reports,timings};
 }
 test('existing 502 gains exact response request ID + validated PUBLIC id, not provider id',async()=>{const x=await run();assert.equal(x.logs.length,1);assert.equal(x.calls,1);assert.equal(x.res.status,502);assert.equal(x.logs[0].request_id,x.res.headers.get('X-SMN-Request-ID'));assert.deepEqual(x.logs[0].media_failure,{type:'movie',content_public_id:'123',phase:'initial'});assert.equal(await x.res.text(),'{"error":"upstream_unavailable"}')});
+test('existing movie 504 includes only the resolved public id and the response request ID',async()=>{
+ const x=await run({status:504});
+ assert.equal(x.res.status,504);
+ assert.equal(x.calls,1);
+ assert.equal(x.logs.length,1);
+ assert.equal(x.logs[0].request_id,x.res.headers.get('X-SMN-Request-ID'));
+ assert.deepEqual(x.logs[0].media_failure,{type:'movie',content_public_id:'123',phase:'initial'});
+ assert.ok(!JSON.stringify(x.logs).includes('PRIVATE'));
+ assert.ok(x.timings.every(t=>!Object.hasOwn(t,'content_public_id')));
+});
 test('slow 416 gains numeric initial Range with same response and one request',async()=>{const x=await run({status:416,slow:true});assert.equal(x.logs.length,1);assert.equal(x.calls,1);const f=x.logs[0].media_failure;assert.equal(f.phase,'initial');assert.deepEqual(f.rangeEvidence.incomingRange,{kind:'bytes',start:100,end:199});assert.equal(f.rangeEvidence.reportedTotal,100);assert.equal(x.res.headers.get('content-range'),'bytes */100');assert.equal(x.reports.length,0)});
 test('fast 416 is intentionally not a new event',async()=>{const x=await run({status:416});assert.equal(x.logs.length,0);assert.equal(x.calls,1);assert.equal(x.res.status,416)});
 test('private strings, URLs, IDs, address and forged reference do not enter logs/timings',async()=>{const x=await run({status:416,slow:true});const text=JSON.stringify([...x.logs,...x.timings]);for(const s of ['PRIVATE','192.0.2.42','FORGED-ID','https:','999'])assert.ok(!text.includes(s),s);assert.ok(!JSON.stringify(x.timings).includes('content_public_id'))});
