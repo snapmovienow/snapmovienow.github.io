@@ -201,7 +201,7 @@ export class PlaybackSession {
    return compareOwnPlayback(isolated,(session,target,options)=>ownPlaybackControl(this.env,session,target,options),{username:this.env.PLAYBACK_CANARY_USERNAME,type:'live',sample,directCcfEntry:this.env.PLAYBACK_CONTROL_CCF_SOCKET==='true'});
   }).catch(()=>{}));
   return Response.json(result)}
- if(path==='/monitor-media-failures'){const health=await (await directory(this.env,'/provider-health')).json();const items=await cachedFailureNames(createProviderCatalog(catalogDeps,this.env,null,{timeoutMs:1500,cacheReadMs:300}),health.recentMediaFailures);return Response.json({items})}
+ if(path==='/monitor-media-failures'){const health=await (await directory(this.env,'/provider-health')).json();const items=await cachedFailureNames(createProviderCatalog(catalogDeps,this.env,null,{timeoutMs:1500,cacheReadMs:300}),health.recentMediaFailures,(server,id)=>registry(this.env,'/xtream-episode',{server,id}));return Response.json({items})}
  if(path==='/monitor-providers'){
   try{
    const response=await directory(this.env,'/providers');if(!response.ok)throw Error('monitor_provider_directory_unavailable');
@@ -336,7 +336,7 @@ async function adminRequest(req,env,ctx){
  if(action==='playback-diagnostics'){
   const catalog=createProviderCatalog(catalogDeps,env,ctx,{timeoutMs:1500,cacheReadMs:300});
   const [providers,timings,observations,snapshot]=await Promise.all([directory(env,'/provider-health').then(r=>r.json()),env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_operations_v1')).fetch('https://private/operations/timing-read',{method:'POST',body:'{}'}).then(r=>r.json()),loadChannelObservations(()=>directory(env,'/provider-channel-observations')),cachedChannelCatalog(catalog)]);
-  providers.recentMediaFailures=await cachedFailureNames(catalog,providers.recentMediaFailures);
+  providers.recentMediaFailures=await cachedFailureNames(catalog,providers.recentMediaFailures,(server,id)=>registry(env,'/xtream-episode',{server,id}));
   return json({providers,timings,channels:summarizeChannelObservations(observations,snapshot)});
  }
  if(['playback-canary-status','playback-canary-settings','playback-canary-run'].includes(action)){const path=action==='playback-canary-settings'?'/canary/settings':action==='playback-canary-run'?'/canary/run':'/status';const result=await monitorCall(env,path,action==='playback-canary-settings'?{enabled:b.enabled,...(b.types?{types:b.types}:{})}:{});if(result.ok&&action!=='playback-canary-status')await directory(env,'/audit-write',{actor:s.username,action});return json(await result.json(),result.status)}

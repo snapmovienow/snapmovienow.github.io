@@ -7,6 +7,9 @@ const entry=(id='8471',extra={})=>({type:'live',server:'ccf',id,title:'Example s
 const context=mediaFailureContext([entry(),entry(),entry('2',{type:'movie'}),entry('3',{lastObservedAt:now+1}),entry('4',{lastObservedAt:now-900001})],'live',null,now);
 assert.match(context,/ID 8471/);assert.equal(context.split('\n').length,1);for(const s of ['never-send','private-account','private.invalid','ID 2','ID 3','ID 4'])assert.ok(!context.includes(s));
 assert.equal(mediaFailureContext([entry()],'live','another-server',now),'');
+const episode=entry('66860',{type:'series',publicId:'24455',title:'Series fixture',httpStatuses:[416]});
+assert.match(mediaFailureContext([episode],'series',null,now),/ID 66860 · ID público 24455 · Series fixture · HTTP 416/);
+assert.doesNotMatch(mediaFailureContext([{...episode,publicId:'unsafe'}],'series',null,now),/ID público|unsafe/);
 assert.ok(!mediaFailureContext([entry('9',{title:'https://private.invalid/?password=secret'})],'live',null,now).includes('secret'));
 assert.ok(new TextEncoder().encode(mediaFailureContext(Array.from({length:30},(_,i)=>entry(String(i),{title:'🎬'.repeat(80)})),'live',null,now)).length<=600);
 class Store{constructor(){this.data=new Map();this.queue=Promise.resolve()}async get(k){return structuredClone(this.data.get(k))}async put(k,v){this.data.set(k,structuredClone(v))}transaction(fn){const p=this.queue.then(()=>fn(this));this.queue=p.catch(()=>{});return p}}
