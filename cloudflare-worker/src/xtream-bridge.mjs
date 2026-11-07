@@ -1,5 +1,5 @@
 import {setResolvedMedia,resetMediaPhase,recordInitialMediaResponse} from './failure-correlation.mjs';
-import {playbackStartup,reportLiveResult,deferPlaybackReport} from './live-startup.mjs';
+import {playbackStartup,LiveStartup,LIVE_STARTUP_MS,reportLiveResult,deferPlaybackReport} from './live-startup.mjs';
 import {initialMediaEvidence} from './initial-media-evidence.mjs';
 import {responseMediaFailure} from './media-failure-cause.mjs';
 import {initialRangeEvidence,initialRangeOutOfBounds} from './initial-range-evidence.mjs';
@@ -9,6 +9,8 @@ import {requestConnectionClient} from './connection-monitor.mjs';
 import {selectLiveFlowDiagnostic,createLiveFlowMonitor} from './live-flow-diagnostics.mjs';
 import {handleXtream} from './xtream.mjs';
 import {createLiveVariantFallback} from './live-variants.mjs';
+import {LIVE_FAILURE_ATTEMPTS,LIVE_NEXT_LIMIT,nextChannelFailure,cachedNextChannels} from './live-next-channel.mjs';
+import {confirmNextLiveSignal} from './live-next-signal.mjs';
 
 import {createProviderCatalog,fingerprint} from './provider-catalog.mjs';
 import {createAdultPolicy} from './content-permissions.mjs';
@@ -52,9 +54,10 @@ export function createXtreamBridge(deps) {
       return ids;
     };
     const resolve = async id => (await deps.registry(env,'/xtream-resolve',{id})).json();
-    const play = async (request, session, originalItem) => {
+    const playSource = async (request, session, originalItem,options={}) => {
       let item=originalItem;
-      const nextVariant=createLiveVariantFallback(rawCatalog,originalItem,session.permissions);
+      const nextVariant=options.noVariants?async()=>null:createLiveVariantFallback(rawCatalog,originalItem,session.permissions);
+      const maxAttempts=options.maxAttempts||3;
       let activity=cleanPlaybackActivity(item.activity,item.type);
       const activityTask=!activity?startPlaybackActivity(()=>cachedPlaybackActivity(rawCatalog,{type:item.type,server:item.server,id:item.upstreamId,parentId:item.parentId}),ctx):null;
       const request_id=crypto.randomUUID();
@@ -62,9 +65,9 @@ export function createXtreamBridge(deps) {
       const failedBeforeRelay=(reason,status,attempt=1)=>{const selected=selectFlow(attempt);if(selected)createLiveFlowMonitor(selected).finish(reason,{status});};
       const begun=await privateCall('/playback-begin',{sid:session.sid,request_id});if(!begun.ok){failedBeforeRelay('startup_failed',begun.status);return deps.json(await begun.json(),begun.status)}
       trace?.identify(item.type,playbackMonitorClient(request)?'android':'other');
-      const startup=playbackStartup(item.type,request.signal);startup.trace=trace;
+      const startup=options.startup||playbackStartup(item.type,request.signal);startup.trace=trace;
       const excluded=[];let lastFailure=null,lastServiceError=null;
-      for(let attempt=0;attempt<3&&(attempt===0||!startup||startup.available);attempt++){
+      for(let attempt=0;attempt<maxAttempts&&(attempt===0||!startup||startup.available);attempt++){
       resetMediaPhase(trace);
       const mediaSession={...session,request_id,client:requestConnectionClient(request),mediaKey:item.type+'|'+item.server+'|'+item.upstreamId+'|'+item.ext,...(activity?{activity}:{})};
       const allocation=await deps.managedPlayback(env,mediaSession,item.server,ctx,excluded,startup);
@@ -76,10 +79,15 @@ export function createXtreamBridge(deps) {
       const target=new URL('/stream',request.url);target.searchParams.set('t',encrypted);
       try{
         const prepared=startup?startup.prepare(request):new Request(request);
-        const response=await deps.serverStream(prepared,env,target,ctx,trace);
+        options.visited?.add(String(item.upstreamId));
+        let response=await deps.serverStream(prepared,env,target,ctx,trace);
+        if(options.confirmSignal&&response.ok&&item.ext==='m3u8'){
+          try{await confirmNextLiveSignal(response,{request,origin:target.origin,deadline:startup.deadline,open:(probe,url)=>deps.serverStream(probe,env,url,ctx,trace)});}
+          catch(error){await response.body?.cancel();if(request.signal.aborted)throw Error('playback_superseded');response=new Response(null,{status:error.status>=400&&error.status<=599?error.status:502});}
+        }
         recordInitialMediaResponse(trace,request,response);
         if(!response.ok){
-          lastFailure=response.status;
+          lastFailure=response.status;if(options.failure&&nextChannelFailure(response.status))options.failure.signal=true;
           const cause=responseMediaFailure(response);lastServiceError=cause.serviceError||null;
           const rangeEvidence=initialRangeEvidence(request,response);
           const reason=item.type!=='live'&&initialRangeOutOfBounds(rangeEvidence)?'range_out_of_bounds':'upstream_failed';
@@ -87,7 +95,7 @@ export function createXtreamBridge(deps) {
           await privateCall('/release',{sid:session.sid,lease_id,request_id,reason});await response.body?.cancel();
           const code=response.headers.get('X-SMN-Error-Code');
           if(response.status===410&&['playback_superseded','playback_expired','session_expired'].includes(code))return deps.json({error:code},410);
-          if(retryableSourceStatus(response.status)&&allocation.provider_id&&attempt<2){
+          if(retryableSourceStatus(response.status)&&allocation.provider_id&&attempt<maxAttempts-1){
             const alternative=startup.available?await nextVariant(response.status):null;
             if(alternative){item=alternative;excluded.length=0}else excluded.push(allocation.provider_id);
             continue
@@ -113,9 +121,31 @@ export function createXtreamBridge(deps) {
           return monitored(new Response('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=8000000\n'+target.href+'\n',{headers:{'content-type':'application/vnd.apple.mpegurl','cache-control':'no-store'}}));
         }
         return monitored(response);
-      }catch(error){lastFailure=502;lastServiceError=null;const cancelled=request.signal.aborted||['playback_superseded','playback_expired'].includes(error.message);if(startup&&!cancelled&&error.message!=='media_origin_unapproved')await reportLiveResult(deps.directory,env,mediaSession,allocation,false,Date.now()-signalAt);await privateCall('/release',{sid:session.sid,lease_id,request_id,reason:'upstream_failed'});if(cancelled)throw Error('playback_superseded');if(error.message!=='media_origin_unapproved'&&allocation.provider_id&&attempt<2){excluded.push(allocation.provider_id);continue}throw error}
+      }catch(error){lastFailure=502;lastServiceError=null;const cancelled=request.signal.aborted||['playback_superseded','playback_expired'].includes(error.message);if(startup&&!cancelled&&error.message!=='media_origin_unapproved')await reportLiveResult(deps.directory,env,mediaSession,allocation,false,Date.now()-signalAt);await privateCall('/release',{sid:session.sid,lease_id,request_id,reason:'upstream_failed'});if(cancelled)throw Error('playback_superseded');if(options.failure&&!cancelled&&error.message!=='media_origin_unapproved')options.failure.signal=true;if(error.message!=='media_origin_unapproved'&&allocation.provider_id&&attempt<maxAttempts-1){excluded.push(allocation.provider_id);continue}if(options.failure?.signal)return deps.json({error:'upstream_unavailable'},502);throw error}
       }
       return deps.json({error:lastServiceError||'live_signal_unavailable'},lastFailure||504);
+    };
+    const play=async(request,session,item)=>{
+      // Our Android client controls its own visible 5/5 and countdown. For
+      // other Xtream clients, recover inside the relay; their UI is not ours.
+      if(item.type!=='live'||request.method!=='GET'||playbackMonitorClient(request))return playSource(request,session,item);
+      const visited=new Set(),failure={signal:false};
+      let response=await playSource(request,session,item,{startup:new LiveStartup(request.signal,Date.now,LIVE_STARTUP_MS,LIVE_FAILURE_ATTEMPTS),maxAttempts:LIVE_FAILURE_ATTEMPTS,visited,failure});
+      if(response.ok||!failure.signal||!nextChannelFailure(response.status))return response;
+      const candidates=await cachedNextChannels(rawCatalog,item,session.permissions,visited);
+      const startup=new LiveStartup(request.signal,Date.now,LIVE_STARTUP_MS,LIVE_NEXT_LIMIT);
+      for(const candidate of candidates){
+        if(!startup.available)break;
+        if(request.signal.aborted)throw Error('playback_superseded');
+        await response.body?.cancel();
+        response=await playSource(request,session,candidate,{startup,maxAttempts:1,noVariants:true,visited,confirmSignal:true});
+        if(response.ok){
+          const headers=new Headers(response.headers);headers.set('X-SMN-Live-Fallback','next-channel');
+          return new Response(response.body,{status:response.status,statusText:response.statusText,headers});
+        }
+        if(!nextChannelFailure(response.status))break;
+      }
+      return response;
     };
     try { const special=deps.exclusives?await deps.exclusives.xtream(req,env,ctx,authenticate):null;return special||await handleXtream(req,{onResolvedMedia:(type,id)=>{setResolvedMedia(trace,type,id);flowPublicId=id;},authenticate,catalog,register,resolve,play,localLive:deps.exclusives?.liveXtream?.(env,ctx),localSeries:deps.exclusives?.seriesXtream?.(env,ctx),adultPolicy:createAdultPolicy(catalog,rawCatalog.inspect),json:deps.json}); }
     catch(error) { if(req.signal.aborted||['playback_superseded','playback_expired'].includes(error.message))return deps.json({error:'playback_superseded'},410);if(error.status)return deps.json({error:error.message},error.status);return deps.json({error:['media_origin_unapproved','provider_unavailable','provider_inactive','panel_unavailable'].includes(error.message)?error.message:'xtream_unavailable'},502); }
@@ -171,3 +201,4 @@ export function guardXtreamResponse(response, check, release, ctx, signal, expir
   });
   return new Response(body,{status:response.status,statusText:response.statusText,headers:response.headers});
 }
+

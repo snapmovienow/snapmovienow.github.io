@@ -5,11 +5,11 @@ import {rangeFailureDetail} from './initial-range-evidence.mjs';
 export const LIVE_STARTUP_MS=8000;
 export const VOD_STARTUP_MS=12000;
 export class LiveStartup {
- constructor(signal,now=Date.now,budget=LIVE_STARTUP_MS){this.signal=signal;this.now=now;this.deadline=now()+budget;this.attempts=0;this.validationMs=0;}
+ constructor(signal,now=Date.now,budget=LIVE_STARTUP_MS,maxAttempts=3){this.signal=signal;this.now=now;this.deadline=now()+budget;this.attempts=0;this.validationMs=0;this.maxAttempts=maxAttempts;}
  remaining(){if(this.signal?.aborted)throw Error('playback_superseded');return Math.max(0,this.deadline-this.now());}
  timeout(cap){const left=this.remaining();if(!left)throw Error('live_startup_timeout');return Math.min(cap,left);}
- claim(){if(this.attempts>=3||!this.remaining())return false;this.attempts++;return true;}
- get available(){return this.attempts<3&&this.remaining()>0;}
+ claim(){if(this.attempts>=this.maxAttempts||!this.remaining())return false;this.attempts++;return true;}
+ get available(){return this.attempts<this.maxAttempts&&this.remaining()>0;}
  validationRemaining(){return Math.max(0,Math.min(VALIDATION_TOTAL_MS-this.validationMs,this.remaining()));}
  validationTimeout(){const left=this.validationRemaining();if(!left)throw Error('provider_validation_timeout');return Math.min(PROVIDER_VALIDATION_MS,left);}
  recordValidation(ms){this.validationMs+=Math.max(0,ms);}
@@ -59,3 +59,4 @@ export async function reportLiveResult(directory,env,session,allocation,ok,elaps
 export function deferPlaybackReport(ctx,report){
  const work=Promise.resolve().then(report).catch(()=>{});ctx?.waitUntil?.(work);return work;
 }
+
