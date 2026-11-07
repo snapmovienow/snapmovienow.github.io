@@ -52,7 +52,7 @@ for(const current of ['allocation_cancel','relay_cancel','throw_cancel','origin_
  const r=await traceRequest(req,t=>bridge(req,{TICKET_SECRET:'fixture-test-secret'},undefined,t),{onTiming:t=>{captured=t},logger:()=>{}});
  const body=await r.json();assert.equal(r.status,current==='origin_reject'?401:410);
  assert.equal(body.error,current==='origin_reject'?'upstream_unavailable':'playback_superseded');assert.equal(captured.errorCode,body.error);
- assert.equal(calls,current==='origin_reject'?3:1,'channel cancellation cannot retry another provider');
+ assert.equal(calls,current==='origin_reject'?5:1,'channel cancellation cannot retry another provider');
  assert.equal(releases,current==='allocation_cancel'?0:calls);assert.ok(!JSON.stringify(captured).includes('synthetic'));
 }
 // Recovery must describe a new good sample, preserving the old incident and
@@ -66,3 +66,4 @@ for(let observation=0;observation<3;observation++)applyObservations(state,snapsh
 const recovery=state.history[0].changes.find(c=>c.kind==='resolved');assert.equal(recovery.title,'Inicio de contenido');assert.match(recovery.detail,/0 respuestas con error/);assert.ok(!recovery.detail.includes('5 respuestas'));
 assert.deepEqual(state.history[1],opening);assert.match(state.incidents['startup:live:other'].detail,/5 respuestas con error/);assert.match(state.outbox.at(-1).changes[0].detail,/0 respuestas con error/);
 console.log('PASS: exact outcome classification, real Xtream cancellation/retry boundary, upstream failures retained, legacy evidence preserved, redacted status codes and evidence-based recovery emails.');
+

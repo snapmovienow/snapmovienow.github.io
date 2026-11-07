@@ -51,8 +51,9 @@ try{
  }
  assert.equal(catalogReads,before,'fallback uses existing snapshots without fetching provider catalogs');
  allMissing=true;calls.length=0;const failed=await worker.fetch(new Request(origin+'/live/'+customer.username+'/'+customer.password+'/'+chosen.stream_id+'.ts'),env,ctx);
- assert.equal(failed.status,404);assert.equal(calls.length,3,'variant and account fallback share three attempts');assert.ok(!calls.some(x=>x.id==='57'));
+ assert.equal(failed.status,404);assert.deepEqual(calls.map(x=>x.id),['55','56','56','57'],'after exhausted source attempts the relay checks the next channel once');
  const leases=await openLeaseStore(objects.get('__smn_accounts_v1').state.storage);assert.equal(await leases.count(),0,'all failed allocations are released');
  await Promise.all(pending);
  console.log('PASS: real Xtream TS/HLS requests recover the same channel using a verified alternative, signed segments work, no catalog traffic is added, and failed retries leave no leases.');
 }finally{globalThis.fetch=originalFetch}
+
