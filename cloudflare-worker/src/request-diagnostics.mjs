@@ -1,5 +1,5 @@
 import {takeFailureCorrelation} from './failure-correlation.mjs';
-import {initialRangeOutOfBounds} from './initial-range-evidence.mjs';
+import {cleanInitialRangeEvidence,initialRangeOutOfBounds} from './initial-range-evidence.mjs';
 import {setGatewayReference,takeGatewayFailure} from './portal-gateway-diagnostics.mjs';
 import {PlaybackTimings} from './playback-timings.mjs';
 import {playbackErrorCode} from './playback-outcomes.mjs';
@@ -26,6 +26,7 @@ export async function traceRequest(req, handler, {logger = console.error, now = 
   const mediaFailure=takeFailureCorrelation(trace,response.status);
   const errorCode=response.status===416&&mediaFailure?.type!=='live'&&initialRangeOutOfBounds(mediaFailure?.rangeEvidence)
     ?'range_out_of_bounds':playbackErrorCode(headers.get('X-SMN-Error-Code'));
+  const exactEofRange=errorCode==='range_out_of_bounds'&&(()=>{const evidence=cleanInitialRangeEvidence(mediaFailure?.rangeEvidence),range=evidence?.incomingRange;return evidence?.method==='GET'&&evidence.ifRangePresent===false&&evidence.reportedTotal>0&&range?.kind==='bytes'&&range.start===evidence.reportedTotal})();
   const upstreamTiming=(headers.get('Server-Timing')||'').split(',').filter(x=>x.trim()&&!/^smn_(auth|catalog|allocation|validation|origin|first_byte);/.test(x.trim())).join(',');if(upstreamTiming)headers.set('Server-Timing',upstreamTiming);else headers.delete('Server-Timing');
   headers.append('Server-Timing','smn;dur='+elapsedMs);
   const stageHeader=trace.header();if(stageHeader)headers.append('Server-Timing',stageHeader);
@@ -46,7 +47,9 @@ export async function traceRequest(req, handler, {logger = console.error, now = 
         status: response.status,...(fastMediaEvent?{diagnostic:'fast_media_failure'}:{}),...(mediaFailure?{media_failure:mediaFailure}:{}),...(portalFailure?{portal:portalFailure}:{}), elapsed_ms: elapsedMs, version: SERVICE_VERSION,...(trace.type?{playback:trace.snapshot(response.status,errorCode)}:{})});
     } catch { /* Diagnostics cannot interrupt a response. */ }
   }
-  if(trace.type&&onTiming)try{onTiming(trace.snapshot(response.status,errorCode))}catch{} // Optional, off the playback path.
+  // An exact EOF probe is a valid 416 exchange, not a playback start. Keep its
+  // bounded diagnostic but exclude it from startup success/error aggregates.
+  if(trace.type&&onTiming&&!exactEofRange)try{onTiming(trace.snapshot(response.status,errorCode))}catch{} // Optional, off the playback path.
   // Preserve the original stream and its cancellation propagation; do not read
   // or clone media bodies for logging.
   return new Response(response.body, {status: response.status, statusText: response.statusText, headers});
