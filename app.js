@@ -1,4 +1,5 @@
 const API=globalThis.SMNConfig?.api||"https://api.snaptvnow.com";let allMovies=[],allSeries=[],allLive=[],permissions={movies:true,series:true,tv:true},authenticated=false,authGeneration=0;
+let ppvCategories=new Set();
 const sessionStorageSource=()=>globalThis.localStorage;let pendingLogout=null;
 let creds=SMNSessionClient.read(sessionStorageSource,{cookieMode:globalThis.SMNConfig?.cookieMode===true});const loginModal=document.getElementById("login");document.getElementById("loginBtn").addEventListener("click",()=>loginModal.classList.add("open"));document.getElementById("heroLogin").addEventListener("click",()=>loginModal.classList.add("open"));document.getElementById("closeLoginBtn").addEventListener("click",()=>loginModal.classList.remove("open"));
 function menu(){document.getElementById("drawer").classList.toggle("open")} function closeLogin(){document.getElementById("login").classList.remove("open");if(location.hash==="#login")history.replaceState(null,"",location.pathname+location.search)}
@@ -61,7 +62,7 @@ async function loadCatalog(){
  for(const c of categories)category.add(new Option(c.category_name,liveCategoryKey(c)));
  renderLive();renderContinue();startProfileSync();boundedTsUI?.update();return catalog.unavailable.length>0;
 }
-let liveLimit=100,ppvCategories=new Set();
+let liveLimit=100;
 function liveCategoryKey(item){return (item._server||'ccf')+':'+item.category_id}
 function isPpvEvent(item){return ppvCategories.has(liveCategoryKey(item))}
 function renderLive(){const q=normalizeSearch(document.getElementById('liveSearch').value),category=document.getElementById('liveCategory').value;const matches=allLive.filter(c=>(!q||normalizeSearch(c.name).includes(q))&&(!category||liveCategoryKey(c)===category));const grid=document.getElementById('liveGrid');grid.replaceChildren();for(const c of matches.slice(0,liveLimit)){const button=document.createElement('button');button.className='channel';button.type='button';if(c.stream_icon){const img=document.createElement('img');img.src=c.stream_icon;img.alt='';img.loading='lazy';img.onerror=()=>img.remove();button.append(img)}const label=document.createElement('strong');label.textContent=c.name;const badge=document.createElement('small');badge.textContent=isPpvEvent(c)?'EVENTO PPV':'▶ EN VIVO';button.append(label,badge);button.onclick=()=>openDetail(c,'live');button.onkeydown=e=>{const cols=getComputedStyle(grid).gridTemplateColumns.split(' ').length,buttons=[...grid.children],index=buttons.indexOf(button),step={ArrowRight:1,ArrowLeft:-1,ArrowDown:cols,ArrowUp:-cols}[e.key];if(step){e.preventDefault();buttons[index+step]?.focus()}};grid.append(button)}if(!matches.length)grid.textContent='No hay canales disponibles con este filtro.';document.getElementById('liveStatus').textContent=matches.length+' canales';document.getElementById('liveMore').hidden=matches.length<=liveLimit;

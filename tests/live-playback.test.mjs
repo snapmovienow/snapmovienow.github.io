@@ -34,12 +34,12 @@ const node=()=>({children:[],append(...children){this.children.push(...children)
 const controls={liveSearch:{value:''},liveCategory:{value:''},liveGrid:{replaceChildren(){cards.length=0},append(card){cards.push(card)}},liveStatus:{},liveMore:{}};
 const catalogContext={
  allLive:[{name:'Pachuca vs. Puebla',category_id:7},{name:'Local news',category_id:7,_server:'other'}],
- normalizeSearch:value=>value,
+ normalizeSearch:value=>value,ppvCategories:new Set(['ccf:7']),
  document:{getElementById:id=>controls[id],createElement:node}
 };
 vm.createContext(catalogContext);
 vm.runInContext(html.slice(html.indexOf('let liveLimit='),html.indexOf("for(const id of ['liveSearch','liveCategory'])")),catalogContext);
-vm.runInContext("ppvCategories.add('ccf:7');renderLive()",catalogContext);
+vm.runInContext('renderLive()',catalogContext);
 assert.deepEqual(cards.map(card=>card.children[1].textContent),['EVENTO PPV','▶ EN VIVO']);
 controls.liveCategory.value='ccf:7';
 vm.runInContext('renderLive()',catalogContext);
