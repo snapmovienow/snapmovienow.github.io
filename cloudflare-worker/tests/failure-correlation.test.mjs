@@ -28,7 +28,7 @@ test('slow 416 gains numeric initial Range with same response and one request',a
 test('fast 416 is intentionally not a new event',async()=>{const x=await run({status:416});assert.equal(x.logs.length,0);assert.equal(x.calls,1);assert.equal(x.res.status,416)});
 test('only a confirmed out-of-bounds movie GET changes the private timing code',async()=>{
  for(const [overrides,code] of [[{},'range_out_of_bounds'],[{range:'bytes=99-'},'upstream_unavailable'],[{ifRange:true},'upstream_unavailable'],[{method:'HEAD'},'upstream_unavailable'],[{range:'bytes=100-,0-1'},'upstream_unavailable']]){
-  const x=await run({status:416,slow:true,range:'bytes=100-',ifRange:false,...overrides});
+  const x=await run({status:416,slow:true,range:'bytes=101-',ifRange:false,...overrides});
   assert.equal(x.res.status,416);assert.equal(x.res.headers.get('content-range'),'bytes */100');assert.equal(x.calls,1);
   assert.equal(x.timings[0].errorCode,code);assert.equal(x.logs[0].playback.errorCode,code);
  }
