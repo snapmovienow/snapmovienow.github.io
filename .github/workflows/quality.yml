@@ -74,5 +74,7 @@ jobs:
         if: always()
         with:
           name: quality-evidence
-          path: artifacts/
+          path: |
+            artifacts/
+            cloudflare-worker/.wrangler/quality-release/index.js
           if-no-files-found: ignore
