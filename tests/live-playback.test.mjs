@@ -27,3 +27,20 @@ for(const allMissing of [false,true]){
  assert.deepEqual(attempts,[1,2]);if(!allMissing)assert.equal(fixture.currentPlay.liveActual,low);
 }
 console.log('PASS:404 alternative succeeds; all404 preserves status; each candidate attempted once.');
+
+// PPV slots are scheduled events. A catalog entry alone cannot confirm airtime.
+const cards=[];
+const node=()=>({children:[],append(...children){this.children.push(...children)}});
+const controls={liveSearch:{value:''},liveCategory:{value:''},liveGrid:{replaceChildren(){cards.length=0},append(card){cards.push(card)}},liveStatus:{},liveMore:{}};
+const catalogContext={
+ allLive:[{name:'Pachuca vs. Puebla',category_id:7},{name:'Local news',category_id:7,_server:'other'}],
+ normalizeSearch:value=>value,ppvCategories:new Set(['ccf:7']),
+ document:{getElementById:id=>controls[id],createElement:node}
+};
+vm.createContext(catalogContext);
+vm.runInContext(html.slice(html.indexOf('let liveLimit='),html.indexOf("for(const id of ['liveSearch','liveCategory'])")),catalogContext);
+vm.runInContext('renderLive()',catalogContext);
+assert.deepEqual(cards.map(card=>card.children[1].textContent),['EVENTO PPV','▶ EN VIVO']);
+controls.liveCategory.value='ccf:7';
+vm.runInContext('renderLive()',catalogContext);
+assert.deepEqual(cards.map(card=>card.children[0].textContent),['Pachuca vs. Puebla']);
