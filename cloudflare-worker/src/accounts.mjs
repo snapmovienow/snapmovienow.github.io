@@ -242,8 +242,13 @@ export async function accountsFetch(state,env,req){
    const local=leases.in(tx);for(const [id,l]of await local.active({sid:b.sid}))if(l.request_id===b.request_id||(supersedes&&l.request_id===previous)){if(l.request_id===previous)rememberProvider(old,l);await local.remove(id);}await tx.put(key,pruneAffinities(old));return answer({ok:true});
   }
   if(old.cancelled[b.request_id]||(Number.isSafeInteger(b.revision)&&b.revision<=old.revision&&old.request_id!==b.request_id))return answer({error:'playback_superseded'},410);
+  const nativeMediaKey=typeof b.native_media_key==='string'&&/^(movie|series)\|[^|]{1,100}\|[^|]{1,100}\|[a-zA-Z0-9]{1,12}$/.test(b.native_media_key)?b.native_media_key:null;
+  // Parallel byte ranges belong to one native playback. A tail probe must
+  // not supersede the response that is still delivering the same title.
+  if(nativeMediaKey&&old.nativeMediaKey===nativeMediaKey&&old.request_id&&!old.cancelled[old.request_id])return answer({ok:true,request_id:old.request_id});
   old.request_id=b.request_id;old.revision=Number.isSafeInteger(b.revision)?b.revision:old.revision+1;
-  await tx.put(key,pruneAffinities(old));return answer({ok:true});
+  if(nativeMediaKey)old.nativeMediaKey=nativeMediaKey;else delete old.nativeMediaKey;
+  await tx.put(key,pruneAffinities(old));return answer({ok:true,...(nativeMediaKey?{request_id:old.request_id}:{})});
  });
  if(p==='/channel-startup-failure')return store.transaction(async tx=>{
   const u=await tx.get('user:'+normal(b.username));if(!alive(u)||u.id!==b.uid||u.version!==b.version||!b.request_id||(await tx.get('playback:'+b.sid))?.request_id!==b.request_id)return answer({error:'playback_expired'},410);
@@ -316,7 +321,11 @@ export async function accountsFetch(state,env,req){
   const group=String(b.server||String(b.mediaKey||'').split('|')[1]||'ccf'),hint=providerAffinity(playback,group,b);
   if(b.xtream||u.resellerBridge){const used=await local.count({uid:b.uid})-[...sessionLeases.values()].filter(l=>l.uid===b.uid).length;if(used>=3){await local.removeFor({sid:b.sid});await recordConnectionLimit(tx,u,b,used);return answer({error:'user_connection_limit'},409);}}
   const activity=cleanPlaybackActivity(b.activity,String(b.mediaKey||'').split('|')[0]);
+  const nativeRangeId=b.xtream===true&&playback.nativeMediaKey===b.mediaKey&&typeof b.native_range_id==='string'&&/^[a-zA-Z0-9_-]{1,100}$/.test(b.native_range_id)?b.native_range_id:null;
+  const previousRanges=nativeRangeId?owned.find(([,lease])=>lease.request_id===b.request_id&&lease.mediaKey===b.mediaKey)?.[1].nativeRanges:null;
+  if(nativeRangeId&&previousRanges&&!previousRanges[nativeRangeId]&&Object.keys(previousRanges).length>=64)return answer({error:'try_later'},409);
   const extra={startedAt:Date.now(),client:cleanConnectionClient(b.client),...(canary?{canary:true}:{}),...(b.xtream?{xtream:true}:{}),...(b.request_id?{mediaKey:b.mediaKey,request_id:b.request_id}:{}),...(activity?{activity}:{})};
+  if(nativeRangeId)extra.nativeRanges={[nativeRangeId]:true};
   if(provider.mode==='panel'){
    // Inventory refresh stays off the streaming path. Counts use an index,
    // rather than deserializing all leases once for every provider candidate.
@@ -345,6 +354,7 @@ export async function accountsFetch(state,env,req){
    const preferred=hint&&available.find(p=>p.id===hint.provider_id),home=primary&&!primaryFailed&&!mediaRecentlyFailed(health,primary.id,b.mediaKey,now)&&available.find(p=>p.id===primary.id),selected=preferred||home||ranked[0];
    if(!selected){const capacityBusy=candidates.length&&candidates.every(p=>health['account|'+p.id]?.busyUntil>now);const retry=candidates.map(p=>providerCircuitState(health,p.id,b.mediaKey,now).retryAfterMs).filter(Boolean);return answer({error:candidates.length&&!capacityBusy?'provider_temporarily_unavailable':'ccf_capacity',...(retry.length?{retry_after_ms:Math.min(...retry)}:{})},candidates.length&&!capacityBusy?503:409);}
    const previous=b.request_id&&owned.find(([,l])=>l.provider_id===selected.id&&l.providerCredentialKey===selected.credentialKey&&affinityGroup(l)===group&&l.mediaKey===b.mediaKey),sameRequest=previous&&previous[1].request_id===b.request_id;
+   if(nativeRangeId&&sameRequest)extra.nativeRanges={...previous[1].nativeRanges,[nativeRangeId]:true};
    const id=previous?previous[0]:crypto.randomUUID(),trial=claimProviderTrial(health,selected.id,b.mediaKey,id,now,options(selected)),proof=!trial.claimed?recentAccountProof(health,selected,pool.syncedAt,now):0,trustedHint=preferred&&hint.credentialKey===selected.credentialKey,validatedAt=trustedHint&&!trial.claimed?hint.validatedAt:0;
    if(trial.claimed)await tx.put('provider-health',trial.health);
    for(const [oldId]of sessionLeases)if(oldId!==id)await local.remove(oldId,'channel_changed');
@@ -352,6 +362,12 @@ export async function accountsFetch(state,env,req){
    await local.put(id,lease);if(canary)await tx.put('background-canary-lease',id);rememberProvider(playback,lease);await tx.put(playbackKey,playback);await recordCustomerActivity(tx,u.id,Date.now(),b.client);
    if(!canary&&(!primary||primaryFailed))await tx.put(assignmentKey(u.id),saveAssignment(profile,group,u.id,selected,now));
    return answer({lease_id:id,provider_id:selected.id,encrypted:selected.encrypted,maxConnections:selected.maxConnections,...(previous?{reused:true,request_id:b.request_id}:{}),...(preferred||home?{affinity:true}:{}),...(!trial.claimed&&(preferred||proof)?{validatedRecently:!!proof||!!trustedHint&&recentlyValidated(hint)}:{})});
+  }
+  const nativePrevious=nativeRangeId&&owned.find(([,lease])=>lease.request_id===b.request_id&&lease.mediaKey===b.mediaKey);
+  if(nativePrevious){
+   const [id,previous]=nativePrevious;
+   await local.put(id,{...previous,...extra,nativeRanges:{...previous.nativeRanges,[nativeRangeId]:true},until:Date.now()+90000});
+   return answer({lease_id:id,reused:true});
   }
   await local.removeFor({sid:b.sid});
   const max=Math.min(provider.maxConnections,Math.max(1,Number(b.upstreamMax)||3));
@@ -369,6 +385,11 @@ export async function accountsFetch(state,env,req){
   const local=leases.in(tx),l=await local.get(b.lease_id);if(!l||l.sid!==b.sid)return answer({error:'playback_expired'},410);
   if(p==='/release'){
    if(b.request_id&&l.request_id!==b.request_id)return answer({ok:true,reused:true});
+   if(b.native_range_id&&l.nativeRanges){
+    if(!l.nativeRanges[b.native_range_id])return answer({ok:true,reused:true});
+    delete l.nativeRanges[b.native_range_id];
+    if(Object.keys(l.nativeRanges).length){await local.put(b.lease_id,l);return answer({ok:true,retained:true});}
+   }
    const key='playback:'+b.sid,state=await tx.get(key);
    // A delayed close/failure from the previous channel cannot replace the
    // newer binding. A failed source must never be restored by body cleanup.
@@ -380,6 +401,7 @@ export async function accountsFetch(state,env,req){
    await local.remove(b.lease_id,'player_closed');return answer({ok:true});
   }
   if(b.request_id&&l.request_id!==b.request_id)return answer({error:'playback_superseded'},410);
+  if(b.native_range_id&&l.nativeRanges&&!l.nativeRanges[b.native_range_id])return answer({error:'playback_expired'},410);
   if(b.request_id&&(await tx.get('playback:'+b.sid))?.request_id!==b.request_id)return answer({error:'playback_superseded'},410);
   const u=await tx.get('user:'+normal(l.username));if(l.until<=Date.now()||!alive(u)||u.id!==l.uid||u.version!==l.version){await local.remove(b.lease_id);return answer({error:'playback_expired'},410)}
   if(p==='/heartbeat'&&b.xtreamIdentity){
