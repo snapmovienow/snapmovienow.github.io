@@ -22,10 +22,10 @@ globalThis.fetch=async(value,opts={})=>{
  const matched=u.pathname.match(/^\/live\/([^/]+)\/([^/]+)\/(\d+)\.(ts|m3u8)$/);
  if(matched){const [,account,,id,ext]=matched;calls.push({account,id,ext});if(id==='60'&&ext==='m3u8'&&!allMissing)return new Response('#EXTM3U\n#EXTINF:4,\n/dead-segment.ts\n',{headers:{'content-type':'application/vnd.apple.mpegurl'}});if(id!=='61'||allMissing)return new Response('missing',{status:404});
   if(ext==='m3u8')return new Response('#EXTM3U\n#EXTINF:4,\n/segment.ts\n',{headers:{'content-type':'application/vnd.apple.mpegurl'}});
-  return new Response(new ReadableStream({start(c){c.enqueue(new Uint8Array([71,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]))}}),{headers:{'content-type':'video/mp2t'}});
+  return new Response(new ReadableStream({start(c){c.enqueue(new Uint8Array([71,1,2,16,4,5,6,7,8,9,10,11,12,13,14,15]))}}),{headers:{'content-type':'video/mp2t'}});
  }
  if(u.pathname==='/dead-segment.ts')return new Response(null,{status:404});
- if(u.pathname==='/segment.ts')return new Response(new Uint8Array([71,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]),{headers:{'content-type':'video/mp2t'}});
+ if(u.pathname==='/segment.ts')return new Response(new Uint8Array([71,1,2,16,4,5,6,7,8,9,10,11,12,13,14,15]),{headers:{'content-type':'video/mp2t'}});
  throw Error('unexpected source request');
 };
 const origin='https://api.snaptvnow.com',ctx={waitUntil:p=>pending.push(Promise.resolve(p).catch(()=>{}))};

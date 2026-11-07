@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {confirmNextLiveSignal} from '../src/live-next-signal.mjs';
+import {confirmNextLiveSignal,confirmNextLiveBytes} from '../src/live-next-signal.mjs';
 const origin='https://api.snaptvnow.com',request=new Request(origin+'/live/viewer/password/1.m3u8');
 const url=id=>origin+'/stream?t='+id;
 const playlist=body=>new Response(body,{headers:{'content-type':'application/vnd.apple.mpegurl'}});
@@ -20,3 +20,8 @@ let unsafeOpened=false;
 await assert.rejects(confirmNextLiveSignal(playlist('#EXTM3U\n#EXTINF:4,\nhttps://untrusted.invalid/segment'),{request,origin,deadline:Date.now()+100,open:async()=>{unsafeOpened=true;return media();}}),/invalid_playlist/);assert.equal(unsafeOpened,false);
 const abort=new AbortController();abort.abort();await assert.rejects(confirmNextLiveSignal(playlist('#EXTM3U'),{request:new Request(request,{signal:abort.signal}),origin,deadline:Date.now()+100,open:async()=>media()}),/playback_superseded/);
 console.log('PASS: candidate HLS requires segment/key/map bytes; 404, short/silent bodies, foreign URLs and cancellation fail closed.');
+
+const transportBytes=new Uint8Array(188).fill(71);transportBytes[3]=16;const transport=new Response(transportBytes);
+await confirmNextLiveBytes(transport,Date.now()+100);assert.deepEqual(new Uint8Array(await transport.arrayBuffer()),transportBytes);
+await assert.rejects(confirmNextLiveBytes(new Response('<html>not a channel</html>'),Date.now()+100),/invalid_media/);
+await assert.rejects(confirmNextLiveBytes(new Response(new Uint8Array([71,1,2,16])),Date.now()+100),/media_empty/);

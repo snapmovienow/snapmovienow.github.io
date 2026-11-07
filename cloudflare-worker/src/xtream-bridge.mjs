@@ -10,7 +10,7 @@ import {selectLiveFlowDiagnostic,createLiveFlowMonitor} from './live-flow-diagno
 import {handleXtream} from './xtream.mjs';
 import {createLiveVariantFallback} from './live-variants.mjs';
 import {LIVE_FAILURE_ATTEMPTS,LIVE_NEXT_LIMIT,nextChannelFailure,cachedNextChannels} from './live-next-channel.mjs';
-import {confirmNextLiveSignal} from './live-next-signal.mjs';
+import {confirmNextLiveSignal,confirmNextLiveBytes} from './live-next-signal.mjs';
 
 import {createProviderCatalog,fingerprint} from './provider-catalog.mjs';
 import {createAdultPolicy} from './content-permissions.mjs';
@@ -81,8 +81,8 @@ export function createXtreamBridge(deps) {
         const prepared=startup?startup.prepare(request):new Request(request);
         options.visited?.add(String(item.upstreamId));
         let response=await deps.serverStream(prepared,env,target,ctx,trace);
-        if(options.confirmSignal&&response.ok&&item.ext==='m3u8'){
-          try{await confirmNextLiveSignal(response,{request,origin:target.origin,deadline:startup.deadline,open:(probe,url)=>deps.serverStream(probe,env,url,ctx,trace)});}
+        if(options.confirmSignal&&response.ok){
+          try{if(item.ext==='m3u8')await confirmNextLiveSignal(response,{request,origin:target.origin,deadline:startup.deadline,open:(probe,url)=>deps.serverStream(probe,env,url,ctx,trace)});else await confirmNextLiveBytes(response,startup.deadline);}
           catch(error){await response.body?.cancel();if(request.signal.aborted)throw Error('playback_superseded');response=new Response(null,{status:error.status>=400&&error.status<=599?error.status:502});}
         }
         recordInitialMediaResponse(trace,request,response);
