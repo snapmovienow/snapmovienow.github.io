@@ -10,7 +10,7 @@ class Store{
  transaction(fn){const r=this.queue.then(()=>fn(this));this.queue=r.catch(()=>{});return r}
 }
 const objects=new Map(),env={TICKET_SECRET:'test-affinity-secret-only',ADMIN_SETUP_SECRET:'test-affinity-setup-12345678901234567890'};
-let movieAccessCase;
+let movieAccessCase,holdMovieResponse=false;
 env.PLAYBACK_SESSIONS={idFromName:x=>x,get(id){if(!objects.has(id))objects.set(id,new PlaybackSession({storage:new Store()},env));return {async fetch(url,options){
  const request=new Request(url,options),path=new URL(request.url).pathname;
  if(movieAccessCase==='slow_directory_check'&&path==='/accounts/check')offset+=13000;
@@ -24,12 +24,13 @@ globalThis.fetch=async(url,opts={})=>{const u=new URL(url);
  if(u.pathname.endsWith('/login'))return new Response(opts.method==='POST'?'<a href="dashboard">Welcome</a>':'<input name="password">',{headers:{'set-cookie':'PHPSESSID=fixture; path=/'}});
  if(u.pathname.endsWith('/table'))return Response.json({recordsFiltered:3,data:[1,2,3].map(row)});
  if(u.pathname==='/player_api.php'){
-  const action=u.searchParams.get('action');if(action==='get_vod_streams')return Response.json([{stream_id:44,name:'Fixture movie',container_extension:'mp4'}]);if(action==='get_live_streams')return Response.json([10,11,12,13].map(stream_id=>({stream_id,name:'Channel '+stream_id})));
+  const action=u.searchParams.get('action');if(action==='get_vod_streams')return Response.json([44,45].map(stream_id=>({stream_id,name:'Fixture movie '+stream_id,container_extension:'mp4'})));if(action==='get_live_streams')return Response.json([10,11,12,13].map(stream_id=>({stream_id,name:'Channel '+stream_id})));
   if(action)return Response.json([]);validations.push(u.searchParams.get('username'));return Response.json({user_info:{auth:1,status:'Active',max_connections:'3',active_cons:'0'}});
  }
  if(u.pathname.startsWith('/movie/')){
   signals.push(u.pathname.split('/')[2]);
   if(new Headers(opts.headers).get('range')==='bytes=100-')return new Response(null,{status:416,headers:{'content-range':'bytes */100'}});
+  if(holdMovieResponse)return new Response(new ReadableStream({start(c){c.enqueue(new Uint8Array([1]))}}),{status:206,headers:{'content-type':'video/mp4','content-length':'100','content-range':'bytes 0-99/100'}});
   return new Response('fixture video',{status:206,headers:{'content-type':'video/mp4','content-length':'13','content-range':'bytes 0-12/100'}});
  }
  if(u.pathname.startsWith('/live/')){
@@ -91,6 +92,42 @@ assert.equal(affinityAfterRange?.provider_id,affinityBeforeRange.provider_id,'th
 assert.equal(affinityAfterRange.validatedAt,affinityBeforeRange.validatedAt,'the 416 does not refresh validation proof');
 assert.equal(await leases.count(),0);
 const playMovie=()=>worker.fetch(new Request(vodUrl,{headers:{...headers('smarters'),Range:'bytes=0-12'}}),env,ctx);
+// Keep a real HTTP response open while another range is requested. Sequential
+// finite-response fixtures do not expose a tail probe closing its sibling.
+holdMovieResponse=true;
+const openMovie=await playMovie(),openReader=openMovie.body.getReader();
+assert.equal((await openReader.read()).done,false);
+const openLease=await only();
+assert.equal(await leases.count(),1);
+holdMovieResponse=false;
+const parallelValid=await playMovie();
+assert.equal(await parallelValid.text(),'fixture video');
+assert.equal(await leases.count(),1,'finishing one valid range preserves the open sibling');
+const eof=await worker.fetch(new Request(vodUrl,{headers:{...headers('smarters'),Range:'bytes=100-'}}),env,ctx);
+assert.equal(eof.status,416);
+assert.equal(eof.headers.get('content-range'),'bytes */100');
+await eof.body.cancel();
+assert.equal(await leases.count(),1,'an EOF range must not release the active movie');
+assert.equal((await only()).request_id,openLease.request_id,'parallel ranges retain the current playback binding');
+const head=await worker.fetch(new Request(vodUrl,{method:'HEAD',headers:headers('smarters')}),env,ctx);
+assert.equal(head.status,200);
+assert.equal(Object.keys((await only()).nativeRanges).length,1,'HEAD releases only its own range reference');
+holdMovieResponse=true;
+const parallelOpen=await playMovie(),parallelReader=parallelOpen.body.getReader();
+await parallelReader.read();
+assert.equal(Object.keys((await only()).nativeRanges).length,2);
+await parallelReader.cancel();
+assert.equal(Object.keys((await only()).nativeRanges).length,1,'cancelling one range retains its sibling');
+const otherUrl=origin+'/movie/fixture-user/viewer-password-test/'+movies[1].stream_id+'.mp4';
+const otherMovie=await worker.fetch(new Request(otherUrl,{headers:{...headers('smarters'),Range:'bytes=0-12'}}),env,ctx);
+assert.equal(otherMovie.status,206);
+const otherLease=await only();
+assert.notEqual(otherLease.request_id,openLease.request_id,'a different title still supersedes the prior playback');
+await openReader.cancel();
+assert.equal((await only()).request_id,otherLease.request_id,'late cleanup cannot release the newer title');
+await otherMovie.body.cancel();
+assert.equal(await leases.count(),0,'the last active response releases the reservation');
+holdMovieResponse=false;
 movieAccessCase='slow_directory_check';
 const delayedAccess=await playMovie();
 assert.equal(delayedAccess.status,206,'movie startup must not spend its origin deadline on a redundant directory check');
@@ -113,4 +150,19 @@ const auth=(await post({op:'auth',username:'fixture-user',password:'viewer-passw
 await admin('save',{username:'fixture-user',password:'changed-viewer-password-test',status:'active'});
 const stale=await worker.fetch(new Request(origin+'/player_api.php?username=fixture-user&password=viewer-password-test',{headers:headers('smarters')}),env,ctx);assert.equal(stale.status,401);
 assert.equal((await post({op:'playback_heartbeat',access_token:auth,lease_id:initial.lease_id})).status,401);assert.equal(await leases.count(),0);
+// Legacy single-provider storage uses the same range ownership contract.
+const savedProvider=await storage.get('provider'),singleUser=await storage.get('user:fixture-user');
+await storage.put('provider',{mode:'single',maxConnections:3});
+const direct=async(path,body)=>{const response=await objects.get('__smn_accounts_v1').fetch(new Request('https://private/accounts'+path,{method:'POST',body:JSON.stringify(body)}));return {status:response.status,data:await response.json()};};
+const single={sid:'single-native',uid:singleUser.id,username:singleUser.username,version:singleUser.version,xtream:true,request_id:'single-native-request',mediaKey:'movie|ccf|44|mp4',native_range_id:'single-range-a'};
+assert.equal((await direct('/playback-begin',{...single,native_media_key:single.mediaKey})).status,200);
+const singleLease=await direct('/acquire',single);
+assert.equal(singleLease.status,200);
+const singleSecond=await direct('/acquire',{...single,native_range_id:'single-range-b'});
+assert.equal(singleSecond.data.lease_id,singleLease.data.lease_id);
+assert.equal((await direct('/release',{...single,lease_id:singleLease.data.lease_id,native_range_id:'single-range-b',reason:'range_out_of_bounds'})).data.retained,true);
+assert.equal(await leases.count(),1);
+await direct('/release',{...single,lease_id:singleLease.data.lease_id});
+assert.equal(await leases.count(),0);
+await storage.put('provider',savedProvider);
 console.log('PASS: real Xtream HTTP routing for Smarters and legacy rebrand retains CCF source across TS/HLS and rapid zapping, skips only recent validation, fails over once and keeps viewers/revocation isolated.');

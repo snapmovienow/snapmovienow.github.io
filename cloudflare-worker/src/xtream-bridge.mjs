@@ -60,22 +60,25 @@ export function createXtreamBridge(deps) {
       const maxAttempts=options.maxAttempts||3;
       let activity=cleanPlaybackActivity(item.activity,item.type);
       const activityTask=!activity?startPlaybackActivity(()=>cachedPlaybackActivity(rawCatalog,{type:item.type,server:item.server,id:item.upstreamId,parentId:item.parentId}),ctx):null;
-      const request_id=crypto.randomUUID();
+      const range_id=item.type!=='live'&&item.ext!=='m3u8'?crypto.randomUUID():null;
+      const mediaKey=item.type+'|'+item.server+'|'+item.upstreamId+'|'+item.ext;
+      let request_id=crypto.randomUUID();
       const selectFlow=attempt=>typeof env.LIVE_FLOW_DIAGNOSTIC_USERNAME==='string'&&env.LIVE_FLOW_DIAGNOSTIC_USERNAME.trim().toLowerCase()===session.username?.toLowerCase()?selectLiveFlowDiagnostic(env,{username:session.username,type:item.type,ext:item.ext,method:request.method,requestId:crypto.randomUUID(),publicId:flowPublicId,attempt}):null;
       const failedBeforeRelay=(reason,status,attempt=1)=>{const selected=selectFlow(attempt);if(selected)createLiveFlowMonitor(selected).finish(reason,{status});};
-      const begun=await privateCall('/playback-begin',{sid:session.sid,request_id});if(!begun.ok){failedBeforeRelay('startup_failed',begun.status);return deps.json(await begun.json(),begun.status)}
+      const begun=await privateCall('/playback-begin',{sid:session.sid,request_id,...(range_id?{native_media_key:mediaKey}:{})});if(!begun.ok){failedBeforeRelay('startup_failed',begun.status);return deps.json(await begun.json(),begun.status)}
+      if(range_id){const binding=await begun.json();request_id=binding.request_id||request_id;}
       trace?.identify(item.type,playbackMonitorClient(request)?'android':'other');
       const startup=options.startup||playbackStartup(item.type,request.signal);startup.trace=trace;
       const excluded=[];let lastFailure=null,lastServiceError=null;
       for(let attempt=0;attempt<maxAttempts&&(attempt===0||!startup||startup.available);attempt++){
       resetMediaPhase(trace);
-      const mediaSession={...session,request_id,client:requestConnectionClient(request),mediaKey:item.type+'|'+item.server+'|'+item.upstreamId+'|'+item.ext,...(activity?{activity}:{})};
+      const mediaSession={...session,request_id,...(range_id?{native_range_id:range_id}:{}),client:requestConnectionClient(request),mediaKey:item.type+'|'+item.server+'|'+item.upstreamId+'|'+item.ext,...(activity?{activity}:{})};
       const allocation=await deps.managedPlayback(env,mediaSession,item.server,ctx,excluded,startup);
       if(!allocation.r.ok){failedBeforeRelay('startup_failed',allocation.r.status,attempt+1);if(lastFailure&&allocation.r.status===409)return deps.json({error:lastServiceError||'upstream_unavailable'},lastFailure);return deps.json(await allocation.r.json(),allocation.r.status)}
       const {lease_id}=await allocation.r.json(),credentials=allocation.credentials;allocation.lease_id=lease_id;const signalAt=Date.now();
       const monitored=response=>attachPlaybackQuality(response,request,session,{lease_id,request_id},value=>deps.ticket(env,value));
       const liveFlow=selectFlow(attempt+1);
-      const encrypted=await deps.ticket(env,{sid:session.sid,username:credentials.username,password:credentials.password,origin:credentials.origin,lease_id,request_id,xtream:true,type:item.type,id:item.upstreamId,ext:item.ext,exp:session.exp,...(liveFlow?{liveFlow}:{})});
+      const encrypted=await deps.ticket(env,{sid:session.sid,username:credentials.username,password:credentials.password,origin:credentials.origin,lease_id,request_id,...(range_id?{native_range_id:range_id}:{}),xtream:true,type:item.type,id:item.upstreamId,ext:item.ext,exp:session.exp,...(liveFlow?{liveFlow}:{})});
       const target=new URL('/stream',request.url);target.searchParams.set('t',encrypted);
       try{
         const prepared=startup?startup.prepare(request):new Request(request);
@@ -92,7 +95,7 @@ export function createXtreamBridge(deps) {
           const rangeEvidence=initialRangeEvidence(request,response);
           const reason=item.type!=='live'&&initialRangeOutOfBounds(rangeEvidence)?'range_out_of_bounds':'upstream_failed';
           if(startup&&response.status!==410)await reportLiveResult(deps.directory,env,mediaSession,allocation,false,Date.now()-signalAt,'signal',{httpStatus:response.status,...cause,...(rangeEvidence?{rangeEvidence}:{})});
-          await privateCall('/release',{sid:session.sid,lease_id,request_id,reason});await response.body?.cancel();
+          await privateCall('/release',{sid:session.sid,lease_id,request_id,...(range_id?{native_range_id:range_id}:{}),reason});await response.body?.cancel();
           const code=response.headers.get('X-SMN-Error-Code');
           if(response.status===410&&['playback_superseded','playback_expired','session_expired'].includes(code))return deps.json({error:code},410);
           if(retryableSourceStatus(response.status)&&allocation.provider_id&&attempt<maxAttempts-1){
@@ -120,8 +123,9 @@ export function createXtreamBridge(deps) {
           await response.body?.cancel();
           return monitored(new Response('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=8000000\n'+target.href+'\n',{headers:{'content-type':'application/vnd.apple.mpegurl','cache-control':'no-store'}}));
         }
+        if(range_id&&!response.body)await privateCall('/release',{sid:session.sid,lease_id,request_id,native_range_id:range_id});
         return monitored(response);
-      }catch(error){lastFailure=502;lastServiceError=null;const cancelled=request.signal.aborted||['playback_superseded','playback_expired'].includes(error.message);if(startup&&!cancelled&&error.message!=='media_origin_unapproved')await reportLiveResult(deps.directory,env,mediaSession,allocation,false,Date.now()-signalAt);await privateCall('/release',{sid:session.sid,lease_id,request_id,reason:'upstream_failed'});if(cancelled)throw Error('playback_superseded');if(options.failure&&!cancelled&&error.message!=='media_origin_unapproved')options.failure.signal=true;if(error.message!=='media_origin_unapproved'&&allocation.provider_id&&attempt<maxAttempts-1){excluded.push(allocation.provider_id);continue}if(options.failure?.signal&&error.message!=='media_origin_unapproved')return deps.json({error:'upstream_unavailable'},502);throw error}
+      }catch(error){lastFailure=502;lastServiceError=null;const cancelled=request.signal.aborted||['playback_superseded','playback_expired'].includes(error.message);if(startup&&!cancelled&&error.message!=='media_origin_unapproved')await reportLiveResult(deps.directory,env,mediaSession,allocation,false,Date.now()-signalAt);await privateCall('/release',{sid:session.sid,lease_id,request_id,...(range_id?{native_range_id:range_id}:{}),reason:'upstream_failed'});if(cancelled)throw Error('playback_superseded');if(options.failure&&!cancelled&&error.message!=='media_origin_unapproved')options.failure.signal=true;if(error.message!=='media_origin_unapproved'&&allocation.provider_id&&attempt<maxAttempts-1){excluded.push(allocation.provider_id);continue}if(options.failure?.signal&&error.message!=='media_origin_unapproved')return deps.json({error:'upstream_unavailable'},502);throw error}
       }
       return deps.json({error:lastServiceError||'live_signal_unavailable'},lastFailure||504);
     };
