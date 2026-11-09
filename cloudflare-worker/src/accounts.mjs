@@ -1,3 +1,4 @@
+import {readXtreamReferences} from './xtream-reference-diagnostic.mjs';
 import {usageChannel,readChannelUsage,observeChannelUsage} from './channel-usage.mjs';
 import {runPublicTvImport,publicTvImportStatus} from './public-tv-import.mjs';
 import {runEmpressImport,empressImportStatus} from './empress-import.mjs';
@@ -54,6 +55,7 @@ export async function accountsFetch(state,env,req){
  try{
  if(['/bounded-ts-claim','/bounded-ts-status','/bounded-ts-result'].includes(p))return boundedTsQuota(store,p,b,env);
  if(['/reseller-portal-rotation-status','/reseller-portal-rotation-begin','/reseller-portal-rotation-finish'].includes(p))return gatewayRotationStore(store,p,b);
+ if(p==='/xtream-reference-diagnostic'){const result=await store.transaction(tx=>readXtreamReferences(tx,b.queries));return answer(result,result.error?400:200);}
  const leases=await openLeaseStore(store);
  if(p==='/owned-media-status'){const row=await store.get('exclusive:item:'+OWNED_MEDIA_SERIES),job=await ownedMediaMigrationStatus(store);return answer({connected:isOwnedMediaSeries(row),options:isOwnedMediaSeries(row)?8:0,migration:{state:job.state,reason:job.reason,probeCode:job.probeCode}});}
  if(p==='/owned-media-connect'){await runOwnedMediaMigration(store,leases,env);return answer(await ownedMediaMigrationStatus(store));}
