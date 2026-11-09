@@ -268,7 +268,7 @@ async function refreshProviderPool(env,force,share){
    const credentials=await unticket(env,p.encrypted||'');
    origin=p.origin||credentials?.origin||ORIGIN;
    if(credentials?.kind==='reseller'){
-    const read=await share(p,onProgress=>readPanel(credentials.username,credentials.password,p.url||'http://ccf.center:8444/NYzkggyG/',{inventory:true,retryLoginTimeout:true,onProgress}));
+    const read=await share(p,onProgress=>readPanel(credentials.username,credentials.password,p.url||'http://ccf.center:8444/NYzkggyG/',{inventory:true,retryLoginTimeout:true,shortFinalLoginRetry:true,onProgress}));
     raw=read.lines;inventory=read.inventory;
    }else if(credentials?.kind==='provider'){
     const account=await share(p,()=>validateAccount(credentials.username,credentials.password,origin,6000,undefined,env.CCF_ENTRY_TRANSPORT==='tcp'));
