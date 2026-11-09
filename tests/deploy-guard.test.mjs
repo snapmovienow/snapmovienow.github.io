@@ -3,6 +3,7 @@ import {spawnSync} from 'node:child_process';
 import {copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import {pathToFileURL} from 'node:url';
 import {qualityRun, waitForQuality} from '../scripts/deploy-guard.mjs';
 
 const sha = 'a'.repeat(40);
@@ -152,8 +153,17 @@ assert.match(wrongCommit.stderr, /checked-out commit differ/);
 const temporary = mkdtempSync(path.join(os.tmpdir(), 'smn-deploy-guard-'));
 try {
   const checkout = path.join(temporary, 'checkout');
-  mkdirSync(path.join(checkout, 'scripts'), {recursive: true});
-  copyFileSync('scripts/deploy-guard.mjs', path.join(checkout, 'scripts/deploy-guard.mjs'));
+  for (const directory of ['scripts', 'tests', 'cloudflare-worker/tests']) {
+    mkdirSync(path.join(checkout, directory), {recursive: true});
+  }
+  for (const file of ['scripts/deploy-guard.mjs', 'scripts/verify.mjs', 'package.json', 'cloudflare-worker/package.json']) {
+    copyFileSync(file, path.join(checkout, file));
+  }
+  writeFileSync(path.join(checkout, 'cloudflare-worker/tests/worker.test.mjs'),
+    "console.log('WORKER_FIXTURE_RAN'); if (process.env.SMN_FAIL_WORKER_FIXTURE) process.exit(3);\n");
+  writeFileSync(path.join(checkout, 'tests/root.test.mjs'),
+    "import 'smn-root-only-fixture'; console.log('ROOT_FIXTURE_RAN');\n");
+  writeFileSync(path.join(checkout, 'scripts/build-staging.mjs'), "console.log('STAGING_FIXTURE_RAN');\n");
   writeFileSync(path.join(checkout, 'tracked.txt'), 'original\n');
   const fixtureGit = (...args) => {
     const result = spawnSync('git', args, {cwd: checkout, encoding: 'utf8'});
@@ -203,6 +213,42 @@ globalThis.fetch = async (url, options) => {
   const failed = manual({}, {SMN_GUARD_TEST_CONCLUSION: 'failure'});
   assert.equal(failed.status, 1, failed.stderr);
   assert.match(failed.stderr, /Quality failure; deployment blocked/);
+
+  const worker = path.join(checkout, 'cloudflare-worker');
+  const bin = path.join(worker, 'node_modules', '.bin');
+  mkdirSync(bin, {recursive: true});
+  writeFileSync(path.join(bin, 'wrangler'),
+    "#!/usr/bin/env node\nconsole.log('WRANGLER_FIXTURE_RAN', ...process.argv.slice(2));\n", {mode: 0o755});
+  const npm = (script, cwd, extra = {}) => spawnSync('npm', ['run', '--silent', script], {
+    cwd, encoding: 'utf8', timeout: 10_000,
+    env: {...process.env, WORKERS_CI: '1', WORKERS_CI_BRANCH: 'main', WORKERS_CI_COMMIT_SHA: checkoutSha,
+      NODE_OPTIONS: `--import=${pathToFileURL(preload).href}`, ...extra}
+  });
+  for (const script of ['deploy', 'deploy:staging']) {
+    const result = npm(script, worker);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /Quality approved[^\n]*\n[\s\S]*WORKER_FIXTURE_RAN[\s\S]*WRANGLER_FIXTURE_RAN/);
+    assert.doesNotMatch(result.stdout, /ROOT_FIXTURE_RAN/);
+    if (script === 'deploy:staging') assert.match(result.stdout, /STAGING_FIXTURE_RAN[\s\S]*WRANGLER_FIXTURE_RAN deploy --env staging/);
+  }
+  const rejectedDeploy = npm('deploy', worker, {SMN_GUARD_TEST_CONCLUSION: 'failure'});
+  assert.equal(rejectedDeploy.status, 1, rejectedDeploy.stderr);
+  assert.match(rejectedDeploy.stderr, /Quality failure; deployment blocked/);
+  assert.doesNotMatch(rejectedDeploy.stdout, /WORKER_FIXTURE_RAN|WRANGLER_FIXTURE_RAN/);
+  const brokenWorker = npm('deploy', worker, {SMN_FAIL_WORKER_FIXTURE: '1'});
+  assert.equal(brokenWorker.status, 3, brokenWorker.stderr);
+  assert.doesNotMatch(brokenWorker.stdout, /WRANGLER_FIXTURE_RAN/);
+  const missingRoot = npm('test', checkout);
+  assert.equal(missingRoot.status, 1, missingRoot.stderr);
+  assert.match(missingRoot.stderr, /Cannot find package 'smn-root-only-fixture'/);
+  const rootModule = path.join(checkout, 'node_modules', 'smn-root-only-fixture');
+  mkdirSync(rootModule, {recursive: true});
+  writeFileSync(path.join(rootModule, 'package.json'), '{"exports":"./index.mjs"}\n');
+  writeFileSync(path.join(rootModule, 'index.mjs'), 'export {};\n');
+  const fullSuite = npm('test', checkout);
+  assert.equal(fullSuite.status, 0, fullSuite.stderr);
+  assert.match(fullSuite.stdout, /WORKER_FIXTURE_RAN[\s\S]*ROOT_FIXTURE_RAN/);
+
   fixtureGit('checkout', '--detach');
   const branchless = manual({WORKERS_CI_BRANCH: ''});
   assert.equal(branchless.status, 1, branchless.stderr);
@@ -216,4 +262,4 @@ globalThis.fetch = async (url, options) => {
 } finally {
   rmSync(temporary, {recursive: true, force: true});
 }
-console.log('PASS: exact-commit deployment approval, manual-build checkout verification, rate-limit backoff, conditional reads, secret isolation and install isolation.');
+console.log('PASS: exact-commit deployment approval, manual-build verification, rate-limit backoff, secret isolation, Worker-only deploy checks and full root Quality checks.');
