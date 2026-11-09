@@ -4,8 +4,16 @@ import vm from 'node:vm';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const [mode,...extra]=process.argv.slice(2);
+if((mode!==undefined&&mode!=='--worker-only')||extra.length){
+ throw new Error('Usage: node scripts/verify.mjs [--worker-only]');
+}
+// Workers Builds installs only the Worker package. Quality's root npm test
+// continues to run both suites before the deploy guard can approve the SHA.
+const workerOnly=mode==='--worker-only';
+const suites=workerOnly?['cloudflare-worker/tests']:['cloudflare-worker/tests','tests'];
 let count=0;
-for(const dir of ['cloudflare-worker/tests','tests']){
+for(const dir of suites){
  for(const file of readdirSync(path.join(root,dir)).filter(x=>x.endsWith('.test.mjs')).sort()){
   const result=spawnSync(process.execPath,[path.join(root,dir,file)],{cwd:root,stdio:'inherit'});
   if(result.status!==0)process.exit(result.status||1);count++;
@@ -18,4 +26,4 @@ for(const file of readdirSync(root).filter(x=>x.endsWith('.html'))){
  }
 }
 for(const file of readdirSync(root).filter(x=>x.endsWith('.js'))){const r=spawnSync(process.execPath,['--check',path.join(root,file)],{stdio:'inherit'});if(r.status!==0)process.exit(r.status||1)}
-console.log(`PASS: ${count} regression files and frontend JavaScript syntax.`);
+console.log(`PASS: ${count} ${workerOnly?'Worker ':''}regression files and frontend JavaScript syntax.`);
