@@ -3,7 +3,7 @@ import {createGatewayRotation} from './gateway-rotation.mjs';
 import {startupDeadline,readLivePlaylist,readInitialMedia,VOD_STARTUP_MS,reportLiveResult,deferPlaybackReport} from './live-startup.mjs';
 import {boxpanelFetch} from './boxpanel.mjs';
 import {createBoxClient} from './boxpanel-client.mjs';
-import {TRUSTED_RESELLERS} from './reseller-trust.mjs';
+import {BOXPANEL_RESELLER_ACCOUNTS} from './reseller-trust.mjs';
 import {createTelegramTick} from './telegram-tick.mjs';
 import {markServiceVerification} from './service-verification.mjs';
 import {createAllOriginConnections,readOriginSnapshot,originSnapshotResponse,originProviderKey,originMonitorProviders} from './origin-connections.mjs';
@@ -316,7 +316,7 @@ async function adminRequest(req,env,ctx){
  if(action==="login"){const r=await directory(env,"/admin-login",{username:b.username,password:b.password,code:b.code,client});if(!r.ok)return json(await r.json(),r.status);const user=await r.json(),session=await ownSession(env,user,true);const token=await ticket(env,session);return withSessionCookie(json({access_token:b.browser_cookie&&canUseCookie(req,env)?null:token,username:user.username}),req,env,"admin",token,7200)}
  const s=await unticket(env,String(b.access_token||cookieToken(req,env,"admin")));if(s?.kind!=="admin"||!(await sessionCall(env,s.sid,"/check")).ok)return json({error:"admin_required"},401);
  if(action==='xtream-reference-diagnostic'){const r=await registry(env,'/xtream-reference-diagnostic',{queries:b.queries}),response=json(await r.json(),r.status);response.headers.set('Cache-Control','no-store');return response;}
- if(action.startsWith('boxpanel-'))return boxpanelCall(env,b,{role:'owner',candidates:TRUSTED_RESELLERS.map(r=>r.accountId)});
+ if(action.startsWith('boxpanel-'))return boxpanelCall(env,b,{role:'owner',candidates:BOXPANEL_RESELLER_ACCOUNTS});
  if(action==='reseller-admin-launch'){if(req.headers.get('Origin')!=='https://app.snaptvnow.com')return json({error:'origin_not_allowed'},403);if(b.purpose!==undefined&&b.purpose!=='gateway-rotation')return json({error:'owner_launch_purpose'},400);const r=await ownerAdminAccess.issue(env,s,b.purpose);if(r.ok)await directory(env,'/audit-write',{actor:s.username,action:'reseller_admin_launch',target:'owner'});return r;}
  if(action.startsWith('exclusive-')){try{return await exclusives.admin(req,env,b,s.username)||json({error:'operation_not_allowed'},403)}catch(e){return json({error:e.message},e.status||502)}}
  if(action==="logout"){await sessionCall(env,s.sid,"/logout");return withSessionCookie(json({ok:true}),req,env,"admin","",0)}
