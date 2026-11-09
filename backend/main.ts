@@ -59,7 +59,8 @@ Deno.serve(async (req) => {
       const token = requestUrl.searchParams.get("t") || "";
       const data = await getTicket(token);
       if (!data || data.expires < Date.now()) {
-        if (!kv) streamTickets.delete(token);\n        return new Response("Stream link expired", { status: 410 });
+        if (!kv) streamTickets.delete(token);
+        return new Response("Stream link expired", { status: 410 });
       }
       if (!data.username || !data.password || !data.id || !data.type) {
         return new Response("Bad stream request", { status: 400 });

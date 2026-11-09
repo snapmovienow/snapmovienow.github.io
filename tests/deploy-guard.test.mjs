@@ -1,10 +1,14 @@
 import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
-import {copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync} from 'node:fs';
+import {copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
+import {stripTypeScriptTypes} from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {qualityRun, waitForQuality} from '../scripts/deploy-guard.mjs';
+
+// The linked Deno build also needs a parseable TypeScript entrypoint.
+stripTypeScriptTypes(readFileSync(new URL('../backend/main.ts', import.meta.url), 'utf8'), {sourceUrl: 'backend/main.ts'});
 
 const sha = 'a'.repeat(40);
 const branch = 'main';
