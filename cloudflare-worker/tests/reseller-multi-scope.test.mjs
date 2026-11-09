@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import {createResellerBridge} from '../src/reseller-bridge.mjs';
-import {RESELLER_SERVICE_ACTIONS,TRUSTED_RESELLERS} from '../src/reseller-trust.mjs';
+import {BOXPANEL_RESELLER_ACCOUNTS,RESELLER_SERVICE_ACTIONS,TRUSTED_RESELLERS} from '../src/reseller-trust.mjs';
 const luis=TRUSTED_RESELLERS.find(panel=>panel.accountId==='839b2ee6-efac-45e3-ac2a-26fbcb5f6a2b');
 assert.equal(luis?.actions,RESELLER_SERVICE_ACTIONS);
+assert.ok(!BOXPANEL_RESELLER_ACCOUNTS.includes(luis.accountId));
 assert.equal(new Set(TRUSTED_RESELLERS.map(panel=>panel.accountId)).size,TRUSTED_RESELLERS.length);
 const keys=await Promise.all(TRUSTED_RESELLERS.map(()=>crypto.subtle.generateKey('Ed25519',true,['sign','verify']))),scopes=await Promise.all(keys.map(async(pair,i)=>({accountId:'reseller-'+i,keyId:'key-'+i,publicKey:Buffer.from(await crypto.subtle.exportKey('raw',pair.publicKey)).toString('base64url'),...(i?{actions:RESELLER_SERVICE_ACTIONS}:{})})));
 let written=[],ownerCalls=0;const bridge=createResellerBridge(async(env,path,body)=>{written.push({path,body});return Response.json({ok:true,lineId:body.lineId,version:body.version});},scopes,{ownerAccess:async()=>{ownerCalls++;return Response.json({ok:true})}});
