@@ -1,4 +1,5 @@
-import {TRUSTED_RESELLERS} from './reseller-trust.mjs';
+import {TRUSTED_RESELLERS,RESELLER_SERVICE_ACTIONS} from './reseller-trust.mjs';
+import {LUIS_ALONSO_ACCOUNT,isLuisSubpanel} from './reseller-hierarchy-scope.mjs';
 const dec=new TextDecoder(),enc=new TextEncoder();
 const unb64=value=>Uint8Array.from(atob(value.replace(/-/g,'+').replace(/_/g,'/')+'='.repeat((4-value.length%4)%4)),c=>c.charCodeAt(0));
 const json=(value,status=200)=>Response.json(value,{status,headers:{'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});
@@ -11,7 +12,12 @@ export async function verifyResellerPacket(packet,trust=TRUSTED_RESELLERS,now=Da
 export function createResellerBridge(directory,trust=TRUSTED_RESELLERS,{sealConfig,portalRecipient,ownerAccess,ccfExport,allOriginConnections,mediaProbe,rotatePortalConfig}={}){return async(req,env,ctx)=>{
  if(req.method!=='POST')return json({error:'bridge_method'},405);if(req.headers.get('content-type')?.split(';')[0]!=='application/json')return json({error:'bridge_format'},415);
  try{const reader=req.body?.getReader();if(!reader)throw Error('bridge_denied');const chunks=[];let size=0;const deadline=AbortSignal.timeout(5000);try{while(true){deadline.throwIfAborted();const next=await new Promise((resolve,reject)=>{const abort=()=>{void reader.cancel();reject(Error('bridge_denied'));};deadline.addEventListener('abort',abort,{once:true});reader.read().then(resolve,reject).finally(()=>deadline.removeEventListener('abort',abort));});if(next.done)break;size+=next.value.length;if(size>24000){await reader.cancel();throw Error('bridge_denied');}chunks.push(next.value);}}finally{reader.releaseLock();}const raw=new Uint8Array(size);let at=0;for(const chunk of chunks){raw.set(chunk,at);at+=chunk.length;}
-  const signed=await verifyResellerPacket(JSON.parse(dec.decode(raw)),trust),body={...signed.body,accountId:signed.accountId};
+  const signed=await verifyResellerPacket(JSON.parse(dec.decode(raw)),trust);
+  if(Object.hasOwn(signed,'delegatedAccountId')){
+   if(signed.accountId!==LUIS_ALONSO_ACCOUNT||!isLuisSubpanel(signed.delegatedAccountId)||!RESELLER_SERVICE_ACTIONS.includes(signed.action))throw Error('bridge_denied');
+   signed.accountId=signed.delegatedAccountId;
+  }
+  const body={...signed.body,accountId:signed.accountId};
   if(signed.action==='presence.origins'){if(!allOriginConnections)return json({error:'bridge_disabled'},503);const r=await allOriginConnections(env,body);return json({...await r.json(),accountId:signed.accountId},r.status);}
   if(signed.action==='ccf.record'){if(!ccfExport)return json({error:'bridge_disabled'},503);const r=await ccfExport(env,body);return json({...await r.json(),accountId:signed.accountId},r.status);}
   if(signed.action.startsWith('owner.')){if(!ownerAccess)return json({error:'bridge_disabled'},503);const r=await ownerAccess(env,signed.action,body);return json({...await r.json(),accountId:signed.accountId},r.status);}
