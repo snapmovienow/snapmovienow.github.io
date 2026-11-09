@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {traceRequest, SERVICE_VERSION} from '../src/request-diagnostics.mjs';
+import {recordInitialMediaResponse,setResolvedMedia} from '../src/failure-correlation.mjs';
 import worker from '../src/index.js';
 
 const events = [], secret = 'password-do-not-log';
@@ -30,6 +31,14 @@ assert.equal(media.status,206); assert.equal(media.headers.get('Content-Range'),
 assert.ok(media.headers.get('Access-Control-Expose-Headers').includes('Content-Range'));
 await media.body.cancel();assert.equal(cancels,1,'closing the wrapped stream must cancel upstream');
 assert.equal(events.length,2,'successful media requests do not create log events');
+
+let timingSamples=0;
+const rangeTiming=async(start)=>{
+ const req=new Request('https://example.test/movie/customer/'+secret+'/9017.mkv',{headers:{range:'bytes='+start+'-'}});
+ return traceRequest(req,trace=>{trace.identify('movie','other');setResolvedMedia(trace,'movie','9017');const result=new Response(null,{status:416,headers:{'content-range':'bytes */100','accept-ranges':'bytes'}});recordInitialMediaResponse(trace,req,result);return result},{logger:value=>events.push(value),onTiming:()=>timingSamples++,fastMediaFailureBudget:{take:()=>true}});
+};
+const eofRange=await rangeTiming(100);assert.equal(eofRange.status,416);assert.equal(timingSamples,0,'exact EOF probes are not playback-start samples');assert.equal(events.at(-1).playback.errorCode,'range_out_of_bounds','the bounded diagnostic remains available');
+const beyondEofRange=await rangeTiming(101);assert.equal(beyondEofRange.status,416);assert.equal(timingSamples,1,'other out-of-bounds ranges remain visible to startup monitoring');
 
 const health = await worker.fetch(new Request('https://example.test/health'),{});
 const healthInfo=await health.json();assert.equal(healthInfo.version,SERVICE_VERSION);assert.ok(healthInfo.capabilities.includes('admin-recovery-renewal'),'public deployment health identifies support without returning any private data');
