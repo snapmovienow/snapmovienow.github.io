@@ -1,6 +1,6 @@
 // Read-only XUI reseller connector. Never logs credentials or modifies provider accounts.
 const BASE="http://ccf.center:8444/NYzkggyG/";
-const PANEL_PAGE_SIZE=1000,PANEL_MAX_PAGES=10;
+const PANEL_PAGE_SIZE=1000,PANEL_MAX_PAGES=10,PANEL_FINAL_LOGIN_RETRY_MS=6000;
 const plain=s=>String(s||'').replace(/<[^>]*>/g,'').trim().replace(/&amp;/g,'&').replace(/&quot;/g,'"').replace(/&#0?39;/g,"'").replace(/&lt;/g,'<').replace(/&gt;/g,'>');
 // Administrator metadata never contains a subscription password.
 export function parseInventory(data,now=Date.now()){
@@ -24,19 +24,30 @@ export function parseLines(data,now=Date.now()){
 export async function panelSession(username,password,base=BASE,options={}){
  base=validateServerUrl(base,true);
  const deadline=Date.now()+(options.timeoutMs||45000),fetcher=options.fetcher||fetch;
- let cookie='';async function request(path,body){let url=new URL(path,base),method=body?'POST':'GET';for(let i=0;i<5;i++){
+ let cookie='';async function request(path,body,requestDeadline=deadline){let url=new URL(path,base),method=body?'POST':'GET';for(let i=0;i<5;i++){
   if(url.origin!==new URL(base).origin||!url.pathname.startsWith(new URL(base).pathname))throw Error('panel_redirect_denied');
-  const remaining=deadline-Date.now();if(remaining<=0)throw new DOMException('Panel request deadline exceeded','TimeoutError');
+  const remaining=Math.min(deadline,requestDeadline)-Date.now();if(remaining<=0)throw new DOMException('Panel request deadline exceeded','TimeoutError');
   const r=await fetcher(url,{method,redirect:'manual',headers:{'User-Agent':'SnapMovieNow/1.0',...(cookie?{Cookie:cookie}:{}),...(body?{'content-type':'application/x-www-form-urlencoded'}:{})},...(body?{body}:{}),signal:AbortSignal.timeout(Math.min(12000,remaining))});
   const sc=r.headers.get('set-cookie');if(sc){const m=sc.match(/(?:^|,\s*)PHPSESSID=([^;]+)/);if(m)cookie='PHPSESSID='+m[1]}
   if([301,302,303,307,308].includes(r.status)){url=new URL(r.headers.get('location'),url);if([301,302,303].includes(r.status)){method='GET';body=undefined}continue}
   if(!r.ok)throw Object.assign(Error('panel_unavailable'),{failureCode:'http_error'});if(options.maxBytes){const reader=r.body?.getReader();if(!reader)return '';const parts=[];let size=0;try{for(;;){const chunk=await reader.read();if(chunk.done)break;size+=chunk.value.byteLength;if(size>options.maxBytes){await reader.cancel();throw Error('panel_response_size');}parts.push(chunk.value);}}finally{reader.releaseLock();}const raw=new Uint8Array(size);let at=0;for(const part of parts){raw.set(part,at);at+=part.byteLength;}return new TextDecoder().decode(raw);}return r.text();}throw Error('panel_redirect_failed');}
- const login=async()=>{await request('login');return request('login',new URLSearchParams({username,password,login:'',referrer:''}).toString())};
+ const login=async loginDeadline=>{
+  await request('login',undefined,loginDeadline);
+  return request('login',new URLSearchParams({username,password,login:'',referrer:''}).toString(),loginDeadline);
+ };
+ const maxAttempts=options.retryLoginTimeout?(options.shortFinalLoginRetry?3:2):1;
  let text;
- try{text=await login()}catch(error){
-  if(!options.retryLoginTimeout||!['TimeoutError','AbortError'].includes(error?.name)||deadline-Date.now()<=12000)throw error;
-  cookie='';
-  text=await login();
+ for(let attempt=1;attempt<=maxAttempts;attempt++){
+  // Share the short final budget across the form, submission and redirects.
+  const loginDeadline=attempt===3?Date.now()+PANEL_FINAL_LOGIN_RETRY_MS:deadline;
+  try{
+   text=await login(loginDeadline);
+   break;
+  }catch(error){
+   const retryable=['TimeoutError','AbortError'].includes(error?.name);
+   if(!retryable||attempt===maxAttempts||deadline-Date.now()<=12000)throw error;
+   cookie='';
+  }
  }
  if(/name=["']password["']/.test(text)||!text.includes('dashboard'))throw Error('panel_invalid');
  return {request,base};
@@ -50,7 +61,8 @@ function inventoryTotal(data){
 }
 
 export async function readPanel(username,password,base=BASE,options={}){
- const {request}=await panelSession(username,password,base,{retryLoginTimeout:options.retryLoginTimeout});
+ const {retryLoginTimeout,shortFinalLoginRetry}=options;
+ const {request}=await panelSession(username,password,base,{retryLoginTimeout,shortFinalLoginRetry});
  options.onProgress?.({receivedRows:null,acceptedRows:null});
  // Provider-side filters can exclude usable idle active lines. Read the full
  // authenticated inventory and validate status and expiry locally. Playback
