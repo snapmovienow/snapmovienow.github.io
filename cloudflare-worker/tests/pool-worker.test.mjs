@@ -4,8 +4,14 @@ import assert from 'node:assert/strict';import worker,{PlaybackSession} from '..
 class Store{constructor(){this.data=new Map();this.queue=Promise.resolve()}async get(k){return structuredClone(this.data.get(k))}async put(k,v){this.data.set(k,structuredClone(v))}async delete(k){this.data.delete(k)}async deleteAll(){this.data.clear()}async setAlarm(){}async list({prefix}){return new Map([...this.data].filter(([k])=>k.startsWith(prefix)).map(([k,v])=>[k,structuredClone(v)]))}transaction(fn){const r=this.queue.then(()=>fn(this));this.queue=r.catch(()=>{});return r}}
 const objects=new Map(),env={TICKET_SECRET:'test-ticket-secret-only',ADMIN_SETUP_SECRET:'setup-test-only-123456789012345678901234567890'};env.PLAYBACK_SESSIONS={idFromName:x=>x,get(id){if(!objects.has(id))objects.set(id,new PlaybackSession({storage:new Store()},env));return {fetch:(url,options)=>objects.get(id).fetch(new Request(url,options))}}};
 const row=id=>['<a>'+id+'</a>','<a>line'+id+'</a>','<span class="table-trunc-copy-cell__text tooltip" title="line-password-test">hidden</span>','owner','<i title="Active"></i>','','','0','3','','','2099-01-01'];
-let inventoryReads=0,inventoryFails=false,inventoryGate=null;
-globalThis.fetch=async(url,opts)=>{const u=new URL(url);if(u.pathname.endsWith('/login'))return new Response(opts.method==='POST'?'<a href="dashboard">Welcome</a>':'<input name="password">',{headers:{'set-cookie':'PHPSESSID='+((opts.body||'').includes('username=second')?'second':'first')+'; path=/'}});if(u.pathname.endsWith('/table')){inventoryReads++;if(inventoryGate)await inventoryGate();return inventoryFails?new Response('Unavailable',{status:503}):Response.json({recordsFiltered:2,data:opts.headers.Cookie?.includes('second')?[row(2),row(3)]:[row(1),row(2)]})}if(u.pathname==='/player_api.php'){assert.ok(['line1','line2','line3'].includes(u.searchParams.get('username')));assert.equal(u.searchParams.get('password'),'line-password-test');const action=u.searchParams.get('action');return Response.json(action==='get_vod_streams'?[{stream_id:123,name:'Movie'}]:action==='get_series'?[{series_id:456,name:'Series'}]:{user_info:{auth:1,status:'Active',max_connections:'3',active_cons:'0'}})}return new Response('sample',{headers:{'content-type':'video/mp4'}})};
+let inventoryReads=0,inventoryFails=false,inventoryGate=null,firstInventoryResponse;
+globalThis.fetch=async(url,opts)=>{const u=new URL(url);if(u.pathname.endsWith('/login'))return new Response(opts.method==='POST'?'<a href="dashboard">Welcome</a>':'<input name="password">',{headers:{'set-cookie':'PHPSESSID='+((opts.body||'').includes('username=second')?'second':'first')+'; path=/'}});if(u.pathname.endsWith('/table')){
+ inventoryReads++;
+ if(inventoryGate)await inventoryGate();
+ if(inventoryFails)return new Response('Unavailable',{status:503});
+ if(opts.headers.Cookie?.includes('second'))return Response.json({recordsFiltered:2,data:[row(2),row(3)]});
+ return Response.json(firstInventoryResponse??{recordsFiltered:2,data:[row(1),row(2)]});
+}if(u.pathname==='/player_api.php'){assert.ok(['line1','line2','line3'].includes(u.searchParams.get('username')));assert.equal(u.searchParams.get('password'),'line-password-test');const action=u.searchParams.get('action');return Response.json(action==='get_vod_streams'?[{stream_id:123,name:'Movie'}]:action==='get_series'?[{series_id:456,name:'Series'}]:{user_info:{auth:1,status:'Active',max_connections:'3',active_cons:'0'}})}return new Response('sample',{headers:{'content-type':'video/mp4'}})};
 const origin='https://snapmovienow-edge.juancanta89.workers.dev';const req=async(b,path='',ctx)=>{const r=await worker.fetch(new Request(origin+path,{method:'POST',body:JSON.stringify(b)}),env,ctx);return {status:r.status,data:await r.json()}};
 await req({action:'setup',setupSecret:env.ADMIN_SETUP_SECRET,username:'owner',password:'owner-password-test'},'/admin');const login=await req({action:'login',username:'owner',password:'owner-password-test'},'/admin');assert.equal(login.status,200);const admin=(action,b={},ctx)=>req({action,access_token:login.data.access_token,...b},'/admin',ctx);assert.equal((await admin('provider-save',{mode:'panel',username:'owner',password:'panel-password-test'})).status,200);
 const sessions=[];for(let i=0;i<7;i++){assert.equal((await admin('save',{create:true,username:'customer'+i,password:'customer-password-test',status:'active'})).status,200);sessions.push((await req({op:'auth',username:'customer'+i,password:'customer-password-test'})).data.access_token)}
@@ -53,10 +59,14 @@ assert.ok(refreshed.syncedAt>goodAt);
 assert.equal(refreshed.attemptedAt,refreshed.syncedAt);
 const forMixedAge=await storage.get('source-pools');
 
-await directory({source:sources[0],retain:true});
-assert.equal((await storage.get('pool')).lines.length,3);
-assert.equal(await (await openLeaseStore(storage)).count(),6,'a transient source outage preserves authorised running streams');
-await directory({source:sources[0],lines:[]});
+firstInventoryResponse={recordsFiltered:0,data:[]};
+assert.equal((await refresh(true)).status,200);
+assert.deepEqual((await readPool()).lines.map(line=>line.id),['1','2','3'],'an ambiguous empty result preserves the prior inventory');
+assert.equal((await storage.get('source-pools'))[sources[0]].syncedAt,forMixedAge[sources[0]].syncedAt,'an ambiguous empty result does not renew source validity');
+assert.equal(await (await openLeaseStore(storage)).count(),6,'an ambiguous empty result preserves authorised running streams');
+firstInventoryResponse={recordsFiltered:'0',recordsTotal:'0',data:[]};
+assert.equal((await refresh(true)).status,200);
+firstInventoryResponse=undefined;
 assert.deepEqual((await storage.get('pool')).lines.map(l=>l.id),['2','3']);
 assert.ok([...(await (await openLeaseStore(storage)).active()).values()].every(l=>l.provider_id!=='1'),'a confirmed inactive source revokes its accounts immediately');
 const retainedPools=await storage.get('source-pools');retainedPools[sources[1]].syncedAt=Date.now()-3600000;await storage.put('source-pools',retainedPools);
