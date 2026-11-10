@@ -206,7 +206,7 @@ export function createProviderCatalog(deps, env, ctx,{timeoutMs=CATALOG_FETCH_MS
       if(!options.fresh&&saved&&list&&ctx?.waitUntil){sample?.cache(cacheSource);ctx.waitUntil(run(true).catch(()=>{}));return saved.data}
       try{return await run()}catch(error){if(saved&&list){sample?.cache(cacheSource);return saved.data}throw error}
       }catch(error){
-        if(!seriesDetail||error instanceof SeriesCatalogError)throw error;
+        if(!seriesDetail||error instanceof SeriesCatalogError||['provider_unavailable','provider_inactive','panel_unavailable'].includes(error?.message))throw error;
         throw new SeriesCatalogError(error?.message==='catalog_timeout'?'series_catalog_timeout':'series_catalog_internal');
       }finally{stopLocal?.();sample?.finish();}
     };
