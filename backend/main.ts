@@ -73,7 +73,19 @@ Deno.serve(async (req) => {
       if (range) upstreamHeaders.set("Range", range);
       const ifRange = req.headers.get("if-range");
       if (ifRange) upstreamHeaders.set("If-Range", ifRange);
-      const upstream = await fetch(target, { headers: upstreamHeaders, redirect: "follow" });
+      req.signal.throwIfAborted();
+      const headerDeadline = new AbortController();
+      const timeout = setTimeout(() => headerDeadline.abort(), 15000);
+      let upstream: Response;
+      try {
+        upstream = await fetch(target, {
+          headers: upstreamHeaders,
+          redirect: "follow",
+          signal: AbortSignal.any([req.signal, headerDeadline.signal]),
+        });
+      } finally {
+        clearTimeout(timeout);
+      }
       const h = new Headers();
       for (const name of ["content-type","content-length","content-range","accept-ranges","etag","last-modified"]) {
         const v = upstream.headers.get(name); if (v) h.set(name,v);
