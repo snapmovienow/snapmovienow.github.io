@@ -212,6 +212,29 @@ assert.equal((await api('get_vod_info',{vod_id:series[0].series_id})).status, 40
 assert.equal((await media('movie',channels[0].stream_id,'mp4')).status, 404);
 assert.equal((await media('series',series[0].series_id,'mkv')).status, 404);
 assert.equal((await api('delete_user')).status, 403);
+assert.deepEqual(profile.smn_watch_progress,{version:1,read:'get_watch_progress',write:'set_watch_progress',unit:'seconds'});
+const nativeProfile=(op,patches)=>post({op,access_token:monitorAuth.data.access_token,patches});
+const watchMovie=movies[0],watchEpisode=episodes[1],checkpointAt=Date.now()-1000;
+const nativeMovie={...watchMovie.smn_profile,kind:'progress',key:`movie:${watchMovie.smn_profile.server}:${watchMovie.smn_profile.id}`,time:1200,duration:4800,updatedAt:checkpointAt};
+assert.equal((await nativeProfile('profile_patch',[nativeMovie])).status,200);
+const otherTv=await (await api('get_watch_progress',{stream_id:watchMovie.stream_id},95)).json();
+assert.deepEqual(otherTv.records,[nativeMovie],'the DNS player reads the native account’s checkpoint');
+const report={stream_id:watchEpisode.id,position_seconds:'1200',duration_seconds:'3000',updated_at:String(checkpointAt)};
+assert.equal((await api('set_watch_progress',report,96)).status,405);
+assert.equal((await api('set_watch_progress',{...report,stream_id:channels[0].stream_id},96,'POST')).status,404);
+assert.equal((await api('set_watch_progress',{...report,position_seconds:'-1'},96,'POST')).status,400);
+assert.equal((await api('set_watch_progress',report,96,'POST')).status,200);
+const nativeEpisode=(await nativeProfile('profile_get')).data.records.find(row=>row.type==='series');
+assert.equal(nativeEpisode.time,1200);
+assert.deepEqual({id:nativeEpisode.id,server:nativeEpisode.server,episodeId:nativeEpisode.episodeId},
+  {id:watchEpisode.smn_profile.id,server:watchEpisode.smn_profile.server,episodeId:watchEpisode.smn_profile.episodeId});
+await api('set_watch_progress',{...report,position_seconds:'600',updated_at:String(checkpointAt-1)},95,'POST');
+assert.equal((await nativeProfile('profile_get')).data.records.find(row=>row.type==='series').time,1200,'a delayed report cannot rewind the active checkpoint');
+const done=await (await api('set_watch_progress',{stream_id:watchEpisode.id,completed:'true'},96,'POST')).json();
+assert.equal(done.records[0].completed,true);
+assert.equal(done.records[0].episodeId,watchEpisode.smn_profile.episodeId);
+const foreignWatch=await post({op:'profile_get',access_token:foreignAuth.data.access_token});
+assert.deepEqual(foreignWatch.data.records,[],'another subscriber cannot read the account profile');
 const epg = await (await api('get_short_epg',{stream_id:channels[1].stream_id})).json();
 assert.equal(atob(epg.epg_listings[0].title), 'Test program 1');
 

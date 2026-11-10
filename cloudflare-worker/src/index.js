@@ -26,7 +26,7 @@ import {requestConnectionClient} from './connection-monitor.mjs';
 import {createResellerPortal,matchesResellerPortal,PORTAL_ACCOUNT} from './reseller-portal.mjs';
 import {createResellerBridge} from './reseller-bridge.mjs';
 import {probeResellerMedia} from './reseller-media-probe.mjs';
-import {profileRoute} from './profiles.mjs';
+import {accountProfile,profileRoute} from './profiles.mjs';
 import {operationsRoute} from './operations.mjs';
 import {MONITOR_CRON,monitorCall} from './monitor.mjs';
 import {probeProviders} from './provider-monitor.mjs';
@@ -554,8 +554,8 @@ if(op==='playback_metric'){
 }
 if(op==='profile_get'||op==='profile_patch'){
  if(!session.managed)return json({error:'managed_profile_required'},403);
- const r=await env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('profile:'+session.uid)).fetch('https://private/profile/'+(op==='profile_get'?'get':'patch'),{method:'POST',body:JSON.stringify({patches:b.patches})});
- const data=await r.json();if(Array.isArray(data.records))data.records=data.records.filter(p=>p.kind==='preference'||p.deleted||permissions[p.type==='live'?'tv':p.type==='movie'?'movies':'series']);
+ const r=await accountProfile(env,session,op==='profile_get'?'get':'patch',b.patches);
+ const data=await r.json();if(Array.isArray(data.records))data.records=data.records.filter(p=>p.kind==='preference'||p.deleted&&!p.type||permissions[p.type==='live'?'tv':p.type==='movie'?'movies':'series']);
  return json(data,r.status);
 }
 
