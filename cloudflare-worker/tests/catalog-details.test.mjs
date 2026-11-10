@@ -13,6 +13,8 @@ globalThis.fetch=async target=>{
   calls++;const url=new URL(target),first=url.searchParams.get('username')==='provider-0';
   assert.equal(url.searchParams.get('series_id'),'220');
   if(mode==='outage')return Response.json({user_info:{auth:0}});
+  if(mode==='invalid-reply')return Response.json({episodes:'unexpected-shape'});
+  if(mode==='timeout')throw new DOMException('synthetic transport timeout','TimeoutError');
   if(first)return Response.json(mode==='empty'?{info:{name:'Test series'},episodes:{}}:mode==='malformed'?{error:'not_found'}:{user_info:{auth:0}});
   return Response.json(series);
 };
@@ -29,8 +31,14 @@ try{
   mode='authentication-error';const background=[],ctx={waitUntil:p=>background.push(p)},detailEnv={TICKET_SECRET:'test-secret',PLAYBACK_SESSIONS:{}};catalog=make(ctx,detailEnv);
   await catalog('get_series_info','test',{series_id:'220'});
   elapsed=31000;mode='outage';catalog=make(ctx,detailEnv); // A new request shares the same scoped cache.
-  await assert.rejects(()=>catalog('get_series_info','test',{series_id:'220'}),/upstream_unavailable/,'expired detail responses must not be served as a twelve-hour background snapshot');
+  await assert.rejects(()=>catalog('get_series_info','test',{series_id:'220'}),{message:'series_catalog_unavailable',status:502},'expired detail responses must not be served as a twelve-hour background snapshot');
   assert.equal(background.length,1,'only the successful fresh detail is saved off the playback path');await Promise.all(background);
+  mode='invalid-reply';
+  await assert.rejects(()=>make()('get_series_info','test',{series_id:'220'}),{message:'series_catalog_invalid_reply',status:502});
+  mode='timeout';
+  await assert.rejects(()=>make()('get_series_info','test',{series_id:'220'}),{message:'series_catalog_timeout',status:504});
+  const internal=createProviderCatalog({...deps,catalogCredentials:async()=>{throw Error('internal fixture details');}},{TICKET_SECRET:'test-secret',PLAYBACK_SESSIONS:{}});
+  await assert.rejects(()=>internal('get_series_info','test',{series_id:'220'}),{message:'series_catalog_internal',status:502});
   mode='empty';globalThis.fetch=async()=>Response.json({info:{name:'Actually empty'},episodes:{}});
   assert.deepEqual(await make()('get_series_info','test',{series_id:'220'}),{info:{name:'Actually empty'},episodes:{}},'a genuinely empty series remains empty');
 }finally{Date.now=now}

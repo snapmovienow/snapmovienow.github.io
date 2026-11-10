@@ -33,11 +33,24 @@ export function publicMetadata(value, credentials) {
 }
 
 const object=value=>value!==null&&typeof value==='object'&&!Array.isArray(value);
+const providerRejectedReply=raw=>raw?.error||raw?.user_info&&String(raw.user_info.auth)!=='1';
 export function validProviderReply(action,raw){
-  if(raw?.user_info&&String(raw.user_info.auth)!=='1'||raw?.error)return false;
+  if(providerRejectedReply(raw))return false;
   if(action==='get_series_info')return object(raw)&&(raw.info===undefined||object(raw.info)||Array.isArray(raw.info)&&raw.info.length===0)&&(object(raw.episodes)||Array.isArray(raw.episodes));
   if(action==='get_vod_info')return object(raw)&&object(raw.movie_data);
   return true;
+}
+
+class SeriesCatalogError extends Error {
+  constructor(code) {
+    super(code);
+    this.status=code==='series_catalog_timeout'?504:502;
+  }
+}
+
+function seriesSourceFailure(error,signal) {
+  if(error?.message==='provider_validation_timeout'||error?.name==='TimeoutError'||signal.reason?.name==='TimeoutError')return 'series_catalog_timeout';
+  return error?.failureCode==='invalid_reply'?'series_catalog_invalid_reply':'series_catalog_unavailable';
 }
 
 export function createProviderCatalog(deps, env, ctx,{timeoutMs=CATALOG_FETCH_MS,hedgeMs=750,cacheReadMs=500,catalogCost}={}) {
@@ -69,6 +82,7 @@ export function createProviderCatalog(deps, env, ctx,{timeoutMs=CATALOG_FETCH_MS
     return {data,savedAt,until:savedAt+(detail?30000:12*3600000)};
   },cacheBudget);
   const catalog=async (action, server, params={}, options={}) => {
+      const seriesDetail=action==='get_series_info';
       const sample=!options.cachedOnly?catalogCost?.begin(action):null,stopLocal=sample?.phase('localCache');
       try{
       const within=async promise=>{let timer;try{return await Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('catalog_timeout')),Math.max(1,deadline-Date.now()))})])}finally{clearTimeout(timer)}};
@@ -77,7 +91,7 @@ export function createProviderCatalog(deps, env, ctx,{timeoutMs=CATALOG_FETCH_MS
       const scope=await scopeForRequest();
       const key = await fingerprint(env.TICKET_SECRET, JSON.stringify([scope,action,server||'',params]));
       const list = ['get_live_categories','get_live_streams','get_vod_categories','get_vod_streams','get_series_categories','get_series'].includes(action);
-      const detail=['get_series_info','get_vod_info'].includes(action),persist=list||detail;
+      const detail=seriesDetail||action==='get_vod_info',persist=list||detail;
       let cache = catalogs.get(env.PLAYBACK_SESSIONS);
       if (!cache) catalogs.set(env.PLAYBACK_SESSIONS,cache={entries:new Map(),pending:new Map(),bytes:0});
       const remember = (data,savedAt) => {
@@ -116,13 +130,14 @@ export function createProviderCatalog(deps, env, ctx,{timeoutMs=CATALOG_FETCH_MS
       if(!options.fresh&&saved&&saved.savedAt>Date.now()-freshFor){sample?.cache(cacheSource);return saved.data;}
       stopLocal?.();sample?.cache('miss');
       const refresh=async(observation)=>{
+        const seriesFailures=seriesDetail?new Set():null;
         let credentials;const stopSetup=observation?.phase('unattributed');
         try{credentials=await within(deps.catalogCredentials(env,server,ctx));}finally{stopSetup?.();}
         if(!credentials.length)throw Error('server_unavailable');
         const groups=new Map();for(const account of credentials){if(!groups.has(account.server))groups.set(account.server,[]);groups.get(account.server).push(account)}
         const references=[];let fresh=0;const replies=await Promise.all([...groups].map(async([id,accounts])=>{
           const candidates=new WeakMap();
-          const safe=await selectCatalogDetail(accounts,async(account,signal)=>{
+          const read=async(account,signal)=>{
               const url=new URL(account.origin+'/player_api.php');
               url.searchParams.set('username',account.username);url.searchParams.set('password',account.password);url.searchParams.set('action',action);
               for(const [name,value]of Object.entries(params))url.searchParams.set(name,String(value));
@@ -131,17 +146,38 @@ export function createProviderCatalog(deps, env, ctx,{timeoutMs=CATALOG_FETCH_MS
               // reply limit. Preserve large catalogs while bounding their
               // whole read by the existing catalog request deadline.
               let raw;const stopProvider=observation?.phase('provider');
-              try{raw=await readProviderJSON(url,{signal:requestSignal,timeoutMs:Math.max(1,Math.min(6000,timeoutMs*.75,deadline-Date.now())),directCcfEntry:env.CCF_ENTRY_TRANSPORT==='tcp',maxBytes:Infinity});}finally{stopProvider?.();}
-              if(list&&!Array.isArray(raw)||!validProviderReply(action,raw))return null;
+              try{
+                raw=await readProviderJSON(url,{signal:requestSignal,timeoutMs:Math.max(1,Math.min(6000,timeoutMs*.75,deadline-Date.now())),directCcfEntry:env.CCF_ENTRY_TRANSPORT==='tcp',maxBytes:Infinity});
+              }catch(error){
+                if(!seriesDetail)throw error;
+                throw new SeriesCatalogError(seriesSourceFailure(error,requestSignal));
+              }finally{stopProvider?.();}
+              if(list&&!Array.isArray(raw)||!validProviderReply(action,raw)){
+                if(seriesDetail){
+                  throw new SeriesCatalogError(providerRejectedReply(raw)?'series_catalog_unavailable':'series_catalog_invalid_reply');
+                }
+                return null;
+              }
               const data=publicMetadata(raw,account),scoped=Array.isArray(data)?data.map(item=>({...item,_server:id})):data;
               if(action==='get_live_streams'&&!Object.keys(params).length&&referenceIds(scoped))candidates.set(scoped,{account,at:Date.now()});
               return {data:scoped,empty:Array.isArray(scoped)?!scoped.length:action==='get_series_info'&&!countSeriesEpisodes(scoped)};
-            },{hedgeMs,timeoutMs:Math.max(0,deadline-Date.now()),maxConcurrent:2});
+          };
+          const safe=await selectCatalogDetail(accounts,(account,signal)=>read(account,signal).catch(error=>{
+            seriesFailures?.add(error instanceof SeriesCatalogError?error.message:'series_catalog_internal');
+            throw error;
+          }),{hedgeMs,timeoutMs:Math.max(0,deadline-Date.now()),maxConcurrent:2});
           if(safe!==null){fresh++;const evidence=candidates.get(safe);if(evidence)references.push({server:id,ids:referenceIds(safe),account:evidence.account,at:evidence.at});return safe}
           const retained=Array.isArray(saved?.data)?saved.data.filter(row=>row._server===id):null;
           return retained?.length?retained:null;
         }));
-        const good=replies.filter(x=>x!==null);if(!good.length||!fresh)throw Error('upstream_unavailable');
+        const good=replies.filter(x=>x!==null);
+        if(!good.length||!fresh){
+          if(!seriesFailures)throw Error('upstream_unavailable');
+          if(seriesFailures.has('series_catalog_internal'))throw new SeriesCatalogError('series_catalog_internal');
+          if(Date.now()>=deadline)throw new SeriesCatalogError('series_catalog_timeout');
+          const [code]=seriesFailures;
+          throw new SeriesCatalogError(seriesFailures.size===1?code:'series_catalog_unavailable');
+        }
         const data=good.every(Array.isArray)?good.flat():good[0];
         if(action==='get_live_streams'&&fresh===groups.size&&references.length===groups.size){
           const record=async()=>{try{const samples=await Promise.all(references.map(async r=>{const origin=await fingerprint(env.TICKET_SECRET,r.account.origin),scope=await fingerprint(env.TICKET_SECRET,JSON.stringify([r.account.origin,r.account.username]));return {server:r.server,ids:r.ids,at:r.at,origin,scope,keyScope:await fingerprint(env.TICKET_SECRET,'catalog-reference-key-v1'),fingerprint:await fingerprint(env.TICKET_SECRET,JSON.stringify([origin,scope,r.ids]))}}));await deps.registry(env,'/catalog-references-put',{samples})}catch{}};
@@ -169,6 +205,9 @@ export function createProviderCatalog(deps, env, ctx,{timeoutMs=CATALOG_FETCH_MS
       // background. Local user permissions were already checked by handleXtream.
       if(!options.fresh&&saved&&list&&ctx?.waitUntil){sample?.cache(cacheSource);ctx.waitUntil(run(true).catch(()=>{}));return saved.data}
       try{return await run()}catch(error){if(saved&&list){sample?.cache(cacheSource);return saved.data}throw error}
+      }catch(error){
+        if(!seriesDetail||error instanceof SeriesCatalogError||['provider_unavailable','provider_inactive','panel_unavailable'].includes(error?.message))throw error;
+        throw new SeriesCatalogError(error?.message==='catalog_timeout'?'series_catalog_timeout':'series_catalog_internal');
       }finally{stopLocal?.();sample?.finish();}
     };
   catalog.inspect=async(kind,server,id)=>{
