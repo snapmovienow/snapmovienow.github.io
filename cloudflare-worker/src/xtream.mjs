@@ -1,6 +1,7 @@
 import {isAdult} from './content-permissions.mjs';
 import {normaliseSeries} from './xtream-series.mjs';
 import {cleanPlaybackActivity,episodeActivity} from './playback-activity.mjs';
+import {watchProgress,watchProgressCapability} from './xtream-progress.mjs';
 // Xtream player compatibility. Provider passwords and playback origins stay private.
 const ACTIONS = {
   get_live_categories: ['tv', 'live_category'], get_live_streams: ['tv', 'live'],
@@ -24,7 +25,7 @@ function playbackURL(base, login, kind, id, ext) {
   return `${base}/${kind}/${encodeURIComponent(login.username)}/${encodeURIComponent(login.password)}/${id}.${ext}`;
 }
 
-function loginInfo(req, auth) {
+function loginInfo(req, auth, profile) {
   const url = new URL(req.url), user = auth.user;
   return {
     user_info: {
@@ -38,7 +39,8 @@ function loginInfo(req, auth) {
       url: url.hostname, port: url.port || '443', https_port: url.port || '443',
       server_protocol: 'https', rtmp_port: '0', timezone: 'UTC',
       timestamp_now: Math.floor(Date.now() / 1000), time_now: new Date().toISOString().slice(0, 19).replace('T', ' ')
-    }
+    },
+    ...(profile?{smn_watch_progress:watchProgressCapability}:{})
   };
 }
 
@@ -124,8 +126,9 @@ export async function handleXtream(req, deps) {
   }
   const username = stream ? decodeURIComponent(stream[2]) : params.get('username');
   const password = stream ? decodeURIComponent(stream[3]) : params.get('password');
+  const action = params.get('action') || '';
   if (!username || !password || username.length > 80 || password.length > 256) return deps.json({user_info: {auth: 0}, error: 'credentials_required'}, 401);
-  const auth = await deps.authenticate(username, password, req);
+  const auth = await deps.authenticate(username, password, req, action);
   if (auth instanceof Response) return auth;
   auth.password = password;
   if (stream) {
@@ -141,8 +144,8 @@ export async function handleXtream(req, deps) {
     return deps.play(req, auth.session, {...record, type: kind, ext: ext.toLowerCase()});
   }
   if (url.pathname !== '/player_api.php') return deps.json({error: 'not_found'}, 404);
-  const action = params.get('action') || '';
-  if (!action) return deps.json(loginInfo(req, auth));
+  if (!action) return deps.json(loginInfo(req, auth, deps.profile));
+  if (deps.profile&&(action===watchProgressCapability.read||action===watchProgressCapability.write))return watchProgress(req,action,params,auth,deps);
   const spec = ACTIONS[action];
   if (!spec) return deps.json({error: 'operation_not_allowed'}, 403);
   if (!auth.user.permissions[spec[0]]) return deps.json(action.endsWith('_info') ? {error: 'content_disabled'} : [] , action.endsWith('_info') ? 403 : 200);

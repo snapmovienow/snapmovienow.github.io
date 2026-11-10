@@ -40,6 +40,12 @@ export function createExclusiveSeriesXtream({read,prepare,media},env,ctx){
  };
  return {
   matches:record=>record?.server===EXCLUSIVE_SERIES_SERVER,
+  async progressReference(record,auth){
+   if(record.kind!=='episode'||record.parentId!==SERIES_UPSTREAM_ID)return null;
+   const row=await current(auth.user.permissions);
+   const choice=row&&choices(row).find(choice=>choice.upstreamId===record.upstreamId);
+   return choice?{type:'series',id:row.id,server:row.profileServer,episodeId:choice.id}:null;
+  },
   async list(input){
    const {action,rows,auth,base,categoryId:selected,register}=input;
    if(!['get_series_categories','get_series'].includes(action))return rows;

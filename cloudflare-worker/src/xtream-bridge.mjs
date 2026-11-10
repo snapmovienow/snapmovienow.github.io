@@ -8,6 +8,7 @@ import {playbackMonitorClient,attachPlaybackQuality} from './native-playback-qua
 import {requestConnectionClient} from './connection-monitor.mjs';
 import {selectLiveFlowDiagnostic,createLiveFlowMonitor,createLiveStartupObserver} from './live-flow-diagnostics.mjs';
 import {handleXtream} from './xtream.mjs';
+import {accountProfile} from './profiles.mjs';
 import {createLiveVariantFallback} from './live-variants.mjs';
 import {LIVE_FAILURE_ATTEMPTS,LIVE_NEXT_LIMIT,nextChannelFailure,cachedNextChannels} from './live-next-channel.mjs';
 import {confirmNextLiveSignal,confirmNextLiveBytes} from './live-next-signal.mjs';
@@ -31,7 +32,7 @@ export function createXtreamBridge(deps) {
     let flowPublicId;
     const privateCall = (path, body) => deps.directory(env, path, body);
     const client = req.headers.get('CF-Connecting-IP') || 'unknown';
-    const authenticate = async (username, password) => timed(trace,'auth',async()=>{
+    const authenticate = async (username, password, request, action) => timed(trace,'auth',async()=>{
       const settings = await (await privateCall('/xtream-config')).json();
       if (!settings.enabled) return deps.json({user_info:{auth:0},error:'xtream_disabled'},403);
       const authKey = await fingerprint(env.TICKET_SECRET, JSON.stringify([username.toLowerCase(),password,client,req.headers.get('user-agent')||'',...(playbackMonitorClient(req)?[playbackMonitorClient(req)]:[])]));
@@ -44,7 +45,7 @@ export function createXtreamBridge(deps) {
       const ensured = await deps.sessionCall(env,sid,'/ensure',{exp,identity});
       if (!ensured.ok) return deps.json({error:'session_unavailable'},503);
       const session = {kind:'session',managed:true,sid,exp:(await ensured.json()).exp,permissions:user.permissions,...identity};
-      const url=new URL(req.url),needsCount=url.pathname==='/player_api.php'&&!url.searchParams.get('action');
+      const url=new URL(req.url),needsCount=url.pathname==='/player_api.php'&&!(action??url.searchParams.get('action'));
       const count = needsCount?await (await privateCall('/xtream-count',{uid:user.id})).json():{connections:0};
       return {user,session,username:user.username,connections:count.connections};
     });
@@ -173,7 +174,8 @@ export function createXtreamBridge(deps) {
       }
       return response;
     };
-    try { const special=deps.exclusives?await deps.exclusives.xtream(req,env,ctx,authenticate):null;return special||await handleXtream(req,{onResolvedMedia:(type,id)=>{setResolvedMedia(trace,type,id);flowPublicId=id;},authenticate,catalog,register,resolve,play,localLive:deps.exclusives?.liveXtream?.(env,ctx),localSeries:deps.exclusives?.seriesXtream?.(env,ctx),adultPolicy:createAdultPolicy(catalog,rawCatalog.inspect),json:deps.json}); }
+    const profile=(session,operation,patches)=>accountProfile(env,session,operation,patches);
+    try { const special=deps.exclusives?await deps.exclusives.xtream(req,env,ctx,authenticate):null;return special||await handleXtream(req,{onResolvedMedia:(type,id)=>{setResolvedMedia(trace,type,id);flowPublicId=id;},authenticate,catalog,register,resolve,play,profile,localLive:deps.exclusives?.liveXtream?.(env,ctx),localSeries:deps.exclusives?.seriesXtream?.(env,ctx),adultPolicy:createAdultPolicy(catalog,rawCatalog.inspect),json:deps.json}); }
     catch(error) { if(req.signal.aborted||['playback_superseded','playback_expired'].includes(error.message))return deps.json({error:'playback_superseded'},410);if(error.status)return deps.json({error:error.message},error.status);return deps.json({error:['media_origin_unapproved','provider_unavailable','provider_inactive','panel_unavailable'].includes(error.message)?error.message:'xtream_unavailable'},502); }
   };
 }

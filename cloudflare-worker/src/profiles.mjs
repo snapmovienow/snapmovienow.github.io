@@ -1,10 +1,12 @@
 const kinds=new Set(['favorite','progress','preference']);
 const safeId=value=>typeof value==='string'&&/^[a-zA-Z0-9_.:-]{1,180}$/.test(value);
 function cleanPatch(p,now){
- if(!p||!kinds.has(p.kind)||!safeId(p.key)||!Number.isSafeInteger(p.updatedAt)||p.updatedAt>now+5*60000)return null;
+ if(!p||!kinds.has(p.kind)||!safeId(p.key)||!Number.isSafeInteger(p.updatedAt)||p.updatedAt<0||p.updatedAt>now+5*60000)return null;
  const result={kind:p.kind,key:p.key,updatedAt:Math.min(p.updatedAt,now)};
+ // Native clients before 1.0.32 also sent the content reference when finishing.
+ const completed=p.kind==='progress'&&p.deleted===true&&(p.completed===true||p.type==='movie'&&safeId(p.id)||p.type==='series'&&safeId(p.episodeId));
  if(p.kind==='preference'&&!['audio','subtitle'].includes(p.key))return null;
- if(p.deleted===true)return {...result,deleted:true};
+ if(p.deleted===true&&!completed)return {...result,deleted:true};
  if(p.kind==='preference'){
   if(!['audio','subtitle'].includes(p.key)||!['off','default'].includes(p.value)&&!/^[a-z]{2,3}$/.test(p.value||''))return null;
   return {...result,value:p.value};
@@ -12,10 +14,18 @@ function cleanPatch(p,now){
  if(!['movie','series','live'].includes(p.type)||!safeId(p.id)||!safeId(p.server||'ccf'))return null;
  Object.assign(result,{type:p.type,id:p.id,server:p.server||'ccf'});
  if(p.kind==='progress'){
+  if(completed){
+   if(p.key!==result.type+':'+result.server+':'+result.id||p.type==='live'||p.type==='series'&&!safeId(p.episodeId))return null;
+   return {...result,deleted:true,completed:true,...(p.type==='series'?{episodeId:p.episodeId}:{})};
+  }
   if(p.type==='live'||!Number.isFinite(p.time)||p.time<0||p.time>172800||!Number.isFinite(p.duration)||p.duration<0||p.duration>172800||p.episodeId&&!safeId(p.episodeId))return null;
   Object.assign(result,{time:Math.floor(p.time),duration:Math.floor(p.duration),...(p.episodeId?{episodeId:p.episodeId}:{})});
  }
  return result;
+}
+export function accountProfile(env,session,operation,patches){
+ const id=env.PLAYBACK_SESSIONS.idFromName('profile:'+session.uid);
+ return env.PLAYBACK_SESSIONS.get(id).fetch('https://private/profile/'+operation,{method:'POST',body:JSON.stringify({patches})});
 }
 export async function profileRoute(store,req){
  const b=await req.json(),now=Date.now();const answer=(d,s=200)=>Response.json(d,{status:s});
