@@ -157,10 +157,13 @@ export function createXtreamBridge(deps) {
       const observeStartup=createLiveStartupObserver(env,{username:session.username,type:item.type,ext:item.ext,method:request.method,requestId:trace?.requestId,publicId:flowPublicId,upstreamId:item.upstreamId});
       if(playbackMonitorClient(request))return playSource(request,session,item,{observeStartup});
       const visited=new Set(),failure={signal:false};
-      let response=await playSource(request,session,item,{startup:new LiveStartup(request.signal,Date.now,LIVE_STARTUP_MS,LIVE_FAILURE_ATTEMPTS),maxAttempts:LIVE_FAILURE_ATTEMPTS,visited,failure,observeStartup});
+      const startup=new LiveStartup(request.signal,Date.now,LIVE_STARTUP_MS,LIVE_FAILURE_ATTEMPTS);
+      let response=await playSource(request,session,item,{startup,maxAttempts:LIVE_FAILURE_ATTEMPTS,visited,failure,observeStartup});
       if(response.ok||!failure.signal||!nextChannelFailure(response.status))return response;
-      const candidates=await cachedNextChannels(rawCatalog,item,session.permissions,visited);
-      const startup=new LiveStartup(request.signal,Date.now,LIVE_STARTUP_MS,LIVE_NEXT_LIMIT);
+      const remaining=startup.remaining();
+      if(!remaining)return response;
+      startup.beginFallback(LIVE_NEXT_LIMIT);
+      const candidates=await cachedNextChannels(rawCatalog,item,session.permissions,visited,remaining);
       for(const candidate of candidates){
         if(!startup.available)break;
         if(request.signal.aborted)throw Error('playback_superseded');

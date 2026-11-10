@@ -10,7 +10,7 @@ class Store{
 }
 const objects=new Map(),env={TICKET_SECRET:'variant-runtime-secret',ADMIN_SETUP_SECRET:'variant-runtime-setup-secret-long'},pending=[];
 env.PLAYBACK_SESSIONS={idFromName:x=>x,get(id){if(!objects.has(id))objects.set(id,new PlaybackSession({storage:new Store()},env));return {fetch:(url,opts)=>objects.get(id).fetch(new Request(url,opts))}}};
-const originalFetch=globalThis.fetch,calls=[];let catalogReads=0,allMissing=false;
+const originalFetch=globalThis.fetch,calls=[];let catalogReads=0,allMissing=false,advanceStartup;
 globalThis.fetch=async(value,opts={})=>{
  const u=new URL(value);assert.equal(u.origin,'http://ccf.center:8444');
  if(u.pathname==='/player_api.php'){
@@ -20,7 +20,7 @@ globalThis.fetch=async(value,opts={})=>{
   throw Error('unexpected catalog');
  }
  const matched=u.pathname.match(/^\/live\/([^/]+)\/([^/]+)\/(\d+)\.(ts|m3u8)$/);
- if(matched){const [,account,,id,ext]=matched;calls.push({account,id,ext});if(id==='60'&&ext==='m3u8'&&!allMissing)return new Response('#EXTM3U\n#EXTINF:4,\n/dead-segment.ts\n',{headers:{'content-type':'application/vnd.apple.mpegurl'}});if(id!=='61'||allMissing)return new Response('missing',{status:404});
+ if(matched){const [,account,,id,ext]=matched;calls.push({account,id,ext});advanceStartup?.(id);if(id==='60'&&ext==='m3u8'&&!allMissing)return new Response('#EXTM3U\n#EXTINF:4,\n/dead-segment.ts\n',{headers:{'content-type':'application/vnd.apple.mpegurl'}});if(id!=='61'||allMissing)return new Response('missing',{status:404});
   if(ext==='m3u8')return new Response('#EXTM3U\n#EXTINF:4,\n/segment.ts\n',{headers:{'content-type':'application/vnd.apple.mpegurl'}});
   return new Response(new ReadableStream({start(c){c.enqueue(new Uint8Array([71,1,2,16,4,5,6,7,8,9,10,11,12,13,14,15]))}}),{headers:{'content-type':'video/mp2t'}});
  }
@@ -51,6 +51,20 @@ try{
   }
  }
  assert.equal(catalogReads,before,'fallback uses existing snapshots without fetching provider catalogs');
+ await objects.get('__smn_accounts_v1').state.storage.delete('provider-health');calls.length=0;
+ const originalNow=Date.now,elapsedByChannel=new Map([['55',4100],['60',4000]]);
+ let elapsed=0;
+ advanceStartup=id=>{elapsed+=elapsedByChannel.get(id)||0;elapsedByChannel.delete(id);};
+ let timedOut;
+ try{
+  Date.now=()=>originalNow()+elapsed;
+  timedOut=await worker.fetch(new Request(origin+'/live/'+customer.username+'/'+customer.password+'/'+chosen.stream_id+'.ts'),env,ctx);
+  await timedOut.body?.cancel();
+ }finally{Date.now=originalNow;advanceStartup=undefined;}
+ assert.ok(calls.some(x=>x.id==='60'),'a quick enough failure leaves time for fallback');
+ assert.ok(!calls.some(x=>x.id==='61'),'fallback may not start another channel after the original deadline');
+ assert.ok(!timedOut.ok);
+ await objects.get('__smn_accounts_v1').state.storage.delete('provider-health');
  allMissing=true;calls.length=0;const failed=await worker.fetch(new Request(origin+'/live/'+customer.username+'/'+customer.password+'/'+chosen.stream_id+'.ts'),env,ctx);
  assert.equal(failed.status,404);assert.ok(calls.length<=13);assert.equal(new Set(calls.map(x=>x.id)).size,calls.length,'no failed channel is revisited');assert.ok(!calls.some(x=>['62','63'].includes(x.id)),'adult and other-category channels are never tried');
 

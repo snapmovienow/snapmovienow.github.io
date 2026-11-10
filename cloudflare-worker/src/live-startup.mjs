@@ -1,7 +1,7 @@
 import {PROVIDER_VALIDATION_MS,VALIDATION_TOTAL_MS} from './provider-validation.mjs';
 import {mediaFailureCause} from './media-failure-cause.mjs';
 import {rangeFailureDetail} from './initial-range-evidence.mjs';
-// One budget is shared by account validation and signal retries for one channel.
+// Account validation and signal retries share a startup deadline.
 export const LIVE_STARTUP_MS=8000;
 export const VOD_STARTUP_MS=12000;
 export class LiveStartup {
@@ -10,6 +10,11 @@ export class LiveStartup {
  timeout(cap){const left=this.remaining();if(!left)throw Error('live_startup_timeout');return Math.min(cap,left);}
  claim(){if(this.attempts>=this.maxAttempts||!this.remaining())return false;this.attempts++;return true;}
  get available(){return this.attempts<this.maxAttempts&&this.remaining()>0;}
+ beginFallback(maxAttempts){
+  this.attempts=0;
+  this.validationMs=0;
+  this.maxAttempts=maxAttempts;
+ }
  validationRemaining(){return Math.max(0,Math.min(VALIDATION_TOTAL_MS-this.validationMs,this.remaining()));}
  validationTimeout(){const left=this.validationRemaining();if(!left)throw Error('provider_validation_timeout');return Math.min(PROVIDER_VALIDATION_MS,left);}
  recordValidation(ms){this.validationMs+=Math.max(0,ms);}

@@ -16,9 +16,11 @@ assert.equal(liveNextChannelCandidates(Array.from({length:30},(_,i)=>row(i+1)),c
 const reads=[];assert.deepEqual(await cachedNextChannels(async(action,server,params,options)=>{reads.push({action,server,params,options});return action==='get_live_streams'?rows:categories},original,{adults:false},new Set()),candidates);
 assert.ok(reads.every(r=>r.options.cachedOnly===true&&r.server==='a'));
 assert.deepEqual(await cachedNextChannels(async()=>{throw Error('unavailable')},original,{}),[]);
+assert.deepEqual(await cachedNextChannels(()=>new Promise(()=>{}),original,{},new Set(),5),[],'a stalled cache lookup gives up at the startup deadline');
 for(const status of [401,403,409,410,416])assert.equal(nextChannelFailure(status),false);
 for(const status of [404,408,429,500,502,504,524])assert.equal(nextChannelFailure(status),true);
 let now=0;const startup=new LiveStartup(undefined,()=>now,8000,5);for(let i=0;i<5;i++)assert.equal(startup.claim(),true);assert.equal(startup.claim(),false);
-const bounded=new LiveStartup(undefined,()=>now,8000,8);now=8000;assert.equal(bounded.available,false,'next-channel search shares one deadline');
+now=5000;startup.beginFallback(8);assert.equal(startup.remaining(),3000);assert.equal(startup.claim(),true);
+now=8000;assert.equal(startup.available,false,'next-channel search shares the initial deadline');
 const controller=new AbortController(),cancelled=new LiveStartup(controller.signal);controller.abort();assert.throws(()=>cancelled.available,/playback_superseded/);
 console.log('PASS: ordered bounded next-channel selection, permissions, cached-only reads, failure classes, five attempts, deadlines and cancellation.');

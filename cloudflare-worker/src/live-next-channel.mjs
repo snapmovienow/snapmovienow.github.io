@@ -1,5 +1,6 @@
 import {markAdultRows} from './content-permissions.mjs';
 import {cleanPlaybackActivity} from './playback-activity.mjs';
+import {LIVE_STARTUP_MS} from './live-startup.mjs';
 
 export const LIVE_FAILURE_ATTEMPTS=5;
 export const LIVE_NEXT_LIMIT=8;
@@ -30,9 +31,13 @@ export function liveNextChannelCandidates(rows,categories,item,permissions={},vi
 
 // A failed signal is required before reading existing snapshots. This never
 // downloads a new catalog and never probes customer media speculatively.
-export async function cachedNextChannels(catalog,item,permissions,visited){
+export async function cachedNextChannels(catalog,item,permissions,visited,timeoutMs=LIVE_STARTUP_MS){
+ if(timeoutMs<=0)return [];
+ let timer;
  try{
-  const [rows,categories]=await Promise.all(['get_live_streams','get_live_categories'].map(action=>catalog(action,item.server||'ccf',{}, {cachedOnly:true})));
+  const snapshots=Promise.all(['get_live_streams','get_live_categories'].map(action=>catalog(action,item.server||'ccf',{}, {cachedOnly:true})));
+  const expired=new Promise(resolve=>{timer=setTimeout(()=>resolve([]),timeoutMs);});
+  const [rows,categories]=await Promise.race([snapshots,expired]);
   return liveNextChannelCandidates(rows,categories,item,permissions,visited);
- }catch{return [];}
+ }catch{return [];}finally{clearTimeout(timer);}
 }
