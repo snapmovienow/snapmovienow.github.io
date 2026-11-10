@@ -40,7 +40,8 @@ export async function catalogCacheRoute(store, path, body) {
   // updates cannot expose a partially written or mixed snapshot.
   return store.transaction(async tx=>{
     const index = await tx.get(indexKey) || {}, generation = crypto.randomUUID();
-    const now=Date.now(),savedAt=body.savedAt===undefined?now:body.savedAt;
+    const now=Date.now(),sourceTimestamp=detail||permissionsOnly||movieCatalog;
+    const savedAt=sourceTimestamp&&body.savedAt!==undefined?body.savedAt:now;
     const ttl=detail?30000:permissionsOnly?CATALOG_LIST_FRESH_MS:TTL;
     if(!Number.isSafeInteger(savedAt)||savedAt>now||savedAt<=now-ttl)return Response.json({error:'invalid_cache_age'},{status:400});
     const relatedKey=permissionsOnly?CATALOG_CACHE_INDEX:movieCatalog?MOVIE_PERMISSION_INDEX:null;
