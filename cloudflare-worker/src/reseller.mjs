@@ -53,9 +53,12 @@ export async function panelSession(username,password,base=BASE,options={}){
  return {request,base};
 }
 function inventoryTotal(data){
- const raw=Object.hasOwn(data??{},'recordsFiltered')?data.recordsFiltered:data?.recordsTotal;
+ const recordsTotal=data?.recordsTotal;
+ const raw=Object.hasOwn(data??{},'recordsFiltered')?data.recordsFiltered:recordsTotal;
  const total=typeof raw==='string'&&/^\d+$/.test(raw)?Number(raw):raw;
- if(!Number.isSafeInteger(total)||total<0||(total===0&&Number(data?.recordsTotal)>0))throw Error('panel_inventory_incomplete');
+ // A filtered zero alone cannot confirm removal of every line.
+ const confirmedEmpty=recordsTotal===0||(typeof recordsTotal==='string'&&/^0+$/.test(recordsTotal));
+ if(!Number.isSafeInteger(total)||total<0||(total===0&&!confirmedEmpty))throw Error('panel_inventory_incomplete');
  if(total>PANEL_PAGE_SIZE*PANEL_MAX_PAGES)throw Error('panel_too_many_lines');
  return total;
 }
