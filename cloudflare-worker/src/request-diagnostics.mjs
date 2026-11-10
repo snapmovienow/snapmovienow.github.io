@@ -16,6 +16,7 @@ function routeGroup(path) {
 // contain credentials and must never be included in diagnostics.
 export async function traceRequest(req, handler, {logger = console.error, now = Date.now, allowedOrigin, onTiming, fastMediaFailureBudget} = {}) {
   const started = now(), requestId = crypto.randomUUID(),trace=new PlaybackTimings(now);
+  trace.requestId=requestId;
   setGatewayReference(req,requestId);let response;
   try { response = await handler(trace); }
   catch { response = Response.json({error: 'service_unavailable'}, {status: 502,

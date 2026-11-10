@@ -42,6 +42,37 @@ export function validateLiveFlowDiagnostic(env,value,now=Date.now()){
   return active&&clean&&timestamp(now)&&now>=active.from&&now<active.until&&clean.case_id===active.case_id&&clean.from===active.from&&clean.until===active.until?clean:null;
  }catch{return null}
 }
+const STARTUP_PHASES=new Set(['allocation','preparation','relay','confirmation']);
+const RECOVERY_TYPES=new Set(['original','same_channel_retry','alternate_variant','next_channel']);
+const MAX_STARTUP_ATTEMPTS=16;
+
+// This reports selection and startup at the Worker. A relay response does not
+// establish that a player rendered the selected signal.
+export function createLiveStartupObserver(env,input,{now=Date.now,logger=console.log}={}){
+ if(env?.LIVE_FLOW_DIAGNOSTIC_USERNAME!==input?.username)return null;
+ const scope=selectLiveFlowDiagnostic(env,input,now());
+ const requestedId=publicId(input?.upstreamId);
+ if(!scope?.public_id||requestedId===null)return null;
+
+ let sequence=0;
+ return (selectedId,recovery)=>{
+  const start=now(),selected=publicId(selectedId);
+  if(sequence>=MAX_STARTUP_ATTEMPTS||!timestamp(start)||start<scope.from||start>=scope.until||selected===null||!RECOVERY_TYPES.has(recovery))return null;
+  const attempt=++sequence;
+  let finished=false;
+  return (phase,status)=>{
+   if(finished)return;
+   finished=true;
+   const end=now();
+   if(!timestamp(end)||end<start||end>=scope.until||!STARTUP_PHASES.has(phase)||!Number.isInteger(status)||status<200||status>599)return;
+   try{
+    logger({event:'live_flow_attempt',scope:'server_startup',case_id:scope.case_id,request_id:scope.flow_id,public_id:scope.public_id,
+     attempt,requested_origin_id:requestedId,selected_origin_id:selected,recovery,phase,status,elapsed_ms:Math.min(end-start,300000)});
+   }catch{} // Observation cannot change the media response.
+  };
+ };
+}
+
 export function createLiveFlowMonitor(value,options={}){
  try{
   const clean=metadata(value);if(!clean||!plain(options))return NOOP;

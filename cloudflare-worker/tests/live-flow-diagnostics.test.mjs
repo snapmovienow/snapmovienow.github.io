@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {selectLiveFlowDiagnostic,validateLiveFlowDiagnostic,createLiveFlowMonitor} from '../src/live-flow-diagnostics.mjs';
+import {selectLiveFlowDiagnostic,validateLiveFlowDiagnostic,createLiveFlowMonitor,createLiveStartupObserver} from '../src/live-flow-diagnostics.mjs';
 
 const FROM=1793815200000,CASE='0e586236-3472-4b43-a838-14e95dd39841',FLOW='c6f76c64-1391-48d7-aaf2-1729894256fd';
 const env={LIVE_FLOW_DIAGNOSTIC_USERNAME:'fixtureviewer',LIVE_FLOW_DIAGNOSTIC_CASE:CASE,LIVE_FLOW_DIAGNOSTIC_FROM:String(FROM),LIVE_FLOW_DIAGNOSTIC_UNTIL:String(FROM+86400000)};
@@ -28,6 +28,46 @@ test('each attempt has its own validated flow and bounded attempt number',()=>{
  const second=selectLiveFlowDiagnostic(env,{...input,requestId:other,attempt:2},FROM);
  assert.equal(second.flow_id,other);assert.equal(second.attempt,2);assert.notEqual(second.flow_id,select().flow_id);
  assert.equal(validateLiveFlowDiagnostic(env,second,FROM).attempt,2);
+});
+
+test('startup attempts share a request and retain the original source across recovery',()=>{
+ const scope={...input,upstreamId:'52'};
+ let time=FROM;
+ const records=[],options={now:()=>time,logger:row=>records.push(row)};
+ for(const change of [{username:'unrelated'},{method:'HEAD'},{ext:'m3u8'},{requestId:'untrusted-id'},{publicId:'private-url'},{upstreamId:'private-url'}]){
+  assert.equal(createLiveStartupObserver(env,{...scope,...change},options),null);
+ }
+ const begin=createLiveStartupObserver(env,scope,options);
+ assert.equal(begin('private-url','original'),null);
+ assert.equal(begin('52','private-recovery'),null);
+ const original=begin('52','original');
+ time+=420;
+ original('relay',404);
+ original('relay',200);
+ const replacement=begin('68','alternate_variant');
+ time+=170;
+ replacement('relay',200);
+ const next=begin('91','next_channel');
+ time+=80;
+ next('confirmation',502);
+ const common={event:'live_flow_attempt',scope:'server_startup',case_id:CASE,request_id:FLOW,public_id:'1234',requested_origin_id:'52'};
+ assert.deepEqual(records,[
+  {...common,attempt:1,selected_origin_id:'52',recovery:'original',phase:'relay',status:404,elapsed_ms:420},
+  {...common,attempt:2,selected_origin_id:'68',recovery:'alternate_variant',phase:'relay',status:200,elapsed_ms:170},
+  {...common,attempt:3,selected_origin_id:'91',recovery:'next_channel',phase:'confirmation',status:502,elapsed_ms:80}
+ ]);
+ const unfinished=begin('52','same_channel_retry');
+ time=FROM+86400000;
+ unfinished('allocation',409);
+ assert.equal(begin('52','same_channel_retry'),null);
+ assert.equal(createLiveStartupObserver(env,scope,options),null);
+ assert.equal(records.length,3);
+});
+
+test('startup observation is bounded and a logger failure cannot break a request',()=>{
+ const begin=createLiveStartupObserver(env,{...input,upstreamId:'52'},{now:()=>FROM,logger:()=>{throw Error('fixture log failure')}});
+ for(let i=0;i<16;i++)assert.doesNotThrow(()=>begin('52','same_channel_retry')('allocation',409));
+ assert.equal(begin('52','same_channel_retry'),null);
 });
 
 test('records expose only aggregate relay counters, explicit scope and safe origin reason',()=>{
