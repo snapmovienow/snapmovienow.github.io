@@ -115,6 +115,7 @@ await directory.put('providers',[{...savedProviders[0],encrypted:'unreadable-con
 await directory.put('providers',savedProviders);
 for(const incomplete of [
  {recordsFiltered:1,data:[]},
+ {recordsFiltered:0,data:[]},
  {recordsFiltered:0,recordsTotal:1,data:[]},
  {data:[]},
  {recordsFiltered:2,data:[row(2,'Disabled'),['invalid']]},
@@ -127,7 +128,7 @@ table=start=>start===0?{recordsFiltered:2,data:[row(2,'Disabled')]}:{recordsFilt
 await assertRetained(); // The inventory changed between pages.
 table=start=>start===0?{recordsFiltered:2,data:[row(1,'active')]}:{recordsFiltered:2,data:[row(2,'Disabled')]};
 const verified=await admin('provider-dashboard',{refresh:true});assert.equal(verified.data.stale,false);assert.equal(verified.data.accounts.length,2);assert.equal(verified.data.summary.activeAccounts,1);assert.ok(await leases.get('inventory-test-lease'));
-table=()=>({recordsFiltered:0,data:[]});
+table=()=>({recordsFiltered:0,recordsTotal:0,data:[]});
 const empty=await admin('provider-dashboard',{refresh:true});assert.equal(empty.data.summary.activeAccounts,0);assert.equal(empty.data.accounts.length,0);assert.equal(await leases.count(),0,'a complete empty inventory revokes existing reservations');
 await admin('logout');assert.equal((await admin('provider-dashboard')).status,401);
 // A panel with no playable accounts still returns all account metadata.
