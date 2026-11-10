@@ -45,10 +45,18 @@ try{
  const catalog=await request('/player_api.php?'+new URLSearchParams({username:'fixture-target',password:'fixture-viewer-password',action:'get_live_streams'}));
  assert.equal(catalog.status,200);const id=(await catalog.json())[0].stream_id;
  const media=(username='fixture-target',ext='ts',options={},password='fixture-viewer-password')=>request('/live/'+username+'/'+password+'/'+id+'.'+ext,options);
- let response=await media();assert.equal(response.status,200);assert.deepEqual([...new Uint8Array(await response.arrayBuffer())],[0x47,1,2,3]);
+ const nativeHeaders={'X-SNAP-Playback-Monitor':'612da663-28a7-42e5-88bf-2d36ec310599'};
+ let response=await media('fixture-target','ts',{headers:nativeHeaders});assert.equal(response.status,200);assert.deepEqual([...new Uint8Array(await response.arrayBuffer())],[0x47,1,2,3]);
  let starts=records.filter(r=>r.event==='live_flow_start'),ends=records.filter(r=>r.event==='live_flow_end');
  assert.equal(starts.length,1);assert.equal(ends.length,1);assert.equal(ends[0].flow_id,starts[0].flow_id);assert.equal(ends[0].reason,'relay_complete');assert.equal(ends[0].relay_bytes,4);assert.equal(ends[0].status,200);assert.equal(ends[0].public_id,String(id));
  assert.equal(ends[0].origin_observed,false,'hostname fetch without TCP measurements must not claim origin observation');
+ const attempts=records.filter(r=>r.event==='live_flow_attempt');
+ assert.equal(attempts.length,1);
+ const {request_id,public_id,requested_origin_id,selected_origin_id,recovery,phase,status,attempt,elapsed_ms}=attempts[0];
+ assert.equal(request_id,response.headers.get('X-SMN-Request-ID'));
+ assert.deepEqual({public_id,requested_origin_id,selected_origin_id,recovery,phase,status,attempt},
+  {public_id:String(id),requested_origin_id:'100',selected_origin_id:'100',recovery:'original',phase:'relay',status:200,attempt:1});
+ assert.ok(Number.isInteger(elapsed_ms)&&elapsed_ms>=0);
  const beforeRange=records.length;response=await media('fixture-target','ts',{headers:{Range:'bytes=0-3','If-Range':'fixture-validator'}});assert.equal(response.status,206);assert.equal(response.headers.get('content-range'),'bytes 0-3/100');await response.arrayBuffer();assert.equal(requests.at(-1).range,'bytes=0-3');assert.equal(records.slice(beforeRange).filter(r=>r.event==='live_flow_end').length,1);
  const quiet=async run=>{const count=records.length;const r=await run();await r.arrayBuffer();assert.equal(records.length,count,'unselected requests cannot enable observation');return r};
  await quiet(()=>media('fixture-other','ts',{headers:{'X-Live-Flow-Diagnostic':'enabled','X-SMN-Request-ID':'forged-case','CF-Connecting-IP':'198.51.100.20'}}));

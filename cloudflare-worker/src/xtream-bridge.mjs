@@ -6,7 +6,7 @@ import {initialRangeEvidence,initialRangeOutOfBounds} from './initial-range-evid
 import {timed} from './playback-timings.mjs';
 import {playbackMonitorClient,attachPlaybackQuality} from './native-playback-quality.mjs';
 import {requestConnectionClient} from './connection-monitor.mjs';
-import {selectLiveFlowDiagnostic,createLiveFlowMonitor} from './live-flow-diagnostics.mjs';
+import {selectLiveFlowDiagnostic,createLiveFlowMonitor,createLiveStartupObserver} from './live-flow-diagnostics.mjs';
 import {handleXtream} from './xtream.mjs';
 import {createLiveVariantFallback} from './live-variants.mjs';
 import {LIVE_FAILURE_ATTEMPTS,LIVE_NEXT_LIMIT,nextChannelFailure,cachedNextChannels} from './live-next-channel.mjs';
@@ -19,6 +19,12 @@ export {publicMetadata} from './provider-catalog.mjs';
 // CCF can return gateway-specific 52x errors as well as ordinary 5xx. They
 // belong to the selected source, not to the subscriber or their bookmark.
 const retryableSourceStatus=status=>[401,403,404,408,429].includes(status)||status>=500&&status<=599;
+
+function startupRecovery(item,original,attempt,nextChannel){
+  if(nextChannel)return 'next_channel';
+  if(item!==original)return 'alternate_variant';
+  return attempt>0?'same_channel_retry':'original';
+}
 
 export function createXtreamBridge(deps) {
   return async function xtreamRequest(req, env, ctx,trace) {
@@ -71,10 +77,14 @@ export function createXtreamBridge(deps) {
       const startup=options.startup||playbackStartup(item.type,request.signal);startup.trace=trace;
       const excluded=[];let lastFailure=null,lastServiceError=null;
       for(let attempt=0;attempt<maxAttempts&&(attempt===0||!startup||startup.available);attempt++){
+      const finishAttempt=options.observeStartup?.(item.upstreamId,startupRecovery(item,originalItem,attempt,options.confirmSignal));
+      let startupPhase='allocation';
+      try{
       resetMediaPhase(trace);
       const mediaSession={...session,request_id,...(range_id?{native_range_id:range_id}:{}),client:requestConnectionClient(request),mediaKey:item.type+'|'+item.server+'|'+item.upstreamId+'|'+item.ext,...(activity?{activity}:{})};
       const allocation=await deps.managedPlayback(env,mediaSession,item.server,ctx,excluded,startup);
-      if(!allocation.r.ok){failedBeforeRelay('startup_failed',allocation.r.status,attempt+1);if(lastFailure&&allocation.r.status===409)return deps.json({error:lastServiceError||'upstream_unavailable'},lastFailure);return deps.json(await allocation.r.json(),allocation.r.status)}
+      if(!allocation.r.ok){finishAttempt?.(startupPhase,allocation.r.status);failedBeforeRelay('startup_failed',allocation.r.status,attempt+1);if(lastFailure&&allocation.r.status===409)return deps.json({error:lastServiceError||'upstream_unavailable'},lastFailure);return deps.json(await allocation.r.json(),allocation.r.status)}
+      startupPhase='preparation';
       const {lease_id}=await allocation.r.json(),credentials=allocation.credentials;allocation.lease_id=lease_id;const signalAt=Date.now();
       const monitored=response=>attachPlaybackQuality(response,request,session,{lease_id,request_id},value=>deps.ticket(env,value));
       const liveFlow=selectFlow(attempt+1);
@@ -83,12 +93,15 @@ export function createXtreamBridge(deps) {
       try{
         const prepared=startup?startup.prepare(request):new Request(request);
         options.visited?.add(String(item.upstreamId));
+        startupPhase='relay';
         let response=await deps.serverStream(prepared,env,target,ctx,trace);
         if(options.confirmSignal&&response.ok){
+          startupPhase='confirmation';
           try{if(item.ext==='m3u8')await confirmNextLiveSignal(response,{request,origin:target.origin,deadline:startup.deadline,open:(probe,url)=>deps.serverStream(probe,env,url,ctx,trace)});else await confirmNextLiveBytes(response,startup.deadline);}
           catch(error){await response.body?.cancel();if(request.signal.aborted)throw Error('playback_superseded');response=new Response(null,{status:error.status>=400&&error.status<=599?error.status:502});}
         }
         recordInitialMediaResponse(trace,request,response);
+        finishAttempt?.(startupPhase,response.status);
         if(!response.ok){
           lastFailure=response.status;if(options.failure&&nextChannelFailure(response.status))options.failure.signal=true;
           const cause=responseMediaFailure(response);lastServiceError=cause.serviceError||null;
@@ -125,16 +138,25 @@ export function createXtreamBridge(deps) {
         }
         if(range_id&&!response.body)await privateCall('/release',{sid:session.sid,lease_id,request_id,native_range_id:range_id});
         return monitored(response);
-      }catch(error){lastFailure=502;lastServiceError=null;const cancelled=request.signal.aborted||['playback_superseded','playback_expired'].includes(error.message);if(startup&&!cancelled&&error.message!=='media_origin_unapproved')await reportLiveResult(deps.directory,env,mediaSession,allocation,false,Date.now()-signalAt);await privateCall('/release',{sid:session.sid,lease_id,request_id,...(range_id?{native_range_id:range_id}:{}),reason:'upstream_failed'});if(cancelled)throw Error('playback_superseded');if(options.failure&&!cancelled&&error.message!=='media_origin_unapproved')options.failure.signal=true;if(error.message!=='media_origin_unapproved'&&allocation.provider_id&&attempt<maxAttempts-1){excluded.push(allocation.provider_id);continue}if(options.failure?.signal&&error.message!=='media_origin_unapproved')return deps.json({error:'upstream_unavailable'},502);throw error}
+      }catch(error){lastFailure=502;lastServiceError=null;const cancelled=request.signal.aborted||['playback_superseded','playback_expired'].includes(error.message);finishAttempt?.(startupPhase,cancelled?410:502);if(startup&&!cancelled&&error.message!=='media_origin_unapproved')await reportLiveResult(deps.directory,env,mediaSession,allocation,false,Date.now()-signalAt);await privateCall('/release',{sid:session.sid,lease_id,request_id,...(range_id?{native_range_id:range_id}:{}),reason:'upstream_failed'});if(cancelled)throw Error('playback_superseded');if(options.failure&&!cancelled&&error.message!=='media_origin_unapproved')options.failure.signal=true;if(error.message!=='media_origin_unapproved'&&allocation.provider_id&&attempt<maxAttempts-1){excluded.push(allocation.provider_id);continue}if(options.failure?.signal&&error.message!=='media_origin_unapproved')return deps.json({error:'upstream_unavailable'},502);throw error}
+      }catch(error){
+        if(finishAttempt){
+          const cancelled=request.signal.aborted||['playback_superseded','playback_expired'].includes(error?.message);
+          finishAttempt(startupPhase,cancelled?410:(error?.status||502));
+        }
+        throw error;
+      }
       }
       return deps.json({error:lastServiceError||'live_signal_unavailable'},lastFailure||504);
     };
     const play=async(request,session,item)=>{
       // Our Android client controls its own visible 5/5 and countdown. For
       // other Xtream clients, recover inside the relay; their UI is not ours.
-      if(item.type!=='live'||request.method!=='GET'||playbackMonitorClient(request))return playSource(request,session,item);
+      if(item.type!=='live'||request.method!=='GET')return playSource(request,session,item);
+      const observeStartup=createLiveStartupObserver(env,{username:session.username,type:item.type,ext:item.ext,method:request.method,requestId:trace?.requestId,publicId:flowPublicId,upstreamId:item.upstreamId});
+      if(playbackMonitorClient(request))return playSource(request,session,item,{observeStartup});
       const visited=new Set(),failure={signal:false};
-      let response=await playSource(request,session,item,{startup:new LiveStartup(request.signal,Date.now,LIVE_STARTUP_MS,LIVE_FAILURE_ATTEMPTS),maxAttempts:LIVE_FAILURE_ATTEMPTS,visited,failure});
+      let response=await playSource(request,session,item,{startup:new LiveStartup(request.signal,Date.now,LIVE_STARTUP_MS,LIVE_FAILURE_ATTEMPTS),maxAttempts:LIVE_FAILURE_ATTEMPTS,visited,failure,observeStartup});
       if(response.ok||!failure.signal||!nextChannelFailure(response.status))return response;
       const candidates=await cachedNextChannels(rawCatalog,item,session.permissions,visited);
       const startup=new LiveStartup(request.signal,Date.now,LIVE_STARTUP_MS,LIVE_NEXT_LIMIT);
@@ -142,7 +164,7 @@ export function createXtreamBridge(deps) {
         if(!startup.available)break;
         if(request.signal.aborted)throw Error('playback_superseded');
         await response.body?.cancel();
-        response=await playSource(request,session,candidate,{startup,maxAttempts:1,noVariants:true,visited,confirmSignal:true});
+        response=await playSource(request,session,candidate,{startup,maxAttempts:1,noVariants:true,visited,confirmSignal:true,observeStartup});
         if(response.ok){
           const headers=new Headers(response.headers);headers.set('X-SMN-Live-Fallback','next-channel');
           return new Response(response.body,{status:response.status,statusText:response.statusText,headers});
