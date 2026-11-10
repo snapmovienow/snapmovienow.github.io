@@ -34,6 +34,7 @@ const providerOrigins = ['http://ccf.center:8444', 'https://beta.example.test'];
 const providerCalls = [], cancellations = [];
 let failProvider = false, failMedia = false, failMediaStatus = 503, failValidation = false, renewEpisode = false, signedEpisodes = 0, offset = 0, invalidLive=false;
 let rangeErrorHeaders=null,rangeErrorCancellations=0,endLiveSource=false;
+let invalidSeriesDetail=false;
 const now = Date.now; Date.now = () => now() + offset;
 globalThis.fetch = async (url, opts = {}) => {
   const u = new URL(url), provider = providerOrigins.indexOf(u.origin);
@@ -60,6 +61,7 @@ globalThis.fetch = async (url, opts = {}) => {
     }
     if (action === 'get_series_info') {
       assert.equal(u.searchParams.get('series_id'), '22');
+      if(invalidSeriesDetail)return new Response('synthetic provider body must stay private');
       const episode={id:'88',season:1,episode_num:1,title:'Episode one',container_extension:'mkv',direct_source:leaked,info:{movie_image:image}};
       return Response.json({info:{name:'Series '+provider, category_id:'7'}, seasons:provider===0?[]:[{season_number:1}], episodes:provider===0?[episode]:{'1':[episode]}});
     }
@@ -208,6 +210,13 @@ for (let i=0;i<2;i++) {
   assert.equal(new URL(episode.direct_source).origin, origin); noProviderSecrets(details);
 }
 assert.notEqual(episodes[0].id, episodes[1].id);
+offset+=31000;invalidSeriesDetail=true;
+try{
+ const failedDetail=await api('get_series_info',{series_id:series[0].series_id});
+ assert.equal(failedDetail.status,502);
+ assert.equal(failedDetail.headers.get('X-SMN-Error-Code'),'series_catalog_invalid_reply');
+ assert.deepEqual(await failedDetail.json(),{error:'series_catalog_invalid_reply'});
+}finally{invalidSeriesDetail=false;offset-=31000;}
 assert.equal((await api('get_vod_info',{vod_id:series[0].series_id})).status, 404);
 assert.equal((await media('movie',channels[0].stream_id,'mp4')).status, 404);
 assert.equal((await media('series',series[0].series_id,'mkv')).status, 404);
