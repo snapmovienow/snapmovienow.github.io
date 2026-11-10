@@ -1,5 +1,6 @@
 import {referenceIds} from './catalog-references.mjs';
-import {encodeCatalog,decodeCatalog} from './catalog-cache.mjs';
+import {CATALOG_LIST_FRESH_MS,CATALOG_SNAPSHOT_MAX_BYTES,encodeCatalog,decodeCatalog} from './catalog-cache.mjs';
+import {moviePermissionRows} from './content-permissions.mjs';
 import {countSeriesEpisodes} from './xtream-series.mjs';
 import {selectCatalogDetail} from './catalog-detail-race.mjs';
 import {readProviderJSON} from './provider-request.mjs';
@@ -108,7 +109,7 @@ export function createProviderCatalog(deps, env, ctx,{timeoutMs=CATALOG_FETCH_MS
       if(!saved&&persist&&!options.memoryOnly){
         try{acceptSnapshot(await readSaved(key,detail),'durable')}catch{acceptSnapshot(null,'memory')}
       }
-      const freshFor=list?300000:30000;
+      const freshFor=list?CATALOG_LIST_FRESH_MS:30000;
       if(detail&&saved&&saved.savedAt<=Date.now()-freshFor)saved=null;
       // Activity labels must not trigger provider traffic or delay a stream.
       if(options.cachedOnly)return options.withMetadata?(saved?{data:saved.data,savedAt:saved.savedAt}:null):saved?.data||null;
@@ -147,7 +148,20 @@ export function createProviderCatalog(deps, env, ctx,{timeoutMs=CATALOG_FETCH_MS
           if(ctx?.waitUntil)ctx.waitUntil(record());
         }
         const savedAt=fresh===groups.size?Date.now():saved?.savedAt||Date.now();remember(data,savedAt);
-        if(persist&&fresh===groups.size){const save=async()=>{try{const bytes=await encodeCatalog(data);let content='';for(let i=0;i<bytes.length;i+=24000)content+=String.fromCharCode(...bytes.slice(i,i+24000));await deps.registry(env,'/xtream-cache-put',{key,content:btoa(content),...(detail?{kind:'detail',savedAt}:{})})}catch{}};if(ctx?.waitUntil)ctx.waitUntil(save());else await within(save()).catch(()=>{})}
+        if(persist&&fresh===groups.size){
+          const save=async()=>{try{
+            const movieRows=action==='get_vod_streams'&&!Object.keys(params).length;
+            let bytes=await encodeCatalog(data),kind=detail?'detail':movieRows?'movie_catalog':null;
+            if(movieRows&&bytes.length>CATALOG_SNAPSHOT_MAX_BYTES){
+              bytes=await encodeCatalog(moviePermissionRows(data));kind='movie_permissions';
+              if(bytes.length>CATALOG_SNAPSHOT_MAX_BYTES)return;
+            }
+            let content='';
+            for(let i=0;i<bytes.length;i+=24000)content+=String.fromCharCode(...bytes.slice(i,i+24000));
+            await deps.registry(env,'/xtream-cache-put',{key,content:btoa(content),...(kind?{kind}:{}),...(detail||movieRows?{savedAt}:{})});
+          }catch{}};
+          if(ctx?.waitUntil)ctx.waitUntil(save());else await within(save()).catch(()=>{});
+        }
         return data;
       };
       const run=async(background=false)=>{start();if(deadline<=Date.now())throw Error('catalog_timeout');if(!cache.pending.has(key)){const work=refresh(background?null:sample).finally(()=>cache.pending.delete(key));cache.pending.set(key,work);return work}const stopShared=!background?sample?.phase('unattributed'):null;try{return await within(cache.pending.get(key))}finally{stopShared?.()}};
@@ -163,7 +177,7 @@ export function createProviderCatalog(deps, env, ctx,{timeoutMs=CATALOG_FETCH_MS
     const scope=await scopeForRequest();
     const keys=action=>Promise.all([String(server||'ccf'),''].map(s=>fingerprint(env.TICKET_SECRET,JSON.stringify([scope,action,s,{}]))));
     const [rowKeys,categoryKeys]=await Promise.all([keys(spec[0]),keys(spec[1])]);
-    try{return await readResponse(()=>deps.registry(env,'/xtream-cache-inspect',{rowKeys,categoryKeys,idField:spec[2],server:String(server||'ccf'),id:String(id)}),async response=>{if(!response.ok)return undefined;const decision=await response.json();return decision.found?{_adult:decision.adult===true}:null},cacheBudget)}catch{return undefined}
+    try{return await readResponse(()=>deps.registry(env,'/xtream-cache-inspect',{rowKeys,categoryKeys,idField:spec[2],server:String(server||'ccf'),id:String(id),...(kind==='movie'?{moviePermissions:true}:{})}),async response=>{if(!response.ok)return undefined;const decision=await response.json();return decision.found?{_adult:decision.adult===true}:null},cacheBudget)}catch{return undefined}
   };
   return catalog;
 }

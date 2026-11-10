@@ -35,9 +35,21 @@ function findRow(rows,idField,server,id){
 
 // Category IDs are scoped to a provider. An innocuous title inside an adult
 // category inherits the restriction, including nested categories.
-export function markAdultRows(rows, categories = []) {
+export function adultRowClassifier(categories) {
   const adult = adultCategories(categories);
-  return rows.map(row => ({...row, _adult:isAdult(row) || idsFor(row).some(id => adult.has(rowKey(row._server, id)))}));
+  return row => isAdult(row) || idsFor(row).some(id => adult.has(rowKey(row._server, id)));
+}
+
+export function markAdultRows(rows, categories = []) {
+  const restricted = adultRowClassifier(categories);
+  return rows.map(row => ({...row, _adult:restricted(row)}));
+}
+
+export function moviePermissionRows(rows) {
+  return rows.map(row => ({
+    stream_id:String(row.stream_id), _server:String(row._server || 'ccf'),
+    _adult:isAdult(row), category_ids:idsFor(row)
+  }));
 }
 
 export function createAdultPolicy(catalog,inspectSnapshot=catalog.inspect) {

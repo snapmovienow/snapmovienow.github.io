@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {randomBytes} from 'node:crypto';
 import {createProviderCatalog} from '../src/provider-catalog.mjs';
 import {catalogCacheRoute,encodeCatalog} from '../src/catalog-cache.mjs';
 import {inspectCatalog} from '../src/catalog-permissions.mjs';
@@ -101,6 +102,62 @@ async function permissionSequence(){
  console.log('PASS: categories-only durable fixture yields exactly 1 durable + 2 expected misses; the next equivalent request adds no provider traffic.');
 }
 
+async function oversizedMoviePermissions(){
+ const store=new Store(),pending=[],ctx={waitUntil:p=>pending.push(p)};
+ const flush=async()=>{while(pending.length)await Promise.all(pending.splice(0));};
+ const older=[{stream_id:101,category_id:1,name:'General'}];
+ const categories=[{category_id:1,category_name:'General'},{category_id:2,category_name:'Adults'},{category_id:3,parent_id:2,category_name:'Restricted child'}];
+ const large=[
+  {stream_id:101,category_ids:[1,3],name:'Neutral title',plot:randomBytes(2*1024*1024+65536).toString('base64')},
+  {stream_id:102,category_id:1,genre:'Adults'},
+  {stream_id:103,category_id:1,name:'General'}
+ ];
+ assert.ok((await encodeCatalog(large)).length>2*1024*1024,'fixture must exceed the durable snapshot limit');
+ let rows=older,config='v1',fetches=0;
+ const permissionWrites=[];
+ const deps={
+  directory:async()=>Response.json([{source:'ccf',encrypted:config}]),
+  registry:async(e,path,b)=>{
+   if(path==='/xtream-cache-inspect')return inspectCatalog(store,b);
+   if(b.kind==='movie_permissions')permissionWrites.push(b);
+   return catalogCacheRoute(store,path,b);
+  },
+  catalogCredentials:async(e,server)=>[credential(server)]
+ };
+ globalThis.fetch=async input=>{
+  const url=new URL(input);assert.equal(url.origin,'https://synthetic.invalid');
+  fetches++;return Response.json(url.searchParams.get('action')==='get_vod_categories'?categories:rows);
+ };
+ const catalog=()=>createProviderCatalog(deps,makeEnv(),ctx);
+ const allowed=(upstreamId,server='ccf')=>createAdultPolicy(catalog()).allowed({kind:'movie',server,upstreamId});
+ assert.equal(await allowed('101'),true);await flush();
+ now++;rows=large;
+ await catalog()('get_vod_streams','ccf',{}, {fresh:true});await flush();
+ const afterRefresh=fetches;
+ assert.equal(await allowed('101'),false,'the latest large snapshot replaces an older allow decision');
+ assert.equal(await allowed('102'),false,'classification retains restrictions from title metadata');
+ assert.equal(await allowed('103'),true);
+ assert.equal(await allowed('999'),false);
+ assert.equal(fetches,afterRefresh,'a new isolate uses the compact snapshot without refetching the full catalogue');
+ const retained=await catalog()('get_vod_streams','ccf',{}, {cachedOnly:true});
+ assert.deepEqual(retained,older.map(row=>({...row,_server:'ccf'})),'catalogue readers still receive the retained full snapshot');
+
+ now++;rows=older;
+ await catalog()('get_vod_streams','ccf',{}, {fresh:true});await flush();
+ await catalogCacheRoute(store,'/xtream-cache-put',permissionWrites[0]);
+ assert.equal(await allowed('101'),true,'a delayed compact write cannot supersede a newer full snapshot');
+
+ config='v2';rows=large;
+ assert.equal(await allowed('103'),true);await flush();
+ const coldFetches=fetches;
+ assert.equal(await allowed('103'),true);
+ assert.equal(fetches,coldFetches,'compact-only snapshots survive replacement of a cold isolate');
+ assert.equal(await catalog()('get_vod_streams','ccf',{}, {cachedOnly:true}),null,'compact data cannot be served as the full catalogue');
+ now+=300001;
+ assert.equal(await createProviderCatalog(deps,makeEnv(),ctx).inspect('movie','ccf','103'),undefined,'the compact snapshot does not extend permission freshness');
+ console.log('PASS: oversized movie snapshots retain fresh, scoped permissions without repeating broad catalogue reads.');
+}
+
 async function abandonedWaiter(){
  const env=makeEnv(),started=deferred(),release=deferred(),secondRead=deferred(),pending=[];let reads=0,fetches=0;
  const deps={directory:async()=>Response.json([{source:'ccf',encrypted:'synthetic'}]),registry:async(e,path)=>{
@@ -118,6 +175,6 @@ try{
  for(const mode of ['miss','old','error'])await lateRead(mode);
  for(const mode of ['miss','old','error'])await lateRead(mode,{action:'get_vod_streams'});
  await lateRead('miss',{force:true});
- await permissionSequence();await abandonedWaiter();
+ await permissionSequence();await oversizedMoviePermissions();await abandonedWaiter();
  console.log('PASS: late durable miss/error/old snapshot races, scoped/full keys, fresh override, unchanged TTL, request/config isolation and abandoned waiter.');
 }finally{globalThis.fetch=realFetch;Date.now=realNow;}
