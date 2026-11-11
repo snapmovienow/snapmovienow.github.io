@@ -1,0 +1,37 @@
+name: Observe official package mirror reachability
+on:
+  push:
+    branches: [support/apt-network-20261111]
+permissions:
+  contents: read
+jobs:
+  mirrors:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Check DNS and signed archive endpoints without installing packages
+        run: |
+          python3 - <<'PY'
+          import concurrent.futures,json,subprocess,time,urllib.request,urllib.error
+          targets=[
+            ("azure.archive.ubuntu.com","http://azure.archive.ubuntu.com/ubuntu/dists/noble/InRelease"),
+            ("archive.ubuntu.com","https://archive.ubuntu.com/ubuntu/dists/noble/InRelease"),
+            ("security.ubuntu.com","https://security.ubuntu.com/ubuntu/dists/noble/InRelease"),
+            ("mirrors.kernel.org","https://mirrors.kernel.org/ubuntu/dists/noble/InRelease"),
+            ("ftp.osuosl.org","https://ftp.osuosl.org/pub/ubuntu/dists/noble/InRelease")]
+          def check(target):
+            host,url=target; started=time.monotonic(); result={"host":host,"dns":False,"http_status":None}
+            try:
+              resolved=subprocess.run(["getent","ahostsv4",host],stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,timeout=8,check=False)
+              result["dns"]=resolved.returncode==0
+              if result["dns"]:
+                try:
+                  with urllib.request.urlopen(urllib.request.Request(url,method="HEAD"),timeout=8) as response:
+                    result["http_status"]=response.status
+                except urllib.error.HTTPError as error: result["http_status"]=error.code
+            except subprocess.TimeoutExpired: result["reason"]="dns_timeout"
+            except Exception: result["reason"]="request_unavailable"
+            result["elapsed_ms"]=round((time.monotonic()-started)*1000); return result
+          with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
+            print(json.dumps({"observations":list(pool.map(check,targets))},indent=2))
+          PY
