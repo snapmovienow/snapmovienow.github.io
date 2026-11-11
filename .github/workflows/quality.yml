@@ -44,6 +44,12 @@ jobs:
           SMN_SAFETY_ONLY: '1'
       - name: Install browser and media tools
         run: |
+          # These official Ubuntu mirrors are reachable from the validation runner.
+          if [ -f /etc/apt/apt-mirrors.txt ]; then
+            printf '%s\tpriority:1\n%s\tpriority:2\n' \
+              'https://ftp.osuosl.org/pub/ubuntu/' \
+              'https://mirrors.kernel.org/ubuntu/' | sudo tee /etc/apt/apt-mirrors.txt >/dev/null
+          fi
           npx playwright install --with-deps chromium
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y ffmpeg
