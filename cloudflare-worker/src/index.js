@@ -481,7 +481,7 @@ async function serverStreamDirect(req,env,u,ctx,trace){
   // This internal response is bounded by our own heartbeat contract. Only two
   // allowlisted codes are recorded; no response/error text enters the log.
   return {ok:false,reason:await leaseReason(heartbeat)};
- },()=>directory(env,'/release',{sid:d.sid,lease_id:d.lease_id,request_id:d.request_id,...(d.native_range_id?{native_range_id:d.native_range_id}:{})}),ctx,req.signal,d.exp,{waitForRelease:d.type!=='live',...(flow?{flowMonitor:flow}:{})});
+ },()=>directory(env,'/release',{sid:d.sid,lease_id:d.lease_id,request_id:d.request_id,...(d.native_range_id?{native_range_id:d.native_range_id}:{})}),ctx,req.signal,d.exp,{waitForRelease:d.type!=='live',allowBufferedPause:d.type!=='live',...(flow?{flowMonitor:flow}:{})});
  return guardPlaybackExpiry(result,d.exp,req.signal,()=>directory(env,"/release-session",{sid:d.sid}),ctx);
  }catch(error){flow?.finish(req.signal.aborted?'client_abort':['access','lease'].includes(flowPhase)?'access_unavailable':error?.message==='media_timeout'?'origin_silence':error?.message==='truncated_http_body'?'origin_truncated':'startup_failed');throw error}
 }
