@@ -10,7 +10,7 @@ globalThis.fetch=async(url,opts)=>{const u=new URL(url);if(u.pathname.endsWith('
  if(inventoryGate)await inventoryGate();
  if(inventoryFails)return new Response('Unavailable',{status:503});
  if(opts.headers.Cookie?.includes('second'))return Response.json({recordsFiltered:2,data:[row(2),row(3)]});
- return Response.json(firstInventoryResponse??{recordsFiltered:2,data:[row(1),row(2)]});
+ return Response.json((typeof firstInventoryResponse==='function'?firstInventoryResponse():firstInventoryResponse)??{recordsFiltered:2,data:[row(1),row(2)]});
 }if(u.pathname==='/player_api.php'){assert.ok(['line1','line2','line3'].includes(u.searchParams.get('username')));assert.equal(u.searchParams.get('password'),'line-password-test');const action=u.searchParams.get('action');return Response.json(action==='get_vod_streams'?[{stream_id:123,name:'Movie'}]:action==='get_series'?[{series_id:456,name:'Series'}]:{user_info:{auth:1,status:'Active',max_connections:'3',active_cons:'0'}})}return new Response('sample',{headers:{'content-type':'video/mp4'}})};
 const origin='https://snapmovienow-edge.juancanta89.workers.dev';const req=async(b,path='',ctx)=>{const r=await worker.fetch(new Request(origin+path,{method:'POST',body:JSON.stringify(b)}),env,ctx);return {status:r.status,data:await r.json()}};
 await req({action:'setup',setupSecret:env.ADMIN_SETUP_SECRET,username:'owner',password:'owner-password-test'},'/admin');const login=await req({action:'login',username:'owner',password:'owner-password-test'},'/admin');assert.equal(login.status,200);const admin=(action,b={},ctx)=>req({action,access_token:login.data.access_token,...b},'/admin',ctx);assert.equal((await admin('provider-save',{mode:'panel',username:'owner',password:'panel-password-test'})).status,200);
@@ -64,8 +64,33 @@ assert.equal((await refresh(true)).status,200);
 assert.deepEqual((await readPool()).lines.map(line=>line.id),['1','2','3'],'an ambiguous empty result preserves the prior inventory');
 assert.equal((await storage.get('source-pools'))[sources[0]].syncedAt,forMixedAge[sources[0]].syncedAt,'an ambiguous empty result does not renew source validity');
 assert.equal(await (await openLeaseStore(storage)).count(),6,'an ambiguous empty result preserves authorised running streams');
-firstInventoryResponse={recordsFiltered:'0',recordsTotal:'0',data:[]};
+// Even an explicit all-zero table can be a transient panel response. A second
+// bounded read must agree before it can retire a source's existing accounts.
+const beforeEmptyConfirmation=inventoryReads;
+let emptyConfirmationReads=0;
+firstInventoryResponse=()=>++emptyConfirmationReads===1
+ ?{recordsFiltered:0,recordsTotal:0,data:[]}
+ :{recordsFiltered:2,recordsTotal:2,data:[row(1),row(2)]};
 assert.equal((await refresh(true)).status,200);
+assert.deepEqual((await readPool()).lines.map(line=>line.id),['1','2','3'],'a transient explicit empty table cannot replace the prior inventory');
+assert.equal(emptyConfirmationReads,2,'the empty result gets exactly one confirmation read');
+assert.equal(inventoryReads,beforeEmptyConfirmation+3,'only the empty source requires an extra table read');
+assert.equal((await storage.get('source-pools'))[sources[0]].syncedAt,forMixedAge[sources[0]].syncedAt,'disagreeing empty confirmation does not renew validity');
+assert.equal(await (await openLeaseStore(storage)).count(),6,'disagreeing empty confirmation preserves existing authorised leases');
+emptyConfirmationReads=0;
+firstInventoryResponse=()=>{
+ if(++emptyConfirmationReads===1)return {recordsFiltered:0,recordsTotal:0,data:[]};
+ throw new DOMException('fixture confirmation timeout','TimeoutError');
+};
+assert.equal((await refresh(true)).status,200);
+assert.equal(emptyConfirmationReads,2,'a failed confirmation is never retried');
+assert.deepEqual((await readPool()).lines.map(line=>line.id),['1','2','3']);
+assert.equal((await storage.get('source-pools'))[sources[0]].syncedAt,forMixedAge[sources[0]].syncedAt);
+assert.equal(await (await openLeaseStore(storage)).count(),6,'failed confirmation cannot revoke leases');
+firstInventoryResponse={recordsFiltered:'0',recordsTotal:'0',data:[]};
+const beforeConfirmedEmpty=inventoryReads;
+assert.equal((await refresh(true)).status,200);
+assert.equal(inventoryReads,beforeConfirmedEmpty+3,'a stable explicit empty inventory is confirmed once then accepted');
 firstInventoryResponse=undefined;
 assert.deepEqual((await storage.get('pool')).lines.map(l=>l.id),['2','3']);
 assert.ok([...(await (await openLeaseStore(storage)).active()).values()].every(l=>l.provider_id!=='1'),'a confirmed inactive source revokes its accounts immediately');
