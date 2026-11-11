@@ -81,6 +81,15 @@ export async function readPanel(username,password,base=BASE,options={}){
   if(Array.isArray(data?.data)){receivedRows+=data.data.length;report()}
   const count=inventoryTotal(data);total??=count;
   if(!Array.isArray(data.data)||count!==total||data.data.length>Math.min(PANEL_PAGE_SIZE,total-start)||(!data.data.length&&start<total))throw Error('panel_inventory_incomplete');
+  if(total===0){
+   // A single all-zero table can be transient. Confirm it once in this same
+   // authenticated read before an empty replacement may revoke reservations.
+   // Disagreement/failure keeps the existing snapshot without renewing it.
+   query.set('draw','2');
+   const confirmationBody=await request('table?'+query);
+   let confirmation;try{confirmation=JSON.parse(confirmationBody)}catch{throw Error('panel_inventory_incomplete')}
+   if(inventoryTotal(confirmation)!==0||!Array.isArray(confirmation.data)||confirmation.data.length)throw Error('panel_inventory_incomplete');
+  }
   const pageInventory=parseInventory(data,now),pageLines=parseLines(data,now),activeIds=new Set(pageLines.map(line=>line.id));
   if(pageInventory.length!==data.data.length)throw Error('panel_inventory_incomplete');
   for(const item of pageInventory){
