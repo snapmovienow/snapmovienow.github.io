@@ -22,6 +22,8 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             cloudflare-worker/package-lock.json
+      - name: Verify Deno entrypoint and stream cancellation
+        run: node --test tests/deno-stream-cancellation.test.mjs
       - run: npm ci --fetch-timeout=30000
       - name: Install from Cloudflare deployment root
         run: npm ci --fetch-timeout=30000

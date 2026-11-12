@@ -15,6 +15,10 @@ try { kv = await Deno.openKv(); } catch { kv = null; }
 const streamTickets = new Map<string, Record<string, any>>();
 async function putTicket(token:string,data:Record<string,any>){
   if(kv){ await kv.set(["stream_ticket",token],data,{expireIn:43200000}); return "kv"; }
+  const now = Date.now();
+  for (const [key, ticket] of streamTickets) {
+    if (ticket.expires < now) streamTickets.delete(key);
+  }
   streamTickets.set(token,data); return "memory";
 }
 async function getTicket(token:string){
@@ -60,7 +64,7 @@ Deno.serve(async (req) => {
       const data = await getTicket(token);
       if (!data || data.expires < Date.now()) {
         if (!kv) streamTickets.delete(token);
-        return new Response("Stream link expired", { status: 410 });
+        return new Response("Stream link expired", { status: 410, headers });
       }
       if (!data.username || !data.password || !data.id || !data.type) {
         return new Response("Bad stream request", { status: 400 });
@@ -96,7 +100,7 @@ Deno.serve(async (req) => {
       if (range && upstream.status !== 206) h.set("X-Stream-Range-Warning", "upstream-did-not-return-206");
       return new Response(upstream.body,{status:upstream.status,headers:h});
     } catch {
-      return new Response("Stream unavailable",{status:502});
+      return new Response("Stream unavailable",{status:502,headers});
     }
   }
 
