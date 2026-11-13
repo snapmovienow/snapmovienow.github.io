@@ -69,6 +69,9 @@ async function mapList(rows, kind, auth, deps, base) {
         item.direct_source = playbackURL(base, auth, kind, ids[index], ext);
         item.stream_type = kind === 'live' ? 'live' : 'movie';
         item.container_extension = ext;
+        // Strict VOD importers require this key. Never restore the private
+        // provider SID that publicMetadata deliberately removed.
+        if (kind === 'movie') item.custom_sid = '';
       }
     }
     return item;
