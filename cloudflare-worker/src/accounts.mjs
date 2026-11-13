@@ -1,4 +1,5 @@
 import {readXtreamReferences} from './xtream-reference-diagnostic.mjs';
+import {liveProcessingPreparation} from './live-processing-preparation.mjs';
 import {usageChannel,readChannelUsage,observeChannelUsage} from './channel-usage.mjs';
 import {runPublicTvImport,publicTvImportStatus} from './public-tv-import.mjs';
 import {runEmpressImport,empressImportStatus} from './empress-import.mjs';
@@ -53,6 +54,7 @@ function expiry(value){if(value===null||value===''||value===undefined)return nul
 export async function accountsFetch(state,env,req){
  const p=new URL(req.url).pathname.replace('/accounts','');const b=await req.json();const store=state.storage;
  try{
+ if(['/live-processing-read','/live-processing-save'].includes(p))return liveProcessingPreparation(store,p,b);
  if(['/bounded-ts-claim','/bounded-ts-status','/bounded-ts-result'].includes(p))return boundedTsQuota(store,p,b,env);
  if(['/reseller-portal-rotation-status','/reseller-portal-rotation-begin','/reseller-portal-rotation-finish'].includes(p))return gatewayRotationStore(store,p,b);
  if(p==='/xtream-reference-diagnostic'){const result=await store.transaction(tx=>readXtreamReferences(tx,b.queries));return answer(result,result.error?400:200);}

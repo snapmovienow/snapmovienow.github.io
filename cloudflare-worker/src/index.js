@@ -4,6 +4,7 @@ import {startupDeadline,readLivePlaylist,readInitialMedia,VOD_STARTUP_MS,reportL
 import {boxpanelFetch} from './boxpanel.mjs';
 import {createBoxClient} from './boxpanel-client.mjs';
 import {BOXPANEL_RESELLER_ACCOUNTS} from './reseller-trust.mjs';
+import {createLiveProcessingAdmin} from './live-processing-preparation.mjs';
 import {createTelegramTick} from './telegram-tick.mjs';
 import {markServiceVerification} from './service-verification.mjs';
 import {createAllOriginConnections,readOriginSnapshot,originSnapshotResponse,originProviderKey,originMonitorProviders} from './origin-connections.mjs';
@@ -315,6 +316,7 @@ async function adminRequest(req,env,ctx){
  if(action==="setup"){const r=await directory(env,"/setup",b);return json(await r.json(),r.status)}
  if(action==="login"){const r=await directory(env,"/admin-login",{username:b.username,password:b.password,code:b.code,client});if(!r.ok)return json(await r.json(),r.status);const user=await r.json(),session=await ownSession(env,user,true);const token=await ticket(env,session);return withSessionCookie(json({access_token:b.browser_cookie&&canUseCookie(req,env)?null:token,username:user.username}),req,env,"admin",token,7200)}
  const s=await unticket(env,String(b.access_token||cookieToken(req,env,"admin")));if(s?.kind!=="admin"||!(await sessionCall(env,s.sid,"/check")).ok)return json({error:"admin_required"},401);
+ if(action.startsWith('live-processing-'))return liveProcessingAdmin(env,ctx,b,s.username);
  if(action==='xtream-reference-diagnostic'){const r=await registry(env,'/xtream-reference-diagnostic',{queries:b.queries}),response=json(await r.json(),r.status);response.headers.set('Cache-Control','no-store');return response;}
  if(action.startsWith('boxpanel-'))return boxpanelCall(env,b,{role:'owner',candidates:BOXPANEL_RESELLER_ACCOUNTS});
  if(action==='reseller-admin-launch'){if(req.headers.get('Origin')!=='https://app.snaptvnow.com')return json({error:'origin_not_allowed'},403);if(b.purpose!==undefined&&b.purpose!=='gateway-rotation')return json({error:'owner_launch_purpose'},400);const r=await ownerAdminAccess.issue(env,s,b.purpose);if(r.ok)await directory(env,'/audit-write',{actor:s.username,action:'reseller_admin_launch',target:'owner'});return r;}
@@ -495,6 +497,7 @@ function localAuditBootstrap(env,ctx){
 const exclusives=createExclusiveService({directory,sessionCall,ticket,unticket,resolveGnula,requestConnectionClient,guardXtreamResponse});
 const catalogDeps={exclusives,directory,registry,sessionCall,ticket,managedPlayback,serverStream,json,catalogCredentials:async(env,server,ctx)=>(await catalogCredentials(env,server,ctx,3)).map(p=>({...p,origin:p.origin||ORIGIN}))};
 const xtreamRequest=createXtreamBridge(catalogDeps);
+const liveProcessingAdmin=createLiveProcessingAdmin({directory,catalog:(env,ctx)=>createProviderCatalog(catalogDeps,env,ctx,{timeoutMs:5000})});
 async function sealPortalConfig(env,value){const iv=crypto.getRandomValues(new Uint8Array(12)),data=await crypto.subtle.encrypt({name:'AES-GCM',iv,additionalData:new TextEncoder().encode('reseller-portal:'+PORTAL_ACCOUNT)},await aesKey(env.TICKET_SECRET),new TextEncoder().encode(JSON.stringify(value))),raw=new Uint8Array(12+data.byteLength);raw.set(iv);raw.set(new Uint8Array(data),12);return b64(raw)}
 async function openPortalConfig(env,value){try{const raw=unb64(value);return JSON.parse(new TextDecoder().decode(await crypto.subtle.decrypt({name:'AES-GCM',iv:raw.slice(0,12),additionalData:new TextEncoder().encode('reseller-portal:'+PORTAL_ACCOUNT)},await aesKey(env.TICKET_SECRET),raw.slice(12))))}catch{return null}}
 async function portalRecipient(env){let stored=await (await directory(env,'/reseller-portal-recipient',{accountId:PORTAL_ACCOUNT})).json();if(!stored){const pair=await crypto.subtle.generateKey({name:'ECDH',namedCurve:'P-256'},true,['deriveBits']),jwk=await crypto.subtle.exportKey('jwk',pair.privateKey),encrypted=await sealPortalConfig(env,{recipientKey:jwk});stored=await (await directory(env,'/reseller-portal-recipient-ensure',{accountId:PORTAL_ACCOUNT,encrypted})).json();}const value=await openPortalConfig(env,stored.encrypted),jwk=value.recipientKey,privateKey=await crypto.subtle.importKey('jwk',jwk,{name:'ECDH',namedCurve:'P-256'},false,['deriveBits']);return {privateKey,publicKey:{kty:'EC',crv:'P-256',x:jwk.x,y:jwk.y,ext:true}}}

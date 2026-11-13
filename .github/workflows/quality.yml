@@ -67,6 +67,8 @@ jobs:
         run: node tests/admin-users-runtime.mjs
       - name: Exclusive catalog administrator on mobile and desktop
         run: node tests/admin-exclusive-runtime.mjs
+      - name: Selective channel preparation in the main administrator
+        run: node tests/admin-live-processing-runtime.mjs
       - name: BoxPanel owner and reseller integration on mobile and desktop
         run: node tests/admin-boxpanel-runtime.mjs
       - name: Real video concurrency smoke
@@ -74,6 +76,16 @@ jobs:
         env:
           SMN_VIDEO_LEVELS: '1,5'
           SMN_VIDEO_REPORT: artifacts/video-capacity.json
+      - name: Selective channel processing private pilot
+        run: |
+          node services/live-processing/smoke.mjs
+          node services/live-processing/benchmark-smoke.mjs
+          node services/live-processing/browser-smoke.mjs
+        env:
+          SNAP_PILOT_REPORT: artifacts/live-processing/ffmpeg-acceptance.json
+          SNAP_PILOT_BROWSER_REPORT: artifacts/live-processing/browser-acceptance.json
+          SNAP_PILOT_BENCHMARK_REPORT: artifacts/live-processing/benchmark-acceptance.json
+          SNAP_PILOT_SCREENSHOT: artifacts/live-processing/panel-mobile.png
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
