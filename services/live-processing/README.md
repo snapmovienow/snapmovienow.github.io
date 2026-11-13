@@ -119,6 +119,22 @@ El informe final debe indicar canales simultáneos, variantes, fps, audiencia,
 bitrate, margen, ubicación y costo total. No existe todavía un resultado de
 capacidad OVH ni una compra/provisión de servidor en esta primera fase.
 
+El medidor incluido usa la misma implementación del encoder, un archivo local
+representativo de al menos 30 segundos, y registra CPU/cgroup, tiempo de CPU y la
+velocidad de la salida más lenta. Ejemplo para ejecutar en el servidor exacto:
+
+```sh
+node services/live-processing/benchmark.mjs \
+  --input /ruta/privada/muestra.mp4 --logo /ruta/privada/logo.png \
+  --levels 1,3,5 --seconds 30 --fps 30 \
+  --report /ruta/privada/medicion.json
+```
+
+La medición sin límite de lectura puede usar toda la CPU disponible: ejecutarla
+en una máquina de prueba sin clientes. Una velocidad mínima de 1.25x es solo un
+criterio inicial de margen; no sustituye las 24-48 h de prueba live y la prueba
+de red. Si se requiere deporte 50/60 fps, medir con esa entrada y ese `--fps`.
+
 ## Integración pendiente para clientes DNS
 
 Conectar este procesamiento a las autorizaciones y límites de sesiones actuales

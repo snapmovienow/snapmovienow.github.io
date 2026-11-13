@@ -3,20 +3,24 @@ import {mkdir,writeFile,rm,readdir} from 'node:fs/promises';
 import path from 'node:path';
 import {PROFILES} from './policy.mjs';
 
-export async function startEncoder({channel,policy,directory,logoPath,ffmpeg='ffmpeg',threads=2,fps=30,onExit=()=>{}}) {
+export async function startEncoder({channel,policy,directory,logoPath,ffmpeg='ffmpeg',threads=2,fps=30,onExit=()=>{},samplePath=null,seconds=null,onMeasure=null}) {
   if (!path.isAbsolute(directory) || !Number.isInteger(threads) || threads<1 || threads>16 || ![25,30,50,60].includes(fps)) throw Error('invalid_encoder');
+  if(samplePath!==null&&!path.isAbsolute(samplePath)||seconds!==null&&(!Number.isInteger(seconds)||seconds<1||seconds>300))throw Error('invalid_benchmark');
   await mkdir(directory,{recursive:true,mode:0o700});
   const textPath=path.join(directory,'watermark.txt');
   await writeFile(textPath,policy.text,{mode:0o600});
   const escapePath=v=>v.replaceAll('\\','\\\\').replaceAll(':','\\:').replaceAll("'","'\\''");
-  const args=['-hide_banner','-loglevel','error','-nostdin','-y','-filter_complex_threads','1'];
-  if (channel.demo) args.push('-re','-f','lavfi','-i',`testsrc2=size=1280x720:rate=${fps}`,'-re','-f','lavfi','-i','sine=frequency=440:sample_rate=48000');
+  const args=['-hide_banner','-loglevel',onMeasure?'info':'error',...(onMeasure?['-benchmark']:[]),'-nostdin','-y','-filter_complex_threads','1'];
+  const demoInput=channel.demo&&!samplePath;
+  // Local samples are only supplied by the offline benchmark, never by HTTP.
+  if(samplePath)args.push('-i',samplePath);
+  else if (demoInput) args.push('-re','-f','lavfi','-i',`testsrc2=size=1280x720:rate=${fps}`,'-re','-f','lavfi','-i','sine=frequency=440:sample_rate=48000');
   else args.push('-rw_timeout','15000000','-protocol_whitelist','http,https,tcp,tls,crypto','-i',channel.source);
-  const audio=channel.demo?'1:a:0':'0:a:0?';
+  const audio=demoInput?'1:a:0':'0:a:0?';
   let logoInput;
   if (policy.logo) {
     if (!logoPath || !path.isAbsolute(logoPath)) throw Error('logo_required');
-    logoInput=channel.demo?2:1;
+    logoInput=demoInput?2:1;
     args.push('-loop','1','-framerate','1','-i',logoPath);
   }
   const count=policy.profiles.length;
@@ -29,7 +33,7 @@ export async function startEncoder({channel,policy,directory,logoPath,ffmpeg='ff
   for (let i=0;i<count;i++) {
     const p=PROFILES[policy.profiles[i]];
     await mkdir(path.join(directory,String(i)),{mode:0o700});
-    args.push('-map',`[v${i}]`,'-map',audio,'-c:v','libx264','-threads',String(threads),'-preset','veryfast','-pix_fmt','yuv420p',
+    args.push(...(seconds?['-t',String(seconds)]:[]),'-map',`[v${i}]`,'-map',audio,'-c:v','libx264','-threads',String(threads),'-preset','veryfast','-pix_fmt','yuv420p',
       '-b:v',p.videoKbps+'k','-maxrate',p.videoKbps+'k','-bufsize',p.videoKbps*2+'k','-g',String(fps*2),'-keyint_min',String(fps*2),'-sc_threshold','0',
       '-c:a','aac','-b:a',p.audioKbps+'k','-ar','48000','-ac','2','-f','hls','-hls_time','2','-hls_list_size','6',
       '-hls_flags','delete_segments+independent_segments+temp_file','-hls_delete_threshold','2','-hls_segment_filename',path.join(directory,String(i),'seg%09d.ts'),path.join(directory,String(i),'index.m3u8'));
@@ -38,10 +42,14 @@ export async function startEncoder({channel,policy,directory,logoPath,ffmpeg='ff
   let lastError=false,stopping=false,exited=false,resolveExit;
   const closed=new Promise(r=>{resolveExit=r;});
   // FFmpeg diagnostics can contain source credentials. Never retain or return them.
-  child.stderr.on('data',()=>{lastError=true;});
+  let measurementBuffer='';
+  child.stderr.on('data',chunk=>{
+    lastError=true;
+    if(onMeasure){measurementBuffer=(measurementBuffer+chunk.toString()).slice(-4096);const m=measurementBuffer.match(/bench: utime=([\d.]+)s stime=([\d.]+)s rtime=([\d.]+)s/);if(m){onMeasure({cpuUserSeconds:Number(m[1]),cpuSystemSeconds:Number(m[2]),wallSeconds:Number(m[3])});measurementBuffer='';}}
+  });
   const finish=(code,reason)=>{if(exited)return;exited=true;onExit({code,reason,stderrSeen:lastError,stopped:stopping});resolveExit();};
   child.once('error',()=>finish(null,'spawn_failed'));
-  child.once('exit',code=>finish(code,'encoder_exited'));
+  child.once('close',code=>finish(code,'encoder_exited'));
   return {
     pid:child.pid,
     get exited(){return exited;},
