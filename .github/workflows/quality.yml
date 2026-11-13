@@ -71,6 +71,8 @@ jobs:
         run: node tests/admin-live-processing-runtime.mjs
       - name: BoxPanel owner and reseller integration on mobile and desktop
         run: node tests/admin-boxpanel-runtime.mjs
+      - name: Reseller client forms from the production artifact
+        run: node tests/reseller-client-forms-runtime.mjs
       - name: Real video concurrency smoke
         run: node tests/video-capacity-runtime.mjs
         env:

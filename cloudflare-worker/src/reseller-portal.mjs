@@ -1,7 +1,7 @@
 import {portalReadDeadline} from './portal-read-deadline.mjs';
 import {gatewayDiagnostic} from './portal-gateway-diagnostics.mjs';
 import {boxpanelAsset} from './boxpanel-portal.mjs';
-import {PORTAL_SCRIPT,PORTAL_CSS,PORTAL_ICON} from './reseller-panel-assets.mjs';
+import {PORTAL_SCRIPT,PORTAL_CSS,PORTAL_ICON,PORTAL_ASSET_VERSION} from './reseller-panel-assets.mjs';
 import {verifyManagedPortalTarget} from './reseller-hierarchy-scope.mjs';
 export const PORTAL_HOST='juanito.resellers.snaptvnow.com';
 export const UNIFIED_PORTAL_HOST='resellers.snaptvnow.com';
@@ -34,7 +34,7 @@ export function createResellerPortal({getConfig,fetcher=fetch,boxpanel,catalog})
  if(boxpanel&&req.method==='GET'){const asset=boxpanelAsset(path,base,{unified});if(asset)return asset;}
  if(req.method==='GET'&&(path==='/assets/favicon.svg'||path==='/favicon.svg'))return new Response(PORTAL_ICON,{headers:{...headers,'Cache-Control':'public, max-age=300','Content-Type':'image/svg+xml; charset=utf-8'}});
  if(req.method==='GET'&&(path==='/assets/panel.js'||path==='/assets/panel.css'))return new Response(path.endsWith('.js')?PORTAL_SCRIPT:PORTAL_CSS,{headers:{...headers,'Cache-Control':'public, max-age=60','Content-Type':path.endsWith('.js')?'text/javascript; charset=utf-8':'text/css; charset=utf-8'}});
- if(req.method==='GET'&&path==='/')return new Response('<!doctype html><html lang="es" data-portal-base="'+base+'" data-portal-mode="'+(unified?'unified':'fixed')+'"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#041521"><title>SNAPTVNOW · '+(unified?'Resellers':'Panel de Juanito')+'</title><link rel="icon" type="image/svg+xml" href="'+base+'/assets/favicon.svg?v=unified-1"><link rel="stylesheet" href="'+base+'/assets/panel.css?v=luis-hierarchy-1"></head><body><div id="portal-root"></div><script src="'+base+'/assets/panel.js?v=luis-hierarchy-1" defer></script></body></html>',{headers:{...headers,'Content-Type':'text/html; charset=utf-8','Content-Security-Policy':csp}});
+ if(req.method==='GET'&&path==='/')return new Response('<!doctype html><html lang="es" data-portal-base="'+base+'" data-portal-mode="'+(unified?'unified':'fixed')+'"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#041521"><title>SNAPTVNOW · '+(unified?'Resellers':'Panel de Juanito')+'</title><link rel="icon" type="image/svg+xml" href="'+base+'/assets/favicon.svg?v=unified-1"><link rel="stylesheet" href="'+base+'/assets/panel.css?v='+PORTAL_ASSET_VERSION+'"></head><body><div id="portal-root"></div><script src="'+base+'/assets/panel.js?v='+PORTAL_ASSET_VERSION+'" defer></script></body></html>',{headers:{...headers,'Content-Type':'text/html; charset=utf-8','Content-Security-Policy':csp}});
  if(!['/api/panel','/api/portal/login','/api/portal/logout',...(boxpanel?['/api/boxpanel']:[])].includes(path))return json({error:'portal_route',message:'Ruta no disponible en este panel.'},404);
  if(path==='/api/boxpanel'&&req.method!=='POST')return json({error:'portal_method'},405);
  if(!['GET','POST'].includes(req.method)||((path!=='/api/panel')&&req.method!=='POST'))return json({error:'portal_method'},405);

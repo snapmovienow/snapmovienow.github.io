@@ -10,5 +10,5 @@ const result=await build({entryPoints:[root+'/app/portal-shell.tsx'],bundle:true
 const js=result.outputFiles[0].text,css=readFileSync(root+'/app/globals.css','utf8'),icon=readFileSync(root+'/public/favicon.svg','utf8');
 if(js.includes('OAI-Sites-Authorization')||js.includes('SNAPTVNOW_PORTAL_GATEWAY_SECRET')||js.includes('LINE_CREDENTIAL_KEY'))throw Error('Server-only material in public bundle');
 const hash=createHash('sha256').update(js).update(css).update(icon).digest('hex');
-writeFileSync('cloudflare-worker/src/reseller-panel-assets.mjs','// Generated public UI; content SHA-256 '+hash+'\nexport const PORTAL_SCRIPT='+JSON.stringify(js)+';\nexport const PORTAL_CSS='+JSON.stringify(css)+';\nexport const PORTAL_ICON='+JSON.stringify(icon)+';\n');
+writeFileSync('cloudflare-worker/src/reseller-panel-assets.mjs','// Generated public UI; content SHA-256 '+hash+'\nexport const PORTAL_ASSET_VERSION='+JSON.stringify(hash.slice(0,16))+';\nexport const PORTAL_SCRIPT='+JSON.stringify(js)+';\nexport const PORTAL_CSS='+JSON.stringify(css)+';\nexport const PORTAL_ICON='+JSON.stringify(icon)+';\n');
 console.log('Generated credential-free reseller assets:',Buffer.byteLength(js),'JS bytes; fingerprint',hash);
