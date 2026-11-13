@@ -23,7 +23,7 @@ try{
  await context.route(/^https:\/\/(resellers|api)\.snaptvnow\.com\//,async route=>{
   const req=route.request(),url=new URL(req.url());let response;
   if(url.pathname.endsWith('/api/panel')){
-   if(req.method()==='POST'){const body=req.postDataJSON();writes.push(body);response=Response.json({ok:true,id:body.lineId||'fixture-trial',trial:body.action==='line.trial',creditsSpent:0});}
+   if(req.method()==='POST'){const body=req.postDataJSON();writes.push(body);assert.equal(body.expectedActorId,snapshot().actor.id);response=Response.json({actorId:snapshot().actor.id,ok:true,id:body.lineId||'fixture-trial',trial:body.action==='line.trial',creditsSpent:0});}
    else response=Response.json(url.searchParams.has('lineId')?line:snapshot());
   }else{
    const request=new Request(req.url(),{method:req.method(),headers:await req.allHeaders()});
