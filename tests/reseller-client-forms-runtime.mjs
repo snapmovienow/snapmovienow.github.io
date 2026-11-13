@@ -9,8 +9,8 @@ import {PORTAL_ACCOUNT,PORTAL_SOURCE} from '../cloudflare-worker/src/reseller-po
 const target={id:'fixture-reseller',slug:'fixture-reseller',name:'Reseller ficticio',role:'reseller',status:'active',balance:5200,revision:0};
 const now=Date.now(),line={id:'fixture-client',account_id:target.id,account_name:target.name,username:'clienteficticio',label:'Cliente ficticio',status:'registered',password:'Synthetic-client-password',notes:'',revision:0,connections:3,created_at:now,expires_at:now+86400000,package_id:'months-1',package_name:'1 mes',adult_access:0,sourceMetadata:{expiryTimezone:'America/Chicago'}};
 const packages=[{id:'months-1',name:'1 mes',months:1,bonus_months:0,cost:100,connections:3,active:1,revision:1}];
-let ownerMode=false,browser,runtime;const errors=[],writes=[];
-const snapshot=()=>({actor:ownerMode?{id:'owner',role:'owner',name:'Propietario ficticio'}:target,target,overview:false,accounts:ownerMode?[target]:[],lines:[line],ledger:[],operations:[],packages,serverTime:now,stats:{total:1,expiring:0,suspended:0},integration:{connected:true,accountId:target.id,accountName:target.name,accounts:[{accountId:target.id}]}});
+let ownerMode=false,browser,runtime;const errors=[],writes=[];let trialPolicy={enabled:1,minutes:60,daily_limit:5,active_limit:3,revision:0};
+const snapshot=()=>({actor:ownerMode?{id:'owner',role:'owner',name:'Propietario ficticio'}:target,target,overview:false,accounts:ownerMode?[target]:[],lines:[line],ledger:[],operations:[],packages,trialPolicy,serverTime:now,stats:{total:1,expiring:0,suspended:0},integration:{connected:true,accountId:target.id,accountName:target.name,accounts:[{accountId:target.id}]}});
 const owner=createOwnerPortal({getConfig:async()=>({accountId:PORTAL_ACCOUNT,sourceOrigin:PORTAL_SOURCE,gatewaySecret:'f'.repeat(64),siteToken:'synthetic-only-not-a-real-token'}),fetcher:async()=>Response.json(snapshot())});
 try{
  const artifact='cloudflare-worker/.wrangler/quality-release/index.js';
@@ -23,7 +23,7 @@ try{
  await context.route(/^https:\/\/(resellers|api)\.snaptvnow\.com\//,async route=>{
   const req=route.request(),url=new URL(req.url());let response;
   if(url.pathname.endsWith('/api/panel')){
-   if(req.method()==='POST'){const body=req.postDataJSON();writes.push(body);assert.equal(body.expectedActorId,snapshot().actor.id);response=Response.json({actorId:snapshot().actor.id,ok:true,id:body.lineId||'fixture-trial',trial:body.action==='line.trial',creditsSpent:0});}
+   if(req.method()==='POST'){const body=req.postDataJSON();writes.push(body);assert.equal(body.expectedActorId,snapshot().actor.id);if(body.action==='trial.policy'){assert.equal(ownerMode,true);trialPolicy={enabled:body.enabled?1:0,minutes:body.minutes,daily_limit:body.dailyLimit,active_limit:body.activeLimit,revision:trialPolicy.revision+1};}response=Response.json({actorId:snapshot().actor.id,ok:true,id:body.lineId||'fixture-trial',trial:body.action==='line.trial',creditsSpent:0});}
    else response=Response.json(url.searchParams.has('lineId')?line:snapshot());
   }else{
    const request=new Request(req.url(),{method:req.method(),headers:await req.allHeaders()});
@@ -56,6 +56,21 @@ try{
  const posted=page.waitForRequest(req=>req.method()==='POST'&&req.url().includes('/api/panel')&&req.postDataJSON()?.action==='line.admin-expiry');
  await dialog.getByRole('button',{name:'Guardar',exact:true}).click();const body=(await posted).postDataJSON();
  assert.equal(body.lineId,line.id);assert.ok(!body.confirmUsername);assert.equal(body.revision,0);assert.deepEqual(errors,[]);
+
+ await dialog.waitFor({state:'hidden'});await page.setViewportSize({width:1280,height:1000});
+ await page.getByRole('button',{name:'Reglas',exact:true}).click();await page.getByRole('button',{name:'Configurar pruebas',exact:true}).click();dialog=page.locator('dialog[open]');
+ await page.setViewportSize({width:390,height:1000});
+ assert.equal(await dialog.locator('[name=trialDurationAmount]').inputValue(),'1');assert.equal(await dialog.locator('[name=trialDurationUnit]').inputValue(),'hours');
+ await dialog.locator('[name=trialDurationAmount]').fill('3');await dialog.locator('[name=trialDurationUnit]').selectOption('days');
+ assert.equal(await dialog.locator('[name=minutes]').inputValue(),'4320');assert.equal(await dialog.locator('form').evaluate(form=>form.checkValidity()),true);
+ const changed=page.waitForRequest(req=>req.method()==='POST'&&req.url().includes('/api/panel')&&req.postDataJSON()?.action==='trial.policy');
+ await dialog.getByRole('button',{name:'Guardar',exact:true}).click();assert.equal((await changed).postDataJSON().minutes,4320);await dialog.waitFor({state:'hidden'});
+ ownerMode=false;await page.setViewportSize({width:1280,height:1000});await page.goto('https://resellers.snaptvnow.com/?view=lines');
+ await page.getByRole('button',{name:'Reglas',exact:true}).click();assert.equal(await page.getByRole('button',{name:'Configurar pruebas',exact:true}).count(),0);
+ await page.goto('https://resellers.snaptvnow.com/?view=lines');await page.setViewportSize({width:390,height:1000});await page.getByRole('button',{name:'Generar prueba',exact:true}).click();dialog=page.locator('dialog[open]');
+ assert.equal(await dialog.locator('[name=trialDurationAmount],[name=trialDurationUnit],[name=minutes]').count(),0);
+ assert.ok(await dialog.locator('input[readonly]').evaluateAll(inputs=>inputs.some(input=>input.value==='3 días desde la creación · automático')));
+ assert.deepEqual(errors,[]);
  assert.equal(writes.filter(body=>body.action==='line.trial').length,2);
- console.log('PASS: production reseller assets submit empty contact/notes on mobile and desktop; owner expiry uses the selected client without typed confirmation.');
+ console.log('PASS: production reseller assets submit empty contact/notes on mobile and desktop; owner expiry uses the selected client without typed confirmation; owner custom duration is inherited read-only by resellers.');
 }finally{await browser?.close();await runtime?.dispose();}
