@@ -162,10 +162,14 @@ export function createProviderCatalog(deps, env, ctx,{timeoutMs=CATALOG_FETCH_MS
               if(action==='get_live_streams'&&!Object.keys(params).length&&referenceIds(scoped))candidates.set(scoped,{account,at:Date.now()});
               return {data:scoped,empty:Array.isArray(scoped)?!scoped.length:action==='get_series_info'&&!countSeriesEpisodes(scoped)};
           };
+          // A movie download replaces the client's local list. An empty
+          // account plus a failed/unfinished account is inconclusive, not a
+          // fresh empty catalogue. Retain only the existing scoped snapshot
+          // and its original expiry; a cold miss still reports a failure.
           const safe=await selectCatalogDetail(accounts,(account,signal)=>read(account,signal).catch(error=>{
             seriesFailures?.add(error instanceof SeriesCatalogError?error.message:'series_catalog_internal');
             throw error;
-          }),{hedgeMs,timeoutMs:Math.max(0,deadline-Date.now()),maxConcurrent:2});
+          }),{hedgeMs,timeoutMs:Math.max(0,deadline-Date.now()),maxConcurrent:2,requireAllEmpty:action==='get_vod_streams'});
           if(safe!==null){fresh++;const evidence=candidates.get(safe);if(evidence)references.push({server:id,ids:referenceIds(safe),account:evidence.account,at:evidence.at});return safe}
           const retained=Array.isArray(saved?.data)?saved.data.filter(row=>row._server===id):null;
           return retained?.length?retained:null;
