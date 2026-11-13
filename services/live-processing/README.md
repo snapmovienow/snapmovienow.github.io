@@ -1,9 +1,12 @@
 # SNAPTVNOW: piloto privado de procesamiento selectivo
 
 Primera fase para medir el servidor antes de contratar capacidad para clientes.
-Es un servicio Node.js 24 + FFmpeg separado del Worker. **No está conectado al
-DNS ni al administrador de producción, no recibe cuentas de clientes y no
-modifica créditos.** No se debe publicar directamente como servicio de clientes.
+Es un servicio Node.js 24 + FFmpeg separado del Worker. El administrador
+principal incluye una sección para guardar la preparación y comprobar una
+conexión privada con este servicio. **El procesamiento no está conectado a la
+reproducción DNS de clientes, no recibe sus cuentas y no modifica créditos.**
+La activación sigue bloqueada en el administrador. No se debe publicar el
+piloto directamente como servicio de clientes.
 
 ## Incluye
 
@@ -136,6 +139,20 @@ criterio inicial de margen; no sustituye las 24-48 h de prueba live y la prueba
 de red. Si se requiere deporte 50/60 fps, medir con esa entrada y ese `--fps`.
 
 ## Integración pendiente para clientes DNS
+
+La sección `Logo y calidad de canales` del administrador guarda una política
+desactivada en el objeto de cuentas, con revisión y auditoría. Solo consulta el
+catálogo al solicitarlo: Buscar usa la copia guardada y Actualizar catálogo
+permite una consulta nueva explícita. Las selecciones usan referencias hash
+estables separadas por origen y tipo, sin URLs ni claves del proveedor.
+
+La comprobación de conexión requiere dos ajustes de operador en el Worker:
+`LIVE_PROCESSING_PILOT_URL` (origen HTTPS) y el secreto
+`LIVE_PROCESSING_PILOT_ADMIN_TOKEN` (la clave administrativa del servicio).
+No se introducen en el navegador. Comprobar el servidor solo lee su configuración
+con una petición autenticada, acotada y sin seguir redirecciones; no inicia
+encoders. Que el servidor responda no desbloquea la activación ni acredita
+capacidad. Estos ajustes todavía no se han configurado en producción.
 
 Conectar este procesamiento a las autorizaciones y límites de sesiones actuales
 del Worker y al catálogo propio, sin exponer URLs del proveedor; adaptar la
