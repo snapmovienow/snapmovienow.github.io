@@ -36,7 +36,7 @@ try{
   await page.setViewportSize({width,height:1000});await page.goto('https://resellers.snaptvnow.com/?view=lines');
   assert.ok((await page.locator('script[src*="/assets/panel.js"]').getAttribute('src')).includes('v='+PORTAL_ASSET_VERSION),'page loads its matching production asset');
   await page.getByRole('button',{name:'Generar prueba',exact:true}).click();const dialog=page.locator('dialog[open]');
-  await dialog.locator('[name=label]').fill('Cliente ficticio');await dialog.locator('[name=username]').fill('clienteficticio'+width);
+  const username='ClIeNtECase'+width;await dialog.locator('[name=label]').fill('Cliente ficticio');await dialog.locator('[name=username]').fill(username);
   for(const field of ['customer','notes']){
    const input=dialog.locator('[name='+field+']');assert.equal(await input.inputValue(),'');assert.equal(await input.evaluate(el=>el.required),false);
   }
@@ -44,7 +44,7 @@ try{
   if(width===390){fs.mkdirSync('artifacts',{recursive:true});await dialog.screenshot({path:'artifacts/reseller-optional-fields-mobile.png'});}
   const posted=page.waitForRequest(req=>req.method()==='POST'&&req.url().includes('/api/panel')&&req.postDataJSON()?.action==='line.trial');
   await dialog.getByRole('button',{name:'Generar prueba · 0 créditos',exact:true}).click();const body=(await posted).postDataJSON();
-  assert.equal(body.accountId,target.id);assert.ok(!body.customer);assert.ok(!body.notes);await dialog.waitFor({state:'hidden'});
+  assert.equal(body.accountId,target.id);assert.equal(body.username,username);assert.ok(!body.customer);assert.ok(!body.notes);await dialog.waitFor({state:'hidden'});
  }
  ownerMode=true;await page.setViewportSize({width:390,height:1000});await page.goto('https://api.snaptvnow.com/owner-panel/?view=lines&slug=fixture-reseller');
  assert.ok((await page.locator('script[src*="/assets/panel.js"]').getAttribute('src')).includes('v='+PORTAL_ASSET_VERSION));

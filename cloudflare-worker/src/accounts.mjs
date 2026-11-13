@@ -42,7 +42,9 @@ import {backupRoute,automaticBackup} from './backups.mjs';
 const answer=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:{'content-type':'application/json'}});
 const normal=x=>String(x||'').trim().toLowerCase();
 const validName=x=>/^[a-z0-9_.@-]{3,80}$/.test(x);
-const publicUser=u=>({id:u.id,username:u.username,name:u.name,status:u.status,expiresAt:u.expiresAt,createdAt:u.createdAt,updatedAt:u.updatedAt,permissions:contentPermissions(u.permissions)});
+// Keep the original spelling independently of the existing case-insensitive key.
+const usernameSpelling=u=>typeof u.displayUsername==='string'&&normal(u.displayUsername)===u.username?u.displayUsername:u.username;
+const publicUser=u=>({id:u.id,username:usernameSpelling(u),name:u.name,status:u.status,expiresAt:u.expiresAt,createdAt:u.createdAt,updatedAt:u.updatedAt,permissions:contentPermissions(u.permissions)});
 const adminUser=u=>({...publicUser(u),comments:typeof u.comments==='string'?u.comments:''});
 const alive=u=>u&&u.status==='active'&&(!u.expiresAt||u.expiresAt>Date.now());
 const enc=new TextEncoder();
@@ -147,7 +149,7 @@ export async function accountsFetch(state,env,req){
    await store.transaction(tx=>writeAudit(tx,u.username,'admin_login'));
   }
   if(p==='/login'){await safelyRecord(()=>recordClientAccess(store,store.sql,u,'login',b.connection,b.authKey?'xtream':'api'));await safelyRecord(()=>recordCustomerActivity(store,u.id,Date.now(),b.connection));}
-  await store.delete(bucket);return answer({id:u.id,username:u.username,version:u.version,expiresAt:u.expiresAt,permissions:contentPermissions(u.permissions)});
+  await store.delete(bucket);return answer({id:u.id,username:usernameSpelling(u),version:u.version,expiresAt:u.expiresAt,permissions:contentPermissions(u.permissions)});
  }
  if(p==='/canary-identity'||p==='/canary-sample'){
   // Scheduled probes may act only as the one explicitly configured customer.
@@ -173,7 +175,7 @@ export async function accountsFetch(state,env,req){
    }
    return answer({sample:null,...(failed404?{failed404}:{})});
   }
-  return answer({id:u.id,username:u.username,version:u.version,expiresAt:u.expiresAt,permissions:contentPermissions(u.permissions)});
+  return answer({id:u.id,username:usernameSpelling(u),version:u.version,expiresAt:u.expiresAt,permissions:contentPermissions(u.permissions)});
  }
  if(p==='/check'){
   if(b.xtream){const config=await store.get('xtream-config')||{enabled:true,version:1};if(!config.enabled||config.version!==b.xtreamVersion)return answer({ok:false},401)}
@@ -189,7 +191,7 @@ export async function accountsFetch(state,env,req){
   if(b.comments!==undefined&&(typeof b.comments!=='string'||b.comments.length>2000))return answer({error:'invalid_comments'},400);
   const permissions=b.permissions===undefined?contentPermissions(old?.permissions):{movies:b.permissions?.movies===true,series:b.permissions?.series===true,tv:b.permissions?.tv===true,adults:Object.hasOwn(b.permissions||{},'adults')?b.permissions.adults===true:contentPermissions(old?.permissions).adults};
   const expiresAt=expiry(b.expiresAt),accessChanged=!old||!!b.password||old.status!==b.status||old.expiresAt!==expiresAt||JSON.stringify(contentPermissions(old.permissions))!==JSON.stringify(permissions);
-  let u={...old,permissions,id:old?.id||crypto.randomUUID(),username,name:String(b.name||'').slice(0,120),comments:b.comments===undefined?(old?.comments||''):b.comments,status:b.status,expiresAt,createdAt:old?.createdAt||Date.now(),updatedAt:Math.max(Date.now(),(old?.updatedAt||0)+1),version:accessChanged?(old?.version||0)+1:old.version};
+  let u={...old,permissions,id:old?.id||crypto.randomUUID(),username,displayUsername:old?usernameSpelling(old):String(b.username).trim(),name:String(b.name||'').slice(0,120),comments:b.comments===undefined?(old?.comments||''):b.comments,status:b.status,expiresAt,createdAt:old?.createdAt||Date.now(),updatedAt:Math.max(Date.now(),(old?.updatedAt||0)+1),version:accessChanged?(old?.version||0)+1:old.version};
   if(b.password)u=await withPassword(u,b.password);else if(!old)return answer({error:'password_required'},400);
   return store.transaction(async tx=>{const latest=await tx.get('user:'+username),held=await tx.get('reseller-reservation:'+username);if(!latest&&held?.until>Date.now())return answer({error:'username_reserved'},409);if((latest?.version||0)!==(old?.version||0)||latest?.updatedAt!==old?.updatedAt)return answer({error:'edit_conflict'},409);await tx.put('user:'+username,u);if(accessChanged)await leases.in(tx).removeFor({uid:u.id});return answer({...adminUser(u),sessionsRevoked:accessChanged})});
  }
@@ -475,4 +477,3 @@ async function registerXtream(store,entries){
   await tx.put('xtream-next-id',next);return answer(result);
  });
 }
-
