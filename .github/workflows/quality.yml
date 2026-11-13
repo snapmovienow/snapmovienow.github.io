@@ -74,6 +74,14 @@ jobs:
         env:
           SMN_VIDEO_LEVELS: '1,5'
           SMN_VIDEO_REPORT: artifacts/video-capacity.json
+      - name: Selective channel processing private pilot
+        run: |
+          node services/live-processing/smoke.mjs
+          node services/live-processing/browser-smoke.mjs
+        env:
+          SNAP_PILOT_REPORT: artifacts/live-processing/ffmpeg-acceptance.json
+          SNAP_PILOT_BROWSER_REPORT: artifacts/live-processing/browser-acceptance.json
+          SNAP_PILOT_SCREENSHOT: artifacts/live-processing/panel-mobile.png
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
