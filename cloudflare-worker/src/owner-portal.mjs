@@ -1,7 +1,7 @@
 import {portalReadDeadline} from './portal-read-deadline.mjs';
 import {gatewayDiagnostic} from './portal-gateway-diagnostics.mjs';
 import {ROTATION_HTML,ROTATION_SCRIPT} from './gateway-rotation-ui.mjs';
-import {PORTAL_SCRIPT,PORTAL_CSS,PORTAL_ICON} from './reseller-panel-assets.mjs';
+import {PORTAL_SCRIPT,PORTAL_CSS,PORTAL_ICON,PORTAL_ASSET_VERSION} from './reseller-panel-assets.mjs';
 import {readPortalInput,PORTAL_ACCOUNT,PORTAL_SOURCE} from './reseller-portal.mjs';
 export const OWNER_PORTAL_BASE='https://api.snaptvnow.com/owner-panel';
 const PREFIX='/owner-panel',COOKIE='__Host-SNAP_Owner_Portal';
@@ -38,7 +38,7 @@ export function createOwnerPortal({getConfig,fetcher=fetch}){return async(req,en
   if(isEntry){if(!response.ok)return blocked();if(result.ok!==true||!ticket(result.token)||!Number.isSafeInteger(result.exp)||result.exp<=Date.now()||result.exp>Date.now()+1800000)throw Error('owner_reply');return new Response(null,{status:303,headers:{...headers,Location:path==='/security/enter'?PREFIX+'/security/gateway-rotation':PREFIX+'/', 'Set-Cookie':cookie(result.token,Math.floor((result.exp-Date.now())/1000))}});}
   if(path==='/api/portal/logout')return json({ok:response.ok},response.ok?200:503,{'Set-Cookie':cookie('',0)});
   if(result?.actor){if(result.actor.id!=='owner'||result.actor.role!=='owner')throw Error('owner_scope');result.portalBase=PREFIX;result.authMode='owner-portal';}
-  if(path==='/'){if(!response.ok)return blocked();if(result.actor?.role!=='owner')throw Error('owner_scope');return new Response('<!doctype html><html lang="es" data-portal-base="'+PREFIX+'" data-portal-mode="owner"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SNAPTVNOW · Panel admin reseller</title><link rel="icon" href="'+PREFIX+'/assets/favicon.svg"><link rel="stylesheet" href="'+PREFIX+'/assets/panel.css"></head><body><div id="portal-root"></div><script src="'+PREFIX+'/assets/panel.js" defer></script></body></html>',{headers:{...headers,'Content-Type':'text/html; charset=utf-8','Content-Security-Policy':csp}});}
+  if(path==='/'){if(!response.ok)return blocked();if(result.actor?.role!=='owner')throw Error('owner_scope');return new Response('<!doctype html><html lang="es" data-portal-base="'+PREFIX+'" data-portal-mode="owner"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SNAPTVNOW · Panel admin reseller</title><link rel="icon" href="'+PREFIX+'/assets/favicon.svg"><link rel="stylesheet" href="'+PREFIX+'/assets/panel.css?v='+PORTAL_ASSET_VERSION+'"></head><body><div id="portal-root"></div><script src="'+PREFIX+'/assets/panel.js?v='+PORTAL_ASSET_VERSION+'" defer></script></body></html>',{headers:{...headers,'Content-Type':'text/html; charset=utf-8','Content-Security-Policy':csp}});}
   diagnostic.phase('response');if(response.status>=500)result=diagnostic.failure(result,response.status,undefined,'upstream_http');
   const extra={...([401,403].includes(response.status)?{'Set-Cookie':cookie('',0)}:{}),...(response.status===429&&/^\d{1,3}$/.test(response.headers.get('Retry-After')||'')?{'Retry-After':response.headers.get('Retry-After')}:{})};return json(result,response.status,extra);
  }catch(error){return json(diagnostic.failure({error:'owner_unavailable',message:'No se pudo comprobar el acceso. Vuelve al administrador principal.',final:false},503,error),503);}finally{readDeadline?.cleanup();}
