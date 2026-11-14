@@ -23,7 +23,7 @@ try{
  await context.route(/^https:\/\/(resellers|api)\.snaptvnow\.com\//,async route=>{
   const req=route.request(),url=new URL(req.url());let response;
   if(url.pathname.endsWith('/api/panel')){
-   if(req.method()==='POST'){const body=req.postDataJSON();writes.push(body);assert.equal(body.expectedActorId,snapshot().actor.id);if(body.action==='trial.policy'){assert.equal(ownerMode,true);trialPolicy={enabled:body.enabled?1:0,minutes:body.minutes,daily_limit:body.dailyLimit,active_limit:body.activeLimit,revision:trialPolicy.revision+1};}response=Response.json({actorId:snapshot().actor.id,ok:true,id:body.lineId||'fixture-trial',trial:body.action==='line.trial',creditsSpent:0});}
+   if(req.method()==='POST'){const body=req.postDataJSON();writes.push(body);assert.equal(body.expectedActorId,snapshot().actor.id);if(body.action==='trial.policy'){assert.equal(ownerMode,true);trialPolicy={enabled:body.enabled?1:0,minutes:body.durations[0],durationOptions:body.durations.map((minutes,index)=>({id:'option-'+(index+1),minutes})),daily_limit:body.dailyLimit,active_limit:body.activeLimit,revision:trialPolicy.revision+1};}response=Response.json({actorId:snapshot().actor.id,ok:true,id:body.lineId||'fixture-trial',trial:body.action==='line.trial',creditsSpent:0});}
    else response=Response.json(url.searchParams.has('lineId')?line:snapshot());
   }else{
    const request=new Request(req.url(),{method:req.method(),headers:await req.allHeaders()});
@@ -60,17 +60,30 @@ try{
  await dialog.waitFor({state:'hidden'});await page.setViewportSize({width:1280,height:1000});
  await page.getByRole('button',{name:'Reglas',exact:true}).click();await page.getByRole('button',{name:'Configurar pruebas',exact:true}).click();dialog=page.locator('dialog[open]');
  await page.setViewportSize({width:390,height:1000});
- assert.equal(await dialog.locator('[name=trialDurationAmount]').inputValue(),'1');assert.equal(await dialog.locator('[name=trialDurationUnit]').inputValue(),'hours');
- await dialog.locator('[name=trialDurationAmount]').fill('3');await dialog.locator('[name=trialDurationUnit]').selectOption('days');
- assert.equal(await dialog.locator('[name=minutes]').inputValue(),'4320');assert.equal(await dialog.locator('form').evaluate(form=>form.checkValidity()),true);
+ assert.equal(await dialog.locator('.trial-duration-editor').count(),3);
+ for(const [index,amount,unit,minutes] of [[1,'2','hours','120'],[2,'1','days','1440'],[3,'14','days','20160']]){
+  await dialog.locator('[name=trialDurationAmount'+index+']').fill(amount);await dialog.locator('[name=trialDurationUnit'+index+']').selectOption(unit);
+  assert.equal(await dialog.locator('[name=minutes'+index+']').inputValue(),minutes);
+ }
+ assert.equal(await dialog.locator('form').evaluate(form=>form.checkValidity()),true);
+ fs.mkdirSync('artifacts',{recursive:true});await dialog.screenshot({path:'artifacts/owner-three-trial-options-mobile.png'});
  const changed=page.waitForRequest(req=>req.method()==='POST'&&req.url().includes('/api/panel')&&req.postDataJSON()?.action==='trial.policy');
- await dialog.getByRole('button',{name:'Guardar',exact:true}).click();assert.equal((await changed).postDataJSON().minutes,4320);await dialog.waitFor({state:'hidden'});
+ await dialog.getByRole('button',{name:'Guardar',exact:true}).click();assert.deepEqual((await changed).postDataJSON().durations,[120,1440,20160]);await dialog.waitFor({state:'hidden'});
  ownerMode=false;await page.setViewportSize({width:1280,height:1000});await page.goto('https://resellers.snaptvnow.com/?view=lines');
  await page.getByRole('button',{name:'Reglas',exact:true}).click();assert.equal(await page.getByRole('button',{name:'Configurar pruebas',exact:true}).count(),0);
  await page.goto('https://resellers.snaptvnow.com/?view=lines');await page.setViewportSize({width:390,height:1000});await page.getByRole('button',{name:'Generar prueba',exact:true}).click();dialog=page.locator('dialog[open]');
- assert.equal(await dialog.locator('[name=trialDurationAmount],[name=trialDurationUnit],[name=minutes]').count(),0);
- assert.ok(await dialog.locator('input[readonly]').evaluateAll(inputs=>inputs.some(input=>input.value==='3 días desde la creación · automático')));
+ assert.equal(await dialog.locator('[name^=trialDurationAmount],[name^=trialDurationUnit],[name^=minutes]').count(),0);
+ const choices=dialog.locator('[name=trialDurationOption]');assert.deepEqual(await choices.locator('option').allTextContents(),['2 horas','1 día','14 días']);
+ for(const [value,label] of [['option-1','2 horas'],['option-2','1 día'],['option-3','14 días']]){
+  await choices.selectOption(value);assert.ok(await dialog.locator('input[readonly]').evaluateAll((inputs,label)=>inputs.some(input=>input.value===label+' desde la creación · automático'),label));
+ }
+ await dialog.locator('[name=label]').fill('Cliente con duración elegida');await dialog.locator('[name=username]').fill('ClIeNtE14Dias');
+ await dialog.screenshot({path:'artifacts/reseller-three-trial-options-mobile.png'});
+ const selected=page.waitForRequest(req=>req.method()==='POST'&&req.url().includes('/api/panel')&&req.postDataJSON()?.action==='line.trial');
+ await dialog.getByRole('button',{name:'Generar prueba · 0 créditos',exact:true}).click();const selection=(await selected).postDataJSON();await dialog.waitFor({state:'hidden'});
+ assert.equal(selection.trialDurationOption,'option-3');assert.equal(selection.trialPolicyRevision,1);assert.equal(selection.username,'ClIeNtE14Dias');assert.ok(!('minutes' in selection));assert.ok(!('durations' in selection));
  assert.deepEqual(errors,[]);
- assert.equal(writes.filter(body=>body.action==='line.trial').length,2);
- console.log('PASS: production reseller assets submit empty contact/notes on mobile and desktop; owner expiry uses the selected client without typed confirmation; owner custom duration is inherited read-only by resellers.');
+ assert.equal(writes.filter(body=>body.action==='line.trial').length,3);
+ console.log('PASS: production reseller assets submit empty contact/notes on mobile and desktop; owner expiry uses the selected client; owner publishes three durations and resellers can only choose one of them.');
+
 }finally{await browser?.close();await runtime?.dispose();}
