@@ -46,6 +46,21 @@ try{
   await dialog.getByRole('button',{name:'Generar prueba · 0 créditos',exact:true}).click();const body=(await posted).postDataJSON();
   assert.equal(body.accountId,target.id);assert.equal(body.username,username);assert.ok(!body.customer);assert.ok(!body.notes);await dialog.waitFor({state:'hidden'});
  }
+ for(const mode of [false,true])for(const width of [390,1280]){
+  ownerMode=mode;await page.setViewportSize({width,height:1000});
+  await page.goto(mode?'https://api.snaptvnow.com/owner-panel/?view=lines&slug=fixture-reseller':'https://resellers.snaptvnow.com/?view=lines');
+  await page.getByRole('button',{name:'Acciones de '+line.username,exact:true}).click();let archiveDialog=page.locator('dialog[open]');
+  await archiveDialog.getByRole('button',{name:'Eliminar línea (archivar)',exact:true}).click();archiveDialog=page.locator('dialog[open]');
+  assert.equal(await archiveDialog.locator('[name=confirmUsername]').count(),0,'archive uses the selected client without typed username confirmation');
+  assert.ok((await archiveDialog.innerText()).includes(line.username),'confirmation identifies the selected client');
+  await archiveDialog.locator('[name=reason]').fill('Archivo ficticio solicitado');
+  assert.equal(await archiveDialog.locator('form').evaluate(form=>form.checkValidity()),true);
+  if(!mode&&width===390)await archiveDialog.screenshot({path:'artifacts/reseller-archive-without-retyping-mobile.png'});
+  const archived=page.waitForRequest(req=>req.method()==='POST'&&req.url().includes('/api/panel')&&req.postDataJSON()?.action==='line.archive');
+  await archiveDialog.getByRole('button',{name:'Confirmar archivo',exact:true}).click();const archiveBody=(await archived).postDataJSON();await archiveDialog.waitFor({state:'hidden'});
+  assert.equal(archiveBody.lineId,line.id);assert.equal(archiveBody.revision,0);assert.equal(archiveBody.expectedActorId,mode?'owner':target.id);assert.equal('confirmUsername' in archiveBody,false);
+ }
+ assert.equal(writes.filter(body=>body.action==='line.archive').length,4);
  ownerMode=true;await page.setViewportSize({width:390,height:1000});await page.goto('https://api.snaptvnow.com/owner-panel/?view=lines&slug=fixture-reseller');
  assert.ok((await page.locator('script[src*="/assets/panel.js"]').getAttribute('src')).includes('v='+PORTAL_ASSET_VERSION));
  await page.getByRole('button',{name:'Editar '+line.username,exact:true}).click();let dialog=page.locator('dialog[open]');
@@ -84,6 +99,6 @@ try{
  assert.equal(selection.trialDurationOption,'option-3');assert.equal(selection.trialPolicyRevision,1);assert.equal(selection.username,'ClIeNtE14Dias');assert.ok(!('minutes' in selection));assert.ok(!('durations' in selection));
  assert.deepEqual(errors,[]);
  assert.equal(writes.filter(body=>body.action==='line.trial').length,3);
- console.log('PASS: production reseller assets submit empty contact/notes on mobile and desktop; owner expiry uses the selected client; owner publishes three durations and resellers can only choose one of them.');
+ console.log('PASS: production reseller assets submit empty contact/notes on mobile and desktop; owner expiry and owner/reseller archive use the selected client without retyping; owner publishes three durations and resellers can only choose one of them.');
 
 }finally{await browser?.close();await runtime?.dispose();}
