@@ -7,6 +7,8 @@ import {once} from 'node:events';
 import {join} from 'node:path';
 import {createHTTPSProxy} from 'workers-fetch-proxy/https';
 import {subtls} from 'workers-fetch-proxy/subtls';
+import {privateConnectionProbe} from '../private-connection-probe.mjs';
+import {connect as fixtureConnect} from './cloudflare-socket-fixture.mjs';
 
 const root=readFileSync(join(process.env.MERIDIANO_TLS_FIXTURE,'root.pem'),'utf8');
 const credentials={cert:readFileSync(join(process.env.MERIDIANO_TLS_FIXTURE,'server.pem')),
@@ -30,7 +32,7 @@ const proxy=tls.createServer(credentials, socket=>{
       socket.end('HTTP/1.1 407 Proxy Authentication Required\r\nContent-Length: 0\r\n\r\n');return;
     }
     const target=head.split('\r\n')[0];
-    if(!/^CONNECT (origin|wrong)\.test:443 HTTP\/1\.1$/.test(target)){socket.destroy();return}
+    if(!/^CONNECT (?:(origin|wrong)\.test|www\.dailymotion\.com):443 HTTP\/1\.1$/.test(target)){socket.destroy();return}
     const onward=net.connect(origin.address().port,'127.0.0.1',()=>{
       socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');socket.pipe(onward);onward.pipe(socket);
     });
@@ -53,7 +55,21 @@ try{
   await assert.rejects(()=>make('wrong-password').fetch('https://origin.test/'),/407/);
   await assert.rejects(()=>make().fetch('https://wrong.test/'),/name|match|host/i);
   await assert.rejects(()=>make('fixture-password','').fetch('https://origin.test/'),/root|trust|certificate/i);
-  console.log(JSON.stringify({result:'PASS',checks:['TLS inside TLS with certificate verification','proxy authentication','signed query and range preserved','proxy credentials not forwarded','bad credentials rejected','wrong hostname rejected','untrusted certificate rejected'],localRoundTripMs:elapsed,realSurfsharkTested:false,realMeridianoTested:false}));
+  let attempts=0;
+  const localConnect=(address,options)=>{
+    attempts++;assert.equal(address.hostname,'ve-car.prod.surfshark.com');assert.equal(address.port,443);
+    return fixtureConnect({...address,hostname:'proxy.test'},options);
+  };
+  const ownerToken='fixture-only-owner-token-'.repeat(2);
+  const env={MERIDIANO_PROBE_TOKEN:ownerToken,SURFSHARK_SERVICE_USERNAME:'fixture-user',SURFSHARK_SERVICE_PASSWORD:'fixture-password'};
+  const privateRequest=()=>new Request('https://owner-private.test/',{method:'POST',headers:{Authorization:'Bearer '+ownerToken}});
+  assert.equal((await privateConnectionProbe(new Request('https://owner-private.test/'),env,localConnect)).status,403);
+  assert.equal(attempts,0,'private probe cannot open sockets before owner authentication');
+  const result=await (await privateConnectionProbe(privateRequest(),env,localConnect)).json();
+  assert.equal(result.proxyStatus,200);assert.equal(result.liveMediaVerified,false);
+  const denied=await (await privateConnectionProbe(privateRequest(),{...env,SURFSHARK_SERVICE_PASSWORD:'wrong'},localConnect)).json();
+  assert.equal(denied.proxyStatus,407);
+  console.log(JSON.stringify({result:'PASS',checks:['TLS inside TLS with certificate verification','proxy authentication','signed query and range preserved','proxy credentials not forwarded','bad credentials rejected','wrong hostname rejected','untrusted certificate rejected','private probe owner authentication and fixed destination'],localRoundTripMs:elapsed,realSurfsharkTested:false,realMeridianoTested:false}));
 }finally{
   for(const socket of connections)socket.destroy();
   await Promise.all([new Promise(resolve=>proxy.close(resolve)),new Promise(resolve=>origin.close(resolve))]);

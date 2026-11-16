@@ -22,4 +22,6 @@ Read-only checks on November 15, 2026 (America/Chicago):
 
 Next step, if authorized and supported: test the real account privately, with proper secret storage, no extra paid resources, and no new public diagnostic surface. Require actual live media and normal authenticated DNS playback before publishing the channel. Meridiano remains unavailable in the catalog.
 
+The [candidate private probe function](../private-connection-probe.mjs) is prepared for review and tested locally. It is not connected to an HTTP route. It requires a caller-owned runtime secret (`MERIDIANO_PROBE_TOKEN`), accepts POST only, uses a fixed Surfshark hostname and a fixed public Dailymotion CONNECT target, checks TLS normally, reads at most the response header and closes after eight seconds. Optional Surfshark credentials come only from runtime secrets. It never relays arbitrary traffic or returns credentials. A successful CONNECT is explicitly distinguished from country verification and live video. Wiring or deploying it for a real test remains unapproved after the automatic review rejection.
+
 Primary references: [proxy implementation](https://github.com/Timo972/workers-fetch-proxy), [TLS dependency](https://github.com/jawj/subtls), [official video status](https://api.dailymotion.com/video/x9sxu9y?fields=geoblocking,live_status,title).
