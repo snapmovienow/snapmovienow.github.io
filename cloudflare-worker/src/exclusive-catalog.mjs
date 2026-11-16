@@ -4,6 +4,7 @@ import {supportedSourcePage} from './gnula-source.mjs';
 import {isAdult} from './content-permissions.mjs';
 import {writeAudit} from './security.mjs';
 import {ownedMediaDescriptor} from './owned-media-source.mjs';
+import {cleanSeriesSupplement,LQSA_SUPPLEMENT_ID} from './series-supplement.mjs';
 const INDEX='exclusive:index',ITEM='exclusive:item:',COVER='exclusive:cover:',MAX_ITEMS=300;
 export const exclusiveId=value=>typeof value==='string'&&/^[a-z0-9][a-z0-9_-]{1,150}$/.test(value);
 const fail=(code='exclusive_input',status=400)=>{throw Object.assign(Error(code),{status})};
@@ -38,7 +39,10 @@ function clean(input,old){
  const page=input.type==='movie'?address(input.page,input.mode):input.page?address(input.page,input.mode):'';
  if(input.type==='series'&&input.visible&&!parsed.length)fail('exclusive_episodes');
  const usageKind=input.usageKind===undefined?old?.usageKind:input.usageKind;if(usageKind!==undefined&&usageKind!==null&&usageKind!==''&&usageKind!=='channel'||usageKind==='channel'&&input.type!=='movie')fail();
- const row={...(usageKind==='channel'?{usageKind}:{}),id:input.id,type:input.type,name,source,mode:input.mode,page,poster,year,plot,visible:input.visible,adult:input.adult,episodes:parsed,profileServer:old?.profileServer||'exclusive',preferredEmbed:old?.mode===input.mode&&old?.page===page?old.preferredEmbed||null:null};
+ const supplementInput=input.supplement===undefined?old?.supplement:input.supplement;
+ const supplement=supplementInput===undefined?undefined:cleanSeriesSupplement(supplementInput);
+ if(supplement&&(input.id!==LQSA_SUPPLEMENT_ID||input.type!=='series'||input.mode!=='direct'))fail('series_supplement_input');
+ const row={...(usageKind==='channel'?{usageKind}:{}),...(supplement?{supplement}:{}),id:input.id,type:input.type,name,source,mode:input.mode,page,poster,year,plot,visible:input.visible,adult:input.adult,episodes:parsed,profileServer:old?.profileServer||'exclusive',preferredEmbed:old?.mode===input.mode&&old?.page===page?old.preferredEmbed||null:null};
  if(new TextEncoder().encode(JSON.stringify(row)).length>80000)fail('exclusive_size');return row;
 }
 async function index(store){let value=await store.get(INDEX);if(value)return value;value={revision:1,ids:[],updatedAt:Date.now()};for(const item of GNULA_CATALOG){const id=item.stream_id||item.series_id,row={id,type:item.type,name:item.name,year:item.year||null,source:'GNULA',mode:'gnula',page:item.page,poster:item.stream_icon?.startsWith('//')?'https:'+item.stream_icon:item.stream_icon||item.cover||'',plot:item.plot||'',visible:true,adult:isAdult(item),episodes:item.episodes||[],profileServer:'gnula',preferredEmbed:item.preferredEmbed||null,revision:1,playbackRevision:1,createdAt:Date.now(),updatedAt:Date.now()};value.ids.push(id);await store.put(ITEM+id,row);}await store.put(INDEX,value);return value;}
@@ -76,7 +80,7 @@ export async function exclusiveCatalogRoute(store,path,body){
    if(!old&&value.ids.length>=MAX_ITEMS)fail('exclusive_capacity',409);const row=clean(input,old);
    if(row.poster.startsWith('/exclusive-cover/')&&!await store.get(COVER+row.poster.split('/').at(-1)))fail('exclusive_cover');
    const all=await exclusiveSnapshot(store),newIds=new Set(mediaIds(row));if(all.items.some(other=>other.id!==row.id&&mediaIds(other).some(id=>newIds.has(id))))fail('exclusive_duplicate',409);
-   const playbackChanged=!old||JSON.stringify([old.type,old.mode,old.page,old.visible,old.adult,old.episodes])!==JSON.stringify([row.type,row.mode,row.page,row.visible,row.adult,row.episodes]);
+   const playbackChanged=!old||JSON.stringify([old.type,old.mode,old.page,old.visible,old.adult,old.episodes,old.supplement])!==JSON.stringify([row.type,row.mode,row.page,row.visible,row.adult,row.episodes,row.supplement]);
    const saved={...row,revision:(old?.revision||0)+1,playbackRevision:(old?.playbackRevision||0)+(playbackChanged?1:0),createdAt:old?.createdAt||Date.now(),updatedAt:Date.now()};
    if(new TextEncoder().encode(JSON.stringify(all.items.filter(x=>x.id!==row.id).concat(saved))).length>500000)fail('exclusive_capacity',409);
    await store.put(ITEM+row.id,saved);if(!old)value.ids.push(row.id);value.revision++;value.updatedAt=Date.now();await store.put(INDEX,value);await writeAudit(store,body.actor,old?'exclusive_edited':'exclusive_added',row.id);return Response.json({ok:true,item:saved,revision:value.revision});

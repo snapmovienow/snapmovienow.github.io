@@ -86,7 +86,8 @@ async function details(params, kind, auth, deps, base) {
   if (deps.localSeries?.matches(record)) return kind==='series_list'?deps.localSeries.details({record,auth,base,register:deps.register,catalog:deps.catalog,adultPolicy:deps.adultPolicy}):deps.json({error:'not_found'},404);
   if (auth.user.permissions.adults === false && !await deps.adultPolicy.allowed(record)) return deps.json({error:'adult_content_disabled'},403);
   const action = kind === 'movie' ? 'get_vod_info' : 'get_series_info';
-  const data = await deps.catalog(action, record.server, {[kind === 'movie' ? 'vod_id' : 'series_id']: record.upstreamId});
+  let data = await deps.catalog(action, record.server, {[kind === 'movie' ? 'vod_id' : 'series_id']: record.upstreamId});
+  if(kind==='series_list'&&deps.supplementInfo)data=await deps.supplementInfo(data,{server:record.server,seriesId:record.upstreamId},auth.user.permissions);
   if (auth.user.permissions.adults === false && (isAdult(data.info) || isAdult(data.movie_data))) return deps.json({error:'adult_content_disabled'},403);
   if (kind === 'movie') {
     const row = {...data.movie_data, stream_id: Number(publicId), container_extension: record.ext || 'mp4',smn_profile:{type:'movie',id:record.upstreamId,server:record.server}};
@@ -142,6 +143,7 @@ export async function handleXtream(req, deps) {
     if (!record || record.kind !== expected) return deps.json({error: 'not_found'}, 404);
     if (deps.localLive?.matches(record)) return kind==='live'?deps.localLive.play(req,auth,{...record,ext:ext.toLowerCase()}):deps.json({error:'not_found'},404);
     if (deps.localSeries?.matches(record)) return kind==='series'?deps.localSeries.play(req,auth,{...record,ext:ext.toLowerCase()}):deps.json({error:'not_found'},404);
+    if(kind==='series'&&deps.supplementPlay){const local=await deps.supplementPlay(req,auth,{...record,ext:ext.toLowerCase()});if(local)return local;}
     if (auth.user.permissions.adults === false && !await deps.adultPolicy.allowed(record)) return deps.json({error:'adult_content_disabled'},403);
     deps.onResolvedMedia?.(kind,publicId);
     return deps.play(req, auth.session, {...record, type: kind, ext: ext.toLowerCase()});

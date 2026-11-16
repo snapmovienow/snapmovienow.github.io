@@ -8,6 +8,7 @@ import {playbackMonitorClient,attachPlaybackQuality} from './native-playback-qua
 import {requestConnectionClient} from './connection-monitor.mjs';
 import {selectLiveFlowDiagnostic,createLiveFlowMonitor,createLiveStartupObserver} from './live-flow-diagnostics.mjs';
 import {handleXtream} from './xtream.mjs';
+import {epToExclusiveId,matchesLqsaTitle} from './series-supplement.mjs';
 import {accountProfile} from './profiles.mjs';
 import {createLiveVariantFallback} from './live-variants.mjs';
 import {LIVE_FAILURE_ATTEMPTS,LIVE_NEXT_LIMIT,nextChannelFailure,cachedNextChannels} from './live-next-channel.mjs';
@@ -178,7 +179,15 @@ export function createXtreamBridge(deps) {
       return response;
     };
     const profile=(session,operation,patches)=>accountProfile(env,session,operation,patches);
-    try { const special=deps.exclusives?await deps.exclusives.xtream(req,env,ctx,authenticate):null;return special||await handleXtream(req,{onResolvedMedia:(type,id)=>{setResolvedMedia(trace,type,id);flowPublicId=id;},authenticate,catalog,register,resolve,play,profile,localLive:deps.exclusives?.liveXtream?.(env,ctx),localSeries:deps.exclusives?.seriesXtream?.(env,ctx),adultPolicy:createAdultPolicy(catalog,rawCatalog.inspect),json:deps.json}); }
+    const adultPolicy=createAdultPolicy(catalog,rawCatalog.inspect);
+    const supplementPlay=async(request,auth,record)=>{
+      if(!deps.exclusives?.prepareSupplementNative||record.kind!=='episode'||!record.parentId||!epToExclusiveId(record.upstreamId))return null;
+      if(!auth.user.permissions.adults&&!await adultPolicy.allowed({kind:'series_list',server:record.server,upstreamId:record.parentId}))return deps.json({error:'adult_content_disabled'},403);
+      const prepared=await deps.exclusives.prepareSupplementNative(request,env,auth.session,{server:record.server,seriesId:record.parentId,id:record.upstreamId},{validateRoot:async()=>matchesLqsaTitle((await rawCatalog('get_series_info',record.server,{series_id:record.parentId}))?.info?.name)});
+      if(!prepared)return null;
+      try{return await deps.exclusives.media(new Request(prepared.url,request),env,ctx);}catch(error){await privateCall('/release',{sid:auth.session.sid,lease_id:prepared.lease_id,request_id:prepared.request_id});throw error;}
+    };
+    try { const special=deps.exclusives?await deps.exclusives.xtream(req,env,ctx,authenticate):null;return special||await handleXtream(req,{onResolvedMedia:(type,id)=>{setResolvedMedia(trace,type,id);flowPublicId=id;},authenticate,catalog,register,resolve,play,profile,supplementPlay,supplementInfo:deps.exclusives?.supplementInfo?(data,context,permissions)=>deps.exclusives.supplementInfo(env,data,context,permissions):undefined,localLive:deps.exclusives?.liveXtream?.(env,ctx),localSeries:deps.exclusives?.seriesXtream?.(env,ctx),adultPolicy,json:deps.json}); }
     catch(error) { if(req.signal.aborted||['playback_superseded','playback_expired'].includes(error.message))return deps.json({error:'playback_superseded'},410);if(error.status)return deps.json({error:error.message},error.status);return deps.json({error:['media_origin_unapproved','provider_unavailable','provider_inactive','panel_unavailable'].includes(error.message)?error.message:'xtream_unavailable'},502); }
   };
 }
