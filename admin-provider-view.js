@@ -42,6 +42,20 @@ export function createProviderView({document:doc,api,notice,onInventory=()=>{}})
   list.hidden=!list.childElementCount;
  }
  function users(row){const box=node('div');if(!row.reservations.length)box.append(node('span','Sin usuario SNAP','muted'));else for(const reservation of row.reservations){box.append(node('div',reservation.username+' · '+kinds[reservation.type]+' · '+(reservation.client==='xtream'?'App Xtream':'Web'),'provider-user'));const activity=activityLabels(reservation);box.append(node('span',activity.title+(activity.episode?' · '+activity.episode:''),'provider-user-content'))}return box}
+ function rotationPolicy(policy){
+  let caption=$('providerRotationPolicy');
+  if(!caption){const anchor=$('providerUpdated');if(!anchor)return;caption=node('p',undefined,'provider-caption');caption.id='providerRotationPolicy';anchor.after(caption)}
+  caption.hidden=!policy?.enabled;
+  caption.textContent=policy?.enabled?'Rotación automática: mínimo '+policy.minHours+' horas; objetivo de '+policy.minHours+' a '+policy.targetHours+' horas, con preferencia por la medianoche del cliente. Se conserva la reproducción activa; después de '+policy.overdueHours+' horas sigue pendiente hasta una pausa segura. Se prefieren cuentas con '+policy.preferredMonths+' meses de vigencia, o al menos '+policy.minimumMonths+'; las de menor vigencia quedan para falta de alternativas.':'';
+ }
+ function rotationStatus(rotation){
+  if(!rotation)return '';
+  if(rotation.status==='overdue')return 'Rotación pendiente · se espera una pausa segura.';
+  if(rotation.status==='eligible')return 'Lista para rotar en una pausa segura.';
+  if(!rotation.dueAt)return '';
+  let date;try{date=new Intl.DateTimeFormat('es',{dateStyle:'short',timeStyle:'short',...(rotation.timeZone?{timeZone:rotation.timeZone}:{})}).format(rotation.dueAt)}catch{return ''}
+  return 'Rotación disponible desde '+date+(rotation.timeZone?' · '+rotation.timeZone:'');
+ }
  function render(){
   if(!data)return;
   const scope=filters();renderSourceInventory(scope.source);
@@ -60,7 +74,7 @@ export function createProviderView({document:doc,api,notice,onInventory=()=>{}})
   $('providerPage').textContent=selected.length?`${page*size+1}–${Math.min((page+1)*size,selected.length)} de ${selected.length} cuentas`:'0 cuentas';
  }
  function show(next){
-  data=next;sources(data.sources);
+  data=next;sources(data.sources);rotationPolicy(data.rotationPolicy);
   for(const [id,value] of Object.entries({providerActive:data.summary.usableAccounts??data.summary.activeAccounts,providerCapacity:data.summary.totalCapacity,providerReported:data.summary.reported,providerReserved:data.summary.reserved,providerAvailable:data.summary.available}))$(id).textContent=String(value);
   const {accounts,receivedRows,activeAccounts}=data.summary;
   $('providerTotal').textContent=receivedRows===undefined?accounts+' cuentas guardadas':[
@@ -68,7 +82,7 @@ export function createProviderView({document:doc,api,notice,onInventory=()=>{}})
    activeAccounts+' cuentas activas registradas',accounts+' cuentas únicas guardadas'
   ].join(' · ');
   const assignments=$('providerAssignments');assignments.replaceChildren();
-  for(const item of data.assignments){const card=node('article',undefined,'provider-assignment'),identity=node('div',undefined,'provider-assignment-identity');identity.append(node('strong',item.username),node('span','→','muted'),node('strong',item.accountUsername,'account-pill'),node('span','Reserva activa','provider-badge is-active'));card.append(identity);const content=node('div',undefined,'provider-assignment-content'),activity=activityLabels(item);content.append(node('p',(kinds[item.type]||kinds.unknown)+' · '+(item.client==='xtream'?'App Xtream':'Web'),'muted'),node('strong',activity.title));if(activity.episode)content.append(node('p',activity.episode));if(activity.detail)content.append(node('p',activity.detail,'muted'));if(item.lastSeenAt)content.append(node('span','Última actividad: '+new Date(item.lastSeenAt).toLocaleTimeString(),'provider-assignment-time'));card.append(content);assignments.append(card)}
+  for(const item of data.assignments){const card=node('article',undefined,'provider-assignment'),identity=node('div',undefined,'provider-assignment-identity');identity.append(node('strong',item.username),node('span','→','muted'),node('strong',item.accountUsername,'account-pill'),node('span','Reserva activa','provider-badge is-active'));card.append(identity);const content=node('div',undefined,'provider-assignment-content'),activity=activityLabels(item);content.append(node('p',(kinds[item.type]||kinds.unknown)+' · '+(item.client==='xtream'?'App Xtream':'Web'),'muted'),node('strong',activity.title));if(activity.episode)content.append(node('p',activity.episode));if(activity.detail)content.append(node('p',activity.detail,'muted'));if(item.lastSeenAt)content.append(node('span','Última actividad: '+new Date(item.lastSeenAt).toLocaleTimeString(),'provider-assignment-time'));const rotation=rotationStatus(item.rotation);if(rotation)content.append(node('p',rotation,'provider-caption'));card.append(content);assignments.append(card)}
   $('providerNoAssignments').hidden=!!data.assignments.length;
   const times=[...data.sources,...data.accounts].map(a=>a.syncedAt).filter(Boolean),synced=times.length?Math.min(...times):null;
   $('providerUpdated').textContent=synced?'Lectura guardada más antigua: '+new Date(synced).toLocaleString():'Inventario pendiente de comprobar.';
@@ -82,7 +96,7 @@ export function createProviderView({document:doc,api,notice,onInventory=()=>{}})
   const work=(async()=>{try{const next=await api('provider-dashboard',{refresh});if(epoch!==current)return;show(next)}catch(error){if(epoch!==current)return;const warning=$('providerWarning');warning.textContent=data?'No se pudo actualizar. Conservamos la última vista; sus cupos pueden haber cambiado.':'No se pudo cargar el inventario. Pulsa Actualizar para intentarlo de nuevo.';warning.hidden=false;onInventory(data?{summary:data.summary,generatedAt:data.generatedAt,stale:true}:null);if(!data)notice(error.message)}finally{if(epoch===current){pending=null;button.disabled=false;button.textContent='Actualizar'}}})();
   pending=work;return work;
  }
- function clear(){epoch++;pending=null;data=null;page=0;for(const id of ['providerRows','providerCards','providerAssignments'])$(id).replaceChildren();const sourceInventory=$('providerSourceInventory');if(sourceInventory){sourceInventory.replaceChildren();sourceInventory.hidden=true}for(const id of ['providerActive','providerCapacity','providerReported','providerReserved','providerAvailable'])$(id).textContent='—';$('providerRefresh').disabled=false;$('providerRefresh').textContent='Actualizar';$('providerSearch').value='';$('providerState').value='all';sources([]);$('providerTotal').textContent='Cargando cuentas…';$('providerUpdated').textContent='Inventario pendiente de comprobar.';$('providerWarning').textContent='';$('providerWarning').hidden=true;$('providerNoAssignments').hidden=false;$('providerPage').textContent='0 cuentas';$('providerPrevious').disabled=true;$('providerNext').disabled=true}
+ function clear(){epoch++;pending=null;data=null;page=0;for(const id of ['providerRows','providerCards','providerAssignments'])$(id).replaceChildren();rotationPolicy(null);const sourceInventory=$('providerSourceInventory');if(sourceInventory){sourceInventory.replaceChildren();sourceInventory.hidden=true}for(const id of ['providerActive','providerCapacity','providerReported','providerReserved','providerAvailable'])$(id).textContent='—';$('providerRefresh').disabled=false;$('providerRefresh').textContent='Actualizar';$('providerSearch').value='';$('providerState').value='all';sources([]);$('providerTotal').textContent='Cargando cuentas…';$('providerUpdated').textContent='Inventario pendiente de comprobar.';$('providerWarning').textContent='';$('providerWarning').hidden=true;$('providerNoAssignments').hidden=false;$('providerPage').textContent='0 cuentas';$('providerPrevious').disabled=true;$('providerNext').disabled=true}
  for(const id of ['providerSearch','providerState','providerSource'])$(id).addEventListener(id==='providerSearch'?'input':'change',()=>{page=0;render()});
  $('providerPrevious').onclick=()=>{page--;render()};$('providerNext').onclick=()=>{page++;render()};$('providerRefresh').onclick=()=>load(true);
  return {load,clear};

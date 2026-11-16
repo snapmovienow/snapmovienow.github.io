@@ -20,6 +20,8 @@ import {initialRangeOutOfBounds} from './initial-range-evidence.mjs';
 import {recordChannelObservation,readChannelObservations} from './provider-channel-observations.mjs';
 import {affinityGroup,providerAffinity,rememberProvider,forgetProvider,recentlyValidated,pruneAffinities} from './provider-affinity.mjs';
 import {assignmentKey,usableProvider,assignedProvider,saveAssignment,mediaRecentlyFailed,recentAccountProof} from './provider-assignment.mjs';
+import {rotationPlan,rankRotationCandidates,logicalMediaKey} from './provider-rotation.mjs';
+import {rotationEnabled,rememberProviderMedia,commitProviderRotation} from './provider-rotation-state.mjs';
 import {INVENTORY_MAX_AGE_MS,mergeInventories,readInventoryPool} from './provider-inventory.mjs';
 import {exclusiveCatalogRoute,exclusiveSnapshot,selectExclusive,visibleExclusive} from './exclusive-catalog.mjs';
 import {cleanConnectionClient,recordConnectionLimit,updateConnectionQuality,closeResellerConnection} from './connection-monitor.mjs';
@@ -223,7 +225,7 @@ export async function accountsFetch(state,env,req){
  if(p==='/permissions'){const user=await store.get('user:'+normal(b.username));return answer(contentPermissions(user?.permissions))}
  if(p==='/provider')return answer(await store.get('provider')||{});
  if(p==='/pool')return answer(await readInventoryPool(store)||{lines:[],syncedAt:0,attemptedAt:0});
- if(p==='/provider-dashboard')return store.transaction(async tx=>answer(await providerDashboard(tx,Date.now(),leases.in(tx))));
+ if(p==='/provider-dashboard')return store.transaction(async tx=>answer(await providerDashboard(tx,Date.now(),leases.in(tx),rotationEnabled(env))));
  if(p==='/pool-sync')return store.transaction(async tx=>{
   const {lines}=b,now=Date.now();
   if(b.source){
@@ -322,6 +324,10 @@ export async function accountsFetch(state,env,req){
    const pool=await readInventoryPool(tx),provider=pool?.lines.find(p=>p.id===lease.provider_id&&p.credentialKey===lease.providerCredentialKey&&usableProvider(p));
    if(provider){const key='canary-'+assignmentKey(lease.uid);await tx.put(key,saveAssignment(await tx.get(key),affinityGroup(lease),lease.uid,provider));}
   }
+  if(!lease.canary&&lease.rotation&&b.stage==='validation'&&b.ok&&!b.capacityBusy){
+   const pool=await readInventoryPool(tx),provider=pool?.lines.find(p=>p.id===lease.provider_id&&p.credentialKey===lease.providerCredentialKey&&usableProvider(p));
+   if(provider)await commitProviderRotation(tx,lease,provider);
+  }
   await tx.put('provider-health',health);await recordChannelObservation(tx,lease,b,env);return answer({ok:true});
  });
  if(p==='/acquire')return store.transaction(async tx=>{
@@ -343,7 +349,7 @@ export async function accountsFetch(state,env,req){
   // different channel/format is a new lease, not a new CCF account or slot.
   for(const [,l]of owned)rememberProvider(playback,l);
   const group=String(b.server||String(b.mediaKey||'').split('|')[1]||'ccf'),hint=providerAffinity(playback,group,b);
-  if(b.xtream||u.resellerBridge){const used=await local.count({uid:b.uid})-[...sessionLeases.values()].filter(l=>l.uid===b.uid).length;if(used>=3){await local.removeFor({sid:b.sid});await recordConnectionLimit(tx,u,b,used);return answer({error:'user_connection_limit'},409);}}
+  if(b.xtream||u.resellerBridge){let used=await local.count({uid:b.uid})-[...sessionLeases.values()].filter(l=>l.uid===b.uid).length;if(used>=3&&probe?.uid===b.uid&&probe.sid!==b.sid&&await reclaimProbe())used--;if(used>=3){await local.removeFor({sid:b.sid});await recordConnectionLimit(tx,u,b,used);return answer({error:'user_connection_limit'},409);}}
   const activity=cleanPlaybackActivity(b.activity,String(b.mediaKey||'').split('|')[0]);
   const nativeRangeId=b.xtream===true&&playback.nativeMediaKey===b.mediaKey&&typeof b.native_range_id==='string'&&/^[a-zA-Z0-9_-]{1,100}$/.test(b.native_range_id)?b.native_range_id:null;
   const previousRanges=nativeRangeId?owned.find(([,lease])=>lease.request_id===b.request_id&&lease.mediaKey===b.mediaKey)?.[1].nativeRanges:null;
@@ -361,6 +367,16 @@ export async function accountsFetch(state,env,req){
    const eligible=pool.lines.filter(p=>(p.server||'ccf')===group&&usableProvider(p)&&!(b.exclude||[]).includes(p.id));
    const health=await tx.get('provider-health')||{},now=Date.now();
    const profile=await tx.get((canary?'canary-':'')+assignmentKey(u.id)),primary=assignedProvider(profile,group,u.id,pool.lines,now);
+   const binding=profile?.uid===u.id?profile.groups?.[group]:null,enabled=!canary&&rotationEnabled(env);
+   const customerLeases=enabled?await local.active({uid:u.id}):new Map();
+   // A channel change already replaces this session's old request. It may
+   // rotate there, but another device, an in-flight request or a VOD range
+   // keeps its exact provider. Midnight never cancels an existing lease.
+   const continuing=l=>l.request_id===b.request_id||!!logicalMediaKey(l.mediaKey)&&logicalMediaKey(l.mediaKey)===logicalMediaKey(b.mediaKey);
+   const active=Array.from(customerLeases.values()).some(l=>!l.canary&&l.version===u.version&&affinityGroup(l)===group&&(l.sid!==b.sid||continuing(l)));
+   const savedMedia=playback.providerMedia?.[group],lastMedia=savedMedia?.uid===u.id&&savedMedia.version===u.version?savedMedia.mediaKey:owned.find(([,l])=>affinityGroup(l)===group)?.[1].mediaKey||playback.nativeMediaKey;
+   const customerActivity=enabled&&!binding?.timeZone?await tx.get('customer-activity:'+u.id):null;
+   const plan=rotationPlan({binding,primary,now,timeZone:b.client?.serviceCheck?customerActivity?.timeZone:b.client?.timeZone||customerActivity?.timeZone,active,lastMediaKey:lastMedia,mediaKey:b.mediaKey});
    const primaryFailed=primary&&providerCircuitState(health,primary.id,b.mediaKey,now,{ignoreMedia:true}).blocked;
    // Preserve an active viewer's proven assignment. Other viewers' reports
    // cannot evict it; a circuit for a different requested title still applies.
@@ -374,18 +390,34 @@ export async function accountsFetch(state,env,req){
    if(trialProvider&&((hint?.provider_id===trialProvider.id||primary?.id===trialProvider.id)||!eligible.some(p=>permitted(p)&&occupied(p)<p.maxConnections))&&await reclaimProbe())counts.set(String(trialProvider.id),Math.max(0,(counts.get(String(trialProvider.id))||0)-1));
    const candidates=eligible.map(p=>({...p,occupied:occupied(p)})).filter(p=>p.occupied<p.maxConnections-(canary?1:0)).sort((a,b)=>a.occupied/a.maxConnections-b.occupied/b.maxConnections);
    const available=candidates.filter(permitted);
-   const ranked=rankProviderCandidates(available,health,b.mediaKey,now);
-   const preferred=hint&&available.find(p=>p.id===hint.provider_id),home=primary&&!primaryFailed&&!mediaRecentlyFailed(health,primary.id,b.mediaKey,now)&&available.find(p=>p.id===primary.id),selected=preferred||home||ranked[0];
+   const ranked=enabled&&!primary?rankRotationCandidates(available,{lines:eligible,counts,health,mediaKey:b.mediaKey,now}):rankProviderCandidates(available,health,b.mediaKey,now);
+   const preserveHint=hint&&owned.some(([,l])=>l.provider_id===hint.provider_id&&continuing(l));
+   const currentHint=hint&&(!binding?.rotationCount||hint.provider_id===binding.provider_id||hint.assignmentSelectedAt>=binding.selectedAt||preserveHint);
+   const preferred=currentHint&&available.find(p=>p.id===hint.provider_id),home=primary&&!primaryFailed&&!mediaRecentlyFailed(health,primary.id,b.mediaKey,now)&&available.find(p=>p.id===primary.id);
+   const sameVod=/^(movie|series)\|/.test(String(b.mediaKey))&&logicalMediaKey(lastMedia)===logicalMediaKey(b.mediaKey);
+   const continuation=sameVod&&savedMedia?.uid===u.id&&savedMedia.version===u.version&&available.find(p=>p.id===savedMedia.provider_id);
+   const pendingLease=Array.from(customerLeases.values()).find(l=>!l.canary&&!l.providerFailed&&l.version===u.version&&affinityGroup(l)===group&&l.rotation&&l.rotation.previousSelectedAt===binding?.selectedAt&&l.rotation.previousProviderId===binding?.provider_id);
+   const pendingHome=pendingLease&&available.find(p=>p.id===pendingLease.provider_id);
+   // Prefer the eligible local midnight during an already active session.
+   // A real idle/restart opportunity may rotate earlier after the 24h minimum.
+   const waitForMidnight=owned.some(([,l])=>affinityGroup(l)===group)&&now<plan.preferredAt;
+   const rotation=enabled&&plan.eligible&&!waitForMidnight?rankRotationCandidates(available,{primary,lines:eligible,counts,health,mediaKey:b.mediaKey,now})[0]:null;
+   const selected=continuation||(preserveHint&&preferred)||pendingHome||rotation||preferred||home||ranked[0];
    if(!selected){const capacityBusy=candidates.length&&candidates.every(p=>health['account|'+p.id]?.busyUntil>now);const retry=candidates.map(p=>providerCircuitState(health,p.id,b.mediaKey,now).retryAfterMs).filter(Boolean);return answer({error:candidates.length&&!capacityBusy?'provider_temporarily_unavailable':'ccf_capacity',...(retry.length?{retry_after_ms:Math.min(...retry)}:{})},candidates.length&&!capacityBusy?503:409);}
    const previous=b.request_id&&owned.find(([,l])=>l.provider_id===selected.id&&l.providerCredentialKey===selected.credentialKey&&affinityGroup(l)===group&&l.mediaKey===b.mediaKey),sameRequest=previous&&previous[1].request_id===b.request_id;
    if(nativeRangeId&&sameRequest)extra.nativeRanges={...previous[1].nativeRanges,[nativeRangeId]:true};
-   const id=previous?previous[0]:crypto.randomUUID(),trial=claimProviderTrial(health,selected.id,b.mediaKey,id,now,options(selected)),proof=!trial.claimed?recentAccountProof(health,selected,pool.syncedAt,now):0,trustedHint=preferred&&hint.credentialKey===selected.credentialKey,validatedAt=trustedHint&&!trial.claimed?hint.validatedAt:0;
+   const id=previous?previous[0]:crypto.randomUUID(),trial=claimProviderTrial(health,selected.id,b.mediaKey,id,now,options(selected)),proof=!trial.claimed?recentAccountProof(health,selected,pool.syncedAt,now):0,trustedHint=preferred?.id===selected.id&&hint.credentialKey===selected.credentialKey,validatedAt=trustedHint&&!trial.claimed?hint.validatedAt:0;
    if(trial.claimed)await tx.put('provider-health',trial.health);
    for(const [oldId]of sessionLeases)if(oldId!==id)await local.remove(oldId,'channel_changed');
    const lease={...(sameRequest?previous[1]:{}),sid:b.sid,uid:b.uid,username:b.username,version:b.version,provider_id:selected.id,providerServer:group,providerCredentialKey:selected.credentialKey,validatedAt,until:Date.now()+90000,...extra,startedAt:previous?previous[1].startedAt||extra.startedAt:extra.startedAt};
-   await local.put(id,lease);if(canary)await tx.put('background-canary-lease',id);rememberProvider(playback,lease);await tx.put(playbackKey,playback);await recordCustomerActivity(tx,u.id,Date.now(),b.client);
-   if(!canary&&(!primary||primaryFailed))await tx.put(assignmentKey(u.id),saveAssignment(profile,group,u.id,selected,now));
-   return answer({lease_id:id,provider_id:selected.id,encrypted:selected.encrypted,maxConnections:selected.maxConnections,...(previous?{reused:true,request_id:b.request_id}:{}),...(preferred||home?{affinity:true}:{}),...(!trial.claimed&&(preferred||proof)?{validatedRecently:!!proof||!!trustedHint&&recentlyValidated(hint)}:{})});
+   if(enabled&&plan.eligible&&primary&&selected.id!==primary.id)lease.rotation={group,previousProviderId:binding.provider_id,previousProviderKey:binding.provider_key,previousSelectedAt:binding.selectedAt,timeZone:extra.client.timeZone||customerActivity?.timeZone||plan.timeZone,proposedAt:now};
+   else if(pendingHome?.id===selected.id)lease.rotation=pendingLease.rotation;
+   lease.assignmentSelectedAt=lease.rotation?.proposedAt||binding?.selectedAt||now;
+   if(lease.rotation&&proof)await commitProviderRotation(tx,lease,selected,now);
+   await local.put(id,lease);if(canary)await tx.put('background-canary-lease',id);rememberProvider(playback,lease);rememberProviderMedia(playback,group,lease);await tx.put(playbackKey,playback);await recordCustomerActivity(tx,u.id,Date.now(),b.client);
+   const repairClock=enabled&&primary?.id===selected.id&&(plan.selectedAt===null||plan.status==='clock-skew');
+   if(!canary&&(!primary||primaryFailed||repairClock)&&!lease.rotation)await tx.put(assignmentKey(u.id),saveAssignment(profile,group,u.id,selected,now,{...(plan.timeZone?{timeZone:extra.client.timeZone||plan.timeZone}:{}),...(binding?.rotationCount?{rotationCount:binding.rotationCount}:{})}));
+   return answer({lease_id:id,provider_id:selected.id,encrypted:selected.encrypted,maxConnections:selected.maxConnections,...(previous?{reused:true,request_id:b.request_id}:{}),...(preferred?.id===selected.id||home?.id===selected.id?{affinity:true}:{}),...(!trial.claimed&&(preferred?.id===selected.id||proof)?{validatedRecently:!!proof||!!trustedHint&&recentlyValidated(hint)}:{})});
   }
   const nativePrevious=nativeRangeId&&owned.find(([,lease])=>lease.request_id===b.request_id&&lease.mediaKey===b.mediaKey);
   if(nativePrevious){

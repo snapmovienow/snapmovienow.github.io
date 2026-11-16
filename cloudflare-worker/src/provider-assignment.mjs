@@ -6,9 +6,9 @@ export function assignedProvider(profile,group,uid,lines,now=Date.now()){
  const binding=profile?.uid===uid?profile.groups?.[group]:null;
  return binding&&lines.find(p=>p.id===binding.provider_id&&(p.key||p.id)===binding.provider_key&&usableProvider(p,now));
 }
-export function saveAssignment(profile,group,uid,provider,now=Date.now()){
+export function saveAssignment(profile,group,uid,provider,now=Date.now(),details={}){
  const groups={...(profile?.uid===uid?profile.groups:{})};
- groups[group]={provider_id:provider.id,provider_key:provider.key||provider.id,selectedAt:now};
+ groups[group]={provider_id:provider.id,provider_key:provider.key||provider.id,selectedAt:now,...details};
  return {uid,groups:Object.fromEntries(Object.entries(groups).sort((a,b)=>b[1].selectedAt-a[1].selectedAt).slice(0,16))};
 }
 export function mediaRecentlyFailed(health,id,mediaKey,now=Date.now()){

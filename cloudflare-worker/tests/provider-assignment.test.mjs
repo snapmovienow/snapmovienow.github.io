@@ -12,7 +12,9 @@ class Store{
 }
 const realNow=Date.now;let now=realNow();Date.now=()=>now;
 async function fixture(){
- const storage=new Store(),state={storage},env={PLAYBACK_CANARY_USERNAME:'viewer'};
+ // The legacy preference and emergency rollback mode remain supported. Daily
+ // rotation, including its commit races, has a separate enabled-policy suite.
+ const storage=new Store(),state={storage},env={PLAYBACK_CANARY_USERNAME:'viewer',PROVIDER_ROTATION_ENABLED:'false'};
  const lines=['a','b'].map((id,i)=>({id,key:id,server:'ccf',credentialKey:'generation-'+id,encrypted:'sealed-'+id,external:0,maxConnections:3,expiresAt:now+(i+1)*86400000}));
  await storage.put('provider',{mode:'panel'});await storage.put('pool',{lines,syncedAt:now});await storage.put('user:viewer',{id:'viewer-id',username:'viewer',version:1,status:'active'});
  const call=async(path,body)=>{const response=await accountsFetch(state,env,new Request('https://private/accounts'+path,{method:'POST',body:JSON.stringify(body)}));return {status:response.status,data:await response.json()}};
