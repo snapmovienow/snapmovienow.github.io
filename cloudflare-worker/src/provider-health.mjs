@@ -61,12 +61,14 @@ export function recordProviderHealth(old,id,mediaKey,ok,elapsedMs,stage,now=Date
  }
  return next;
 }
+export function providerCandidateHealth(provider,health,mediaKey,now=Date.now()){
+ const a=health?.[accountKey(provider.id)],c=health?.[channelKey(provider.id,mediaKey)];
+ const fresh=r=>r&&r.at>now-FRESH_MS;
+ const cooling=r=>fresh(r)&&!r.ok&&r.at>now-COOLDOWN;
+ return {cooling:!!(cooling(a)||cooling(c)),known:fresh(c)&&c.ok?2:fresh(a)&&a.ok?1:0,ms:fresh(c)&&c.ok?c.ms:30000};
+}
 export function rankProviderCandidates(candidates,health,mediaKey,now=Date.now()){
- const score=p=>{const a=health?.[accountKey(p.id)],c=health?.[channelKey(p.id,mediaKey)];
-  const fresh=r=>r&&r.at>now-FRESH_MS;
-  const cooling=r=>fresh(r)&&!r.ok&&r.at>now-COOLDOWN;
-  return {p,cooling:!!(cooling(a)||cooling(c)),known:fresh(c)&&c.ok?2:fresh(a)&&a.ok?1:0,ms:fresh(c)&&c.ok?c.ms:30000};};
- return candidates.map(score).sort((a,b)=>Number(a.cooling)-Number(b.cooling)||b.known-a.known||a.ms-b.ms||a.p.occupied/a.p.maxConnections-b.p.occupied/b.p.maxConnections||(Number(b.p.expiresAt)||0)-(Number(a.p.expiresAt)||0)).map(s=>s.p);
+ return candidates.map(p=>({p,...providerCandidateHealth(p,health,mediaKey,now)})).sort((a,b)=>Number(a.cooling)-Number(b.cooling)||b.known-a.known||a.ms-b.ms||a.p.occupied/a.p.maxConnections-b.p.occupied/b.p.maxConnections||(Number(b.p.expiresAt)||0)-(Number(a.p.expiresAt)||0)).map(s=>s.p);
 }
 export function providerHealthSummary(health,now=Date.now()){
  const groups=new Map();let lastObservedAt=null;

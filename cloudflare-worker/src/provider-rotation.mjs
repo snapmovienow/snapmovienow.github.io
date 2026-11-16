@@ -1,6 +1,6 @@
 // Rotation is an allocation preference, never a timer that revokes playback.
 // The caller owns authorization, atomic capacity and the safe playback boundary.
-import {rankProviderCandidates,providerCircuitState} from './provider-health.mjs';
+import {rankProviderCandidates,providerCandidateHealth,providerCircuitState} from './provider-health.mjs';
 
 export const ROTATION_MIN_MS=24*3600000;
 export const ROTATION_TARGET_MS=36*3600000;
@@ -84,10 +84,10 @@ const occupancy=(provider,counts)=>Number.isFinite(provider.occupied)?Math.max(0
 const finiteExpiry=provider=>Number.isFinite(Number(provider?.expiresAt))&&Number(provider.expiresAt)>0?Number(provider.expiresAt):null;
 const usable=(provider,now)=>provider&&(!provider.status||provider.status==='active')&&(!provider.expiresAt||!Number.isFinite(Number(provider.expiresAt))||Number(provider.expiresAt)>now);
 
-function sourceLoads(lines,counts,normalOnly,normalAfter,now,server,health,mediaKey){
+function sourceLoads(lines,counts,normalOnly,normalAfter,now,server,health,mediaKey,excludeCooling){
  const physical=new Map();
  for(const line of lines){
-  if(!usable(line,now)||String(line.server||'ccf')!==server||normalOnly&&!(finiteExpiry(line)>=normalAfter)||providerCircuitState(health,line.id,mediaKey,now).blocked||health?.['account|'+line.id]?.busyUntil>now)continue;
+  if(!usable(line,now)||String(line.server||'ccf')!==server||normalOnly&&!(finiteExpiry(line)>=normalAfter)||providerCircuitState(health,line.id,mediaKey,now).blocked||health?.['account|'+line.id]?.busyUntil>now||excludeCooling&&providerCandidateHealth(line,health,mediaKey,now).cooling)continue;
   const capacity=nonnegative(line.maxConnections);if(!capacity)continue;
   const identity=line.key||String(line.id),old=physical.get(identity),sources=sourceIds(line);
   if(old){old.capacity=Math.min(old.capacity,capacity);old.occupied=Math.max(old.occupied,occupancy(line,counts));old.sources=[...new Set([...old.sources,...sources])];}
@@ -107,13 +107,26 @@ export function rankRotationCandidates(candidates,{primary,lines=candidates,coun
  const available=candidates.filter(provider=>usable(provider,now)&&!providerCircuitState(health,provider.id,mediaKey,now).blocked&&!(health?.['account|'+provider.id]?.busyUntil>now)&&(!Number.isFinite(provider.maxConnections)||occupancy(provider,counts)<provider.maxConnections));
  const twoMonths=calendarMonthsAfter(now,2);
  const normal=available.filter(provider=>finiteExpiry(provider)>=twoMonths);
- let preferred=normal.length?normal:available;
+ const candidateHealth=provider=>providerCandidateHealth(provider,health,mediaKey,now);
+ const readyNormal=normal.filter(provider=>!candidateHealth(provider).cooling),ready=available.filter(provider=>!candidateHealth(provider).cooling);
+ // A recently failing mature account does not make a working short-lived
+ // account unavailable. Preserve playback before tenure preferences.
+ let preferred=readyNormal.length?readyNormal:ready.length?ready:normal.length?normal:available;
  const alternatives=preferred.filter(provider=>!sameProvider(provider,primary));
- if(alternatives.length)preferred=alternatives;
+ const readyAlternatives=alternatives.filter(provider=>!candidateHealth(provider).cooling),home=primary&&available.find(provider=>sameProvider(provider,primary));
+ // Unknown alternatives may be probed at a safe boundary. If all alternatives
+ // have just failed, the proven home wins instead of forcing a failed move.
+ if(readyAlternatives.length)preferred=readyAlternatives;
+ else if(home&&!candidateHealth(home).cooling)preferred=[home];
+ else if(alternatives.length)preferred=alternatives;
+ const healthRanked=rankProviderCandidates(preferred,health,mediaKey,now),best=healthRanked[0]&&candidateHealth(healthRanked[0]);
+ if(!best)return [];
+ preferred=healthRanked.filter(provider=>{const score=candidateHealth(provider);return score.cooling===best.cooling&&score.known===best.known;});
  const previousSources=sourceIds(primary),different=preferred.filter(provider=>{const sources=sourceIds(provider);return previousSources.length&&sources.length&&!sources.some(source=>previousSources.includes(source));});
  if(different.length)preferred=different;
  const ranked=rankProviderCandidates(preferred,health,mediaKey,now),order=new Map(ranked.map((provider,index)=>[provider,index]));
- const loads=sourceLoads(Array.isArray(lines)?lines:available,counts,normal.length>0,twoMonths,now,String(preferred[0]?.server||'ccf'),health,mediaKey);
+ const normalOnly=preferred.every(provider=>finiteExpiry(provider)>=twoMonths);
+ const loads=sourceLoads(Array.isArray(lines)?lines:available,counts,normalOnly,twoMonths,now,String(preferred[0]?.server||'ccf'),health,mediaKey,!best.cooling);
  const load=provider=>{
   const values=sourceIds(provider).map(source=>loads.get(source)).filter(total=>total?.capacity>0).map(total=>total.occupied/total.capacity);
   return values.length?Math.min(...values):null;

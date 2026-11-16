@@ -314,6 +314,7 @@ export async function accountsFetch(state,env,req){
    if(!rangeRejection){lease.providerFailed=true;forgetProvider(state,lease);}
   }
   else if(b.stage==='validation'&&!b.capacityBusy){lease.validatedAt=Date.now();rememberProvider(state,lease);}else if(b.capacityBusy)lease.validatedAt=0;
+  if(lease.rotation&&b.stage==='validation')lease.rotationAccountValidated=b.ok&&!b.capacityBusy;
   await local.put(b.lease_id,lease);await tx.put(key,pruneAffinities(state));
   const health=recordProviderHealth(await tx.get('provider-health'),lease.provider_id,lease.mediaKey,b.ok,b.elapsedMs,b.stage,Date.now(),b.lease_id,lease.providerCredentialKey,b.httpStatus,b);
   if(b.stage==='validation'&&b.ok&&b.capacityBusy===true){const row=health['account|'+lease.provider_id];row.busyUntil=Date.now()+5000;delete row.credentialKey;delete row.validatedAt;delete row.mediaAt;}
@@ -324,7 +325,7 @@ export async function accountsFetch(state,env,req){
    const pool=await readInventoryPool(tx),provider=pool?.lines.find(p=>p.id===lease.provider_id&&p.credentialKey===lease.providerCredentialKey&&usableProvider(p));
    if(provider){const key='canary-'+assignmentKey(lease.uid);await tx.put(key,saveAssignment(await tx.get(key),affinityGroup(lease),lease.uid,provider));}
   }
-  if(!lease.canary&&lease.rotation&&b.stage==='validation'&&b.ok&&!b.capacityBusy){
+  if(!lease.canary&&lease.rotation&&lease.rotationAccountValidated&&lease.providerReports.signal===true&&!lease.providerFailed){
    const pool=await readInventoryPool(tx),provider=pool?.lines.find(p=>p.id===lease.provider_id&&p.credentialKey===lease.providerCredentialKey&&usableProvider(p));
    if(provider)await commitProviderRotation(tx,lease,provider);
   }
@@ -401,7 +402,9 @@ export async function accountsFetch(state,env,req){
    // Prefer the eligible local midnight during an already active session.
    // A real idle/restart opportunity may rotate earlier after the 24h minimum.
    const waitForMidnight=owned.some(([,l])=>affinityGroup(l)===group)&&now<plan.preferredAt;
-   const rotation=enabled&&plan.eligible&&!waitForMidnight?rankRotationCandidates(available,{primary,lines:eligible,counts,health,mediaKey:b.mediaKey,now})[0]:null;
+   // A scheduled move gets one offer, not the whole startup retry budget.
+   // After any failed offer, normal home/circuit failover protects playback.
+   const rotation=enabled&&plan.eligible&&!waitForMidnight&&!b.exclude?.length?rankRotationCandidates(available,{primary,lines:eligible,counts,health,mediaKey:b.mediaKey,now})[0]:null;
    const selected=continuation||(preserveHint&&preferred)||pendingHome||rotation||preferred||home||ranked[0];
    if(!selected){const capacityBusy=candidates.length&&candidates.every(p=>health['account|'+p.id]?.busyUntil>now);const retry=candidates.map(p=>providerCircuitState(health,p.id,b.mediaKey,now).retryAfterMs).filter(Boolean);return answer({error:candidates.length&&!capacityBusy?'provider_temporarily_unavailable':'ccf_capacity',...(retry.length?{retry_after_ms:Math.min(...retry)}:{})},candidates.length&&!capacityBusy?503:409);}
    const previous=b.request_id&&owned.find(([,l])=>l.provider_id===selected.id&&l.providerCredentialKey===selected.credentialKey&&affinityGroup(l)===group&&l.mediaKey===b.mediaKey),sameRequest=previous&&previous[1].request_id===b.request_id;
@@ -410,10 +413,12 @@ export async function accountsFetch(state,env,req){
    if(trial.claimed)await tx.put('provider-health',trial.health);
    for(const [oldId]of sessionLeases)if(oldId!==id)await local.remove(oldId,'channel_changed');
    const lease={...(sameRequest?previous[1]:{}),sid:b.sid,uid:b.uid,username:b.username,version:b.version,provider_id:selected.id,providerServer:group,providerCredentialKey:selected.credentialKey,validatedAt,until:Date.now()+90000,...extra,startedAt:previous?previous[1].startedAt||extra.startedAt:extra.startedAt};
-   if(enabled&&plan.eligible&&primary&&selected.id!==primary.id)lease.rotation={group,previousProviderId:binding.provider_id,previousProviderKey:binding.provider_key,previousSelectedAt:binding.selectedAt,timeZone:extra.client.timeZone||customerActivity?.timeZone||plan.timeZone,proposedAt:now};
+   if(enabled&&plan.eligible&&rotation?.id===selected.id&&primary&&selected.id!==primary.id)lease.rotation={group,previousProviderId:binding.provider_id,previousProviderKey:binding.provider_key,previousSelectedAt:binding.selectedAt,timeZone:extra.client.timeZone||customerActivity?.timeZone||plan.timeZone,proposedAt:now};
    else if(pendingHome?.id===selected.id)lease.rotation=pendingLease.rotation;
    lease.assignmentSelectedAt=lease.rotation?.proposedAt||binding?.selectedAt||now;
-   if(lease.rotation&&proof)await commitProviderRotation(tx,lease,selected,now);
+   // A fresh account proof skips the network validation as before. It does
+   // not establish that this title works: wait for the existing media report.
+   if(lease.rotation)lease.rotationAccountValidated=!!proof||!!trustedHint&&recentlyValidated(hint);
    await local.put(id,lease);if(canary)await tx.put('background-canary-lease',id);rememberProvider(playback,lease);rememberProviderMedia(playback,group,lease);await tx.put(playbackKey,playback);await recordCustomerActivity(tx,u.id,Date.now(),b.client);
    const repairClock=enabled&&primary?.id===selected.id&&(plan.selectedAt===null||plan.status==='clock-skew');
    if(!canary&&(!primary||primaryFailed||repairClock)&&!lease.rotation)await tx.put(assignmentKey(u.id),saveAssignment(profile,group,u.id,selected,now,{...(plan.timeZone?{timeZone:extra.client.timeZone||plan.timeZone}:{}),...(binding?.rotationCount?{rotationCount:binding.rotationCount}:{})}));
