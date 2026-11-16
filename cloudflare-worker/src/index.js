@@ -1,6 +1,7 @@
 import {boundedTsRoute} from './bounded-ts-route.mjs';
 import {createGatewayRotation} from './gateway-rotation.mjs';
 import {ROTATION_POLICY,rotationEnabled} from './provider-rotation-state.mjs';
+import {privateDiagnosticReportRoute,schedulePrivateDiagnosticReport,privateDiagnosticEnabled,PRIVATE_DIAGNOSTIC_OBJECT} from './private-diagnostic-collector.mjs';
 import {startupDeadline,readLivePlaylist,readInitialMedia,VOD_STARTUP_MS,reportLiveResult,deferPlaybackReport} from './live-startup.mjs';
 import {boxpanelFetch} from './boxpanel.mjs';
 import {createBoxClient} from './boxpanel-client.mjs';
@@ -161,6 +162,16 @@ export class PlaybackSession {
   });
  }
  async fetch(req){const path=new URL(req.url).pathname;
+ if(path==='/private-diagnostic/run'||path==='/private-diagnostic/status'){
+  if(req.method!=='POST')return Response.json({error:'method_not_allowed'},{status:405});
+  const read=(id,target,body,signal)=>this.env.PLAYBACK_SESSIONS.get(this.env.PLAYBACK_SESSIONS.idFromName(id)).fetch('https://private'+target,{method:'POST',body:JSON.stringify(body),signal});
+  return privateDiagnosticReportRoute(this.state.storage,this.env,path,{
+   readSnapshot:(queries,signal)=>read(queries.length?'__smn_xtream_catalog_v1':'__smn_accounts_v1','/accounts/server-diagnostic-snapshot',{queries},signal),
+   readTimings:signal=>read('__smn_operations_v1','/operations/timing-read',{},signal),
+   readCanary:signal=>this.env.OPERATION_ALERTS.get(this.env.OPERATION_ALERTS.idFromName('system-monitor-v1')).fetch('https://private/status',{method:'POST',body:'{}',signal}),
+   version:SERVICE_VERSION
+  });
+ }
  if(path==='/local-tv-audit-start')return Response.json(await this.localAudit().start());
  if(path==='/local-tv-audit-status')return Response.json(await this.localAudit().status());
  if(path==='/empress-origin-diagnostic-resource')return diagnosticResource(this.env,await req.json(),{unticket});
@@ -347,6 +358,9 @@ async function adminRequest(req,env,ctx){
  }
  if(['playback-canary-status','playback-canary-settings','playback-canary-run'].includes(action)){const path=action==='playback-canary-settings'?'/canary/settings':action==='playback-canary-run'?'/canary/run':'/status';const result=await monitorCall(env,path,action==='playback-canary-settings'?{enabled:b.enabled,...(b.types?{types:b.types}:{})}:{});if(result.ok&&action!=='playback-canary-status')await directory(env,'/audit-write',{actor:s.username,action});return json(await result.json(),result.status)}
  if(action==='playback-health'){const r=await env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_operations_v1')).fetch('https://private/operations/read',{method:'POST',body:'{}'});return json(await r.json(),r.status)}
+ if(action==='private-diagnostic-report'){
+  const r=await env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName(PRIVATE_DIAGNOSTIC_OBJECT)).fetch('https://private/private-diagnostic/status',{method:'POST',body:'{}'}),response=json(await r.json(),r.status);response.headers.set('Cache-Control','no-store');return response;
+ }
  if(['alerts-status','alerts-settings','alerts-check','alerts-test'].includes(action)){
   const paths={'alerts-status':'/status','alerts-settings':'/settings','alerts-check':'/tick','alerts-test':'/test'};
   const result=await monitorCall(env,paths[action],action==='alerts-settings'?{enabled:b.enabled,channel:b.channel,to:b.to,from:b.from,apiKey:b.apiKey}:{});
@@ -522,7 +536,7 @@ if(req.method==='POST'&&req.headers.get('Cookie')?.includes('__Host-smn_')&&!can
 if(req.headers.get('Origin')&&!allowedOrigins(env).has(req.headers.get('Origin'))&&req.method==='POST')return json({error:'origin_not_allowed'},403);
 if(req.method==="OPTIONS")return new Response(null,{status:204,headers:cors});
 if(u.pathname==='/bounded-ts-diagnostic'&&req.method==='POST')return boundedTsRoute(req,env,ctx,{unticket,cookieToken,sessionCall,directory,registry,validatedMediaTarget,catalog:(env,ctx)=>createProviderCatalog(catalogDeps,env,ctx)});
-if(u.pathname==="/health")return json({ok:true,service:"snapmovienow-edge",version:SERVICE_VERSION,providerRotation:{...ROTATION_POLICY,enabled:rotationEnabled(env)},...await publicHealthSnapshot(env),capabilities:['reseller-service-monitor-v1','xtream','admin-recovery-renewal','backup-integrity','native-profile','metric-retry','admin-credentials-rotation','isolated-backup-recovery','xtream-series-diagnostic','operational-alerts','rotating-media-origins','admin-user-activity','admin-user-comments','reseller-bridge-v1','private-media-diagnostics-v1','live-startup-budget-v1','native-playback-release-v1','viewer-provider-affinity-v1','persistent-provider-assignment-v1','safe-daily-provider-rotation-v1','vod-startup-budget-v1','hedged-detail-catalog-v1','first-media-byte-check-v1','playback-stage-timings-v1','provider-circuit-recovery-v1','own-account-playback-canary-v1','performance-release-gate-v1','bounded-catalog-lookups-v1','shared-provider-validation-v1','customer-priority-playback-v1','indexed-playback-policy-v1','owner-playback-comparison-v1','pelisflix-voe-v1','official-local-tv-v1','private-owned-media-v1','existing-series-supplement-v1','series-usage-sessions-v1']});
+if(u.pathname==="/health")return json({ok:true,service:"snapmovienow-edge",version:SERVICE_VERSION,privateDiagnostics:{enabled:privateDiagnosticEnabled(env),intervalMinutes:5,access:'private_cloudflare_observability',schema:1},providerRotation:{...ROTATION_POLICY,enabled:rotationEnabled(env)},...await publicHealthSnapshot(env),capabilities:['reseller-service-monitor-v1','xtream','admin-recovery-renewal','backup-integrity','native-profile','metric-retry','admin-credentials-rotation','isolated-backup-recovery','xtream-series-diagnostic','operational-alerts','rotating-media-origins','admin-user-activity','admin-user-comments','reseller-bridge-v1','private-media-diagnostics-v1','live-startup-budget-v1','native-playback-release-v1','viewer-provider-affinity-v1','persistent-provider-assignment-v1','safe-daily-provider-rotation-v1','private-server-diagnostic-report-v1','vod-startup-budget-v1','hedged-detail-catalog-v1','first-media-byte-check-v1','playback-stage-timings-v1','provider-circuit-recovery-v1','own-account-playback-canary-v1','performance-release-gate-v1','bounded-catalog-lookups-v1','shared-provider-validation-v1','customer-priority-playback-v1','indexed-playback-policy-v1','owner-playback-comparison-v1','pelisflix-voe-v1','official-local-tv-v1','private-owned-media-v1','existing-series-supplement-v1','series-usage-sessions-v1']});
 if(u.pathname==='/reseller-bridge')return resellerBridgeRequest(req,env,ctx);
 if(u.pathname==='/local-tv-health'&&req.method==='GET'){
  try{return json(await (await env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_local_tv_audit_20261104_v1')).fetch('https://private/local-tv-audit-status')).json());}catch{return json({state:'unavailable'},503)}
@@ -640,7 +654,7 @@ export default {scheduled(event,env,ctx){
  ownedMediaBootstrap(env,ctx);
  localAuditBootstrap(env,ctx);
  if(event.cron===MONITOR_CRON&&diagnosticEnabled(env))ctx.waitUntil(env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_empress_diagnostic_20261104')).fetch('https://private/empress-origin-diagnostic-run',{method:'POST',body:'{}'}).then(r=>r.body?.cancel()).catch(()=>console.error({event:'empress_origin_diagnostic',reason:'diagnostic_unavailable'})));
- if(event.cron===MONITOR_CRON){ctx.waitUntil(directory(env,'/service-monitor-sample').then(r=>r.body?.cancel()).catch(()=>console.error({event:'service_monitor_sample_failed'})));ctx.waitUntil(isolatedPoolRefresh(env).catch(()=>console.error({event:'provider_inventory_refresh_failed'})));ctx.waitUntil(telegramTick(env).then(async ({diagnostic})=>{
+ if(event.cron===MONITOR_CRON){schedulePrivateDiagnosticReport(env,ctx);ctx.waitUntil(directory(env,'/service-monitor-sample').then(r=>r.body?.cancel()).catch(()=>console.error({event:'service_monitor_sample_failed'})));ctx.waitUntil(isolatedPoolRefresh(env).catch(()=>console.error({event:'provider_inventory_refresh_failed'})));ctx.waitUntil(telegramTick(env).then(async ({diagnostic})=>{
   if(!diagnostic)return;
   const response=await monitorCall(env,'/owner-diagnostic',diagnostic).catch(()=>null);
   if(!response?.ok)console.error({event:'owner_diagnostic_record_failed'});
