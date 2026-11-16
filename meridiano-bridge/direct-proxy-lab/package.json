@@ -1,0 +1,8 @@
+{
+  "name": "meridiano-direct-proxy-lab",
+  "private": true,
+  "type": "module",
+  "scripts": {"check": "node run-check.mjs"},
+  "dependencies": {"workers-fetch-proxy": "1.1.0"},
+  "devDependencies": {"esbuild": "0.28.2"}
+}
