@@ -2,7 +2,7 @@
 
 The owner requires zero additional paid resources and explicitly authorized the private account test after adding Venezuela/Caracas (UDP) in SNAPTVNOW Control. The isolated bridge and existing panel were reused. No subscription, VPS, billing setting, CPU limit, or shared DNS/catalog entry was added or changed.
 
-## Verified result — November 16, 2026, UTC
+## Initial trial — early November 16, 2026, UTC
 
 | Check | Observed result |
 | --- | --- |
@@ -33,6 +33,26 @@ The private trial was then closed: the original isolated Worker was restored wit
 
 Additional primary references: [official TV/web timetable](https://meridiano.net/virales/estos-programas-de-meridiano-television-tendran-nuevo-horario-enterate-cuales-y-a-partir-de-cuando-202622515560), [official streaming-only event](https://meridiano.net/beisbol/beisbol-venezolano/proximo-juego-de-venezuela-en-el-mundial-de-softbol-sub-23-2026-en-vivo-y-gratis-202642911220/amp), [Dailymotion player error definitions](https://developers.dailymotion.com/reference/api-errors).
 
+## Midday observations — November 16, 2026 (America/Chicago)
+
+| Observed time in Chicago | Check and observed result |
+| --- | --- |
+| 12:03 | Public API reported `x9sxu9y` as `onair`. |
+| 12:10 | The authorized Surfshark metadata request returned HTTP 200, `metadataShape=player_metadata`, one HLS candidate and no DM007 geo error. |
+| 12:20 | The private media attempt received player error DM003 and zero HLS candidates. It stopped before fetching playlists or sampling media. |
+| 12:21:55 | The four queried public live IDs were all `offair`. |
+| 12:22 | Both checked publisher live lists contained only the known off-air candidates. |
+
+These are point-in-time observations, not verified opening or closing times. They establish that the online ID was reported on air and exposed an HLS candidate during this retry; they do not establish a continuous interval between samples, a repeating daily schedule, or 24/7 availability. The later DM003 response describes that online live event, not the terrestrial channel.
+
+No playlist or real media bytes were sampled during the real account retry. No video decoding, audio, sustained playback, app playback or authenticated shared-DNS playback was verified. `liveMediaVerified` remains false. The private media helper has synthetic tests for bounded playlists, lowest-bandwidth variants, two segment prefixes, fMP4 initialization, signed queries, redirects, cancellation and encryption classification; passing fixtures are not live-channel evidence. AES-128 identity keys may be checked for exactly 16 bytes, but no media is decrypted and encrypted sources remain unsupported by the proof.
+
+The older verified entry imported the public bridge fallback. Automatic approval review rejected that deployment; it did not change the Worker. The replacement entry's source and local fixture allow only owner-authenticated, expiring POST `/health`, returning 404 for every other method/path. It imports no public bridge or legacy source array. `--verified` now re-exports this private-only entry, and the build command defaults to `--private-only`, preventing accidental public fallback selection. Both generated bundle variants were checked to exclude the legacy bridge. Direct external checks of the Worker returned non-JSON HTTP 403 from the execution environment/provider path, so they do not verify deployed 404 behavior.
+
+Cleanup was verified after the attempt: temporary Sites owner settings were removed and Site version 34 was deployed with environment revision 10. Only the pre-existing TV gateway and VPN vault secret entries remained. A request using the former owner token returned HTTP 403 with `private_test_unauthorized`. The private-only Worker bundle was retained with its diagnostic owner fingerprint disabled and deadline expired; an independent settings read confirmed the disabled configuration and CPU 10 ms. The connector does not support the attempted existing-version rollback path, so the public baseline was not restored during this cleanup. Caracas and the encrypted vault are preserved; the retry introduced no shared catalog/DNS entry or APK.
+
+Local validation passed nine private-media cases, the private-only entry fixture, seven metadata cases and the full TLS/proxy fixture. The updated panel passed ten authorization/sanitization cases. These local tests and deployment/configuration checks do not replace the still-missing live media and app verification.
+
 ## Protected private trial
 
 The existing panel is public. Its audience was preserved; the test did not rely on public Site access or the Sites service-access token for owner authorization. A temporary cryptographically random owner bearer key was stored as a native Sites secret. The Worker stored only its SHA-256 fingerprint and a deadline capped at one hour. No fixed access key was embedded in source.
@@ -46,16 +66,19 @@ The first Site-to-bridge trial failed before sending a request because Workers d
 ```sh
 npm ci --ignore-scripts --no-audit --no-fund
 npm run check
-node build-private-pilot.mjs /absolute/private-pilot.mjs --verified
+node --test private-only-entry.test.mjs private-media-proof.test.mjs
+node build-private-pilot.mjs /absolute/private-pilot.mjs --private-only
 ```
+
+Omitting the mode also builds the private-only entry. `--verified` is a compatibility alias for the same protected entry; unknown modes fail rather than selecting the older experiment.
 
 Fixtures generate temporary certificates, use loopback sockets and delete generated keys/bundles. Checks cover nested TLS, authentication, signed-query/Range preservation, credential isolation, rejected hostnames/issuers, owner authorization and expiry, fixed destinations, country/metadata parsing and closure of stalled sockets on deadline. Panel tests cover authorization before vault access, profile matching, redirect rejection, native-fetch invocation and output sanitization.
 
 The initial experiment uses `workers-fetch-proxy` 1.1.0 and `subtls` 0.5.0. It completed Cloudflare HTTPS trace requests but rejected Dailymotion's certificate chain, including after adding the checked-in public Mozilla roots. Validation was not disabled. `subtls` explicitly says it is not intended for production.
 
-The second private transport uses pinned `tunnelfetch` 1.13.1, normal bundled CCADB trust, HTTPS-only proxy and destinations, manual redirects, 128 KiB response limits, deadlines and explicit socket cleanup. It passed positive/negative local certificate and authentication checks and reached Dailymotion metadata on the real edge. Its author describes it as a new implementation without an external security audit. These experiments do not establish production suitability or playback capacity.
+The second private transport uses pinned `tunnelfetch` 1.13.1, normal bundled CCADB trust, HTTPS-only proxy and destinations, manual redirects, bounded response/prefix limits, deadlines and explicit socket cleanup. It passed positive/negative local certificate and authentication checks and reached Dailymotion metadata on the real edge. Its author describes it as a new implementation without an external security audit. These experiments do not establish production suitability or playback capacity.
 
-## Cleanup and retained state
+## Initial cleanup and retained state
 
 Temporary Sites owner settings were removed and environment revision 4 was deployed. The retained private operation fails closed without them. The isolated Worker was restored to `meridiano-bridge/worker.mjs`, CPU 10 ms and logs disabled. Its former owner fingerprint was overwritten with `disabled` and its deadline with `0`; the connector preserves bindings when given an empty replacement list and does not accept binding-only settings patches. Caracas and the existing encrypted Surfshark vault were preserved. The main DNS Worker and channel catalog were not modified.
 

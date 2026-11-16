@@ -15,7 +15,7 @@ export async function handlePrivatePilot(request,env,connect,originProof){
       body.profileId!==CARACAS_PROFILE_ID)return json({error:'invalid_request'},400);
   }catch{return json({error:'invalid_request'},400)}
   if(body.mode!==undefined&&body.mode!=='connection'){
-    if(!['country','metadata'].includes(body.mode)||typeof originProof!=='function')return json({error:'invalid_request'},400);
+    if(!['country','metadata','media'].includes(body.mode)||typeof originProof!=='function')return json({error:'invalid_request'},400);
     if(typeof body.username!=='string'||typeof body.password!=='string'||!body.username||!body.password||
       body.username.length>200||body.password.length>200||/[\r\n\0:]/.test(body.username)||/[\r\n\0]/.test(body.password))return json({error:'incomplete_service_credentials'},503);
     return originProof(body.mode,{username:body.username,password:body.password});
