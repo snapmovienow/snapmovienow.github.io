@@ -2,6 +2,21 @@
 
 Cloudflare Worker backend for authentication/catalog requests and temporary playback URLs. The public frontend runs on GitHub Pages at https://app.snaptvnow.com with enforced HTTPS.
 
+## Runtime and retired hosting
+
+Production API and Xtream-compatible client requests use `https://api.snaptvnow.com`,
+served by `snapmovienow-edge` on Cloudflare Workers. The current Worker and Durable
+Objects handle authentication, account/session state and playback.
+
+The legacy `backend/main.ts` entrypoint, which used Deno Deploy and Deno KV, and its
+dedicated test have been retired from this repository. Keep the current Worker
+media, Range, deadline and cancellation regressions in Quality.
+
+This repository cleanup does not disable previously deployed Deno applications or
+update installed clients. Inventory and decommission those deployments separately;
+any old client configured with a direct Deno URL needs an endpoint or app update.
+The retirement does not change Cloudflare production routes, bindings or DNS.
+
 ## Administration, recovery and operations (v43)
 
 See [ENGINEERING_V43.md](ENGINEERING_V43.md) for MFA enrollment, encrypted backups,
