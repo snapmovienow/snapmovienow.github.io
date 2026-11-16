@@ -17,6 +17,7 @@
     "CATALOG_MAINTENANCE_ENABLED": "true",
     "PLAYBACK_CANARY_USERNAME": "dieguito2026",
     "PLAYBACK_CANARY_ENABLED": "true",
+    "PROVIDER_ROTATION_ENABLED": "true",
     "PLAYBACK_CONTROL_CCF_SOCKET": "true",
     "CCF_ENTRY_TRANSPORT": "tcp",
     "ENVIRONMENT": "production",

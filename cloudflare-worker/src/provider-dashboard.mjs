@@ -2,7 +2,9 @@
 // used by allocation. Never serialize storage records or encrypted credentials.
 import {openLeaseStore} from './lease-store.mjs';
 import {cleanPlaybackActivity} from './playback-activity.mjs';
-import {usableProvider} from './provider-assignment.mjs';
+import {assignmentKey,usableProvider,assignedProvider} from './provider-assignment.mjs';
+import {rotationPlan} from './provider-rotation.mjs';
+import {ROTATION_POLICY} from './provider-rotation-state.mjs';
 import {INVENTORY_MAX_AGE_MS,readInventoryPool} from './provider-inventory.mjs';
 const count=value=>Number.isFinite(Number(value))?Math.max(0,Math.floor(Number(value))):0;
 const inventoryStates=new Set(['active','expired','suspended','unavailable']);
@@ -16,7 +18,7 @@ function matchingLine(index,item){
 function preferObservation(previous,next){
  return !previous||(previous.eligible!==next.eligible?next.eligible:next.syncedAt>=previous.syncedAt);
 }
-export async function providerDashboard(store,now=Date.now(),leases=null){
+export async function providerDashboard(store,now=Date.now(),leases=null,rotation=true){
  leases??=await openLeaseStore(store);
  const provider=await store.get('provider'),configured=await store.get('providers');
  const providers=configured||(provider?[{...provider,source:(provider.mode==='panel'?'panel:':'single:')+String(provider.username).trim().toLowerCase()}]:[]);
@@ -59,11 +61,17 @@ export async function providerDashboard(store,now=Date.now(),leases=null){
  for(const row of rows.values()){
   if(preferObservation(assignmentRows.get(row.id),row))assignmentRows.set(row.id,row);
  }
- const assignments=[],users=new Map(Array.from((await store.list({prefix:'user:'})).values()).map(u=>[u.id,u]));
+ const assignments=[],users=new Map(Array.from((await store.list({prefix:'user:'})).values()).map(u=>[u.id,u])),profiles=new Map();
  for(const lease of (await leases.active({},now)).values()){
   const user=users.get(lease.uid);if(lease.until<=now||!user||user.version!==lease.version||user.status!=='active'||(user.expiresAt&&user.expiresAt<=now))continue;
   const row=assignmentRows.get(lease.provider_id)||(rows.size===1&&!lease.provider_id?[...rows.values()][0]:null);if(!row)continue;
   const kind=String(lease.mediaKey||'').split('|')[0],assignment={username:user.username,accountId:row.id,accountUsername:row.username,server:row.server,type:['movie','series','live'].includes(kind)?kind:'unknown',client:lease.xtream?'xtream':'web',until:lease.until,lastSeenAt:Math.max(0,Math.min(now,lease.until-90000)),activity:cleanPlaybackActivity(lease.activity,kind)};
+  if(rotation&&!lease.canary){
+   if(!profiles.has(user.id))profiles.set(user.id,await store.get(assignmentKey(user.id)));
+   const profile=profiles.get(user.id),group=lease.providerServer||String(lease.mediaKey||'').split('|')[1]||'ccf',binding=profile?.uid===user.id?profile.groups?.[group]:null;
+   const plan=rotationPlan({binding,primary:assignedProvider(profile,group,user.id,pool?.lines||[],now),now,timeZone:lease.client?.timeZone,active:true});
+   assignment.rotation={selectedAt:plan.selectedAt,dueAt:plan.dueAt,preferredAt:plan.preferredAt,targetAt:plan.targetAt,overdueAt:plan.overdueAt,timeZone:plan.timeZone,status:plan.overdue?'overdue':plan.due?'eligible':'waiting'};
+  }
   row.reservations.push(assignment);assignments.push(assignment);
  }
  const accounts=[...rows.values()].map(row=>({...row,reserved:row.reservations.length,
@@ -74,5 +82,5 @@ export async function providerDashboard(store,now=Date.now(),leases=null){
  })).sort((a,b)=>b.reserved-a.reserved||a.username.localeCompare(b.username));
  const active=accounts.filter(a=>a.status==='active'),usable=accounts.filter(a=>a.eligible);
  const receivedRows=sources.every(s=>s.inventoryStatus==='verified')?sources.reduce((total,s)=>total+s.receivedRows,0):null;
- return {generatedAt:now,accounts,assignments,sources,summary:{accounts:accounts.length,receivedRows,activeAccounts:active.length,usableAccounts:usable.length,totalCapacity:usable.reduce((n,a)=>n+a.maxConnections,0),reported:usable.reduce((n,a)=>n+a.reported,0),reserved:assignments.length,available:usable.reduce((n,a)=>n+a.available,0)},accounting:'conservative',stale:sources.some(s=>s.stale)};
+ return {generatedAt:now,accounts,assignments,sources,rotationPolicy:{...ROTATION_POLICY,enabled:rotation},rotationStats:await store.get('provider-rotation-stats')||{completed:0,lastCompletedAt:null},summary:{accounts:accounts.length,receivedRows,activeAccounts:active.length,usableAccounts:usable.length,totalCapacity:usable.reduce((n,a)=>n+a.maxConnections,0),reported:usable.reduce((n,a)=>n+a.reported,0),reserved:assignments.length,available:usable.reduce((n,a)=>n+a.available,0)},accounting:'conservative',stale:sources.some(s=>s.stale)};
 }
