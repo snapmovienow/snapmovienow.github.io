@@ -1,0 +1,3 @@
+vpn/.env
+vpn/secrets/
+vpn/__pycache__/

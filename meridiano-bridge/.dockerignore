@@ -1,0 +1,5 @@
+vpn/secrets/
+vpn/.env
+vpn/__pycache__/
+wrangler.jsonc
+direct-proxy-lab/
