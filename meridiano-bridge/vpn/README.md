@@ -2,6 +2,12 @@
 
 Implementation prepared; **not connected to a real Surfshark account or deployed on a Linux server**. Meridiano must remain unpublished until actual media is verified through the normal SNAPTVNOW DNS playback path.
 
+## Budget constraint — November 15, 2026 (America/Chicago)
+
+The owner declined the proposed paid VPS and requires **zero additional spending**. Do not provision a VPS, buy another subscription, activate a billable trial, or increase the current paid resource tiers. No server was purchased. The deployment instructions below are dormant and apply only if an existing suitable host can be reused without additional cost.
+
+A direct Worker-to-Surfshark proxy path was also researched. It is not implemented or verified with the owner's account, a Venezuelan exit, real media or the current Worker CPU allowance. The Surfshark browser extension being included in the existing subscription does not establish that a custom server-side integration will work. Do not describe this research as a working zero-cost solution. The account page remains inaccessible in the task browser, and no authenticated Surfshark connection is available.
+
 The Cloudflare Worker remains the public entry. A dedicated Linux relay shares the network namespace of a Surfshark OpenVPN container configured for Venezuela. Other SNAPTVNOW traffic does not enter that container. The relay checks Gluetun health before every request and checks its country through Cloudflare every 30 seconds. It then resolves only the official Meridiano Dailymotion live ID (`x9sxu9y`). A successful HTTP page or VPN handshake is insufficient: health also requires a valid HLS media segment.
 
 All media, variant playlists and playlist URI attributes travel through the same VPN namespace. Provider query signatures are preserved internally; public playlist URLs use short-lived opaque resource IDs. There is no arbitrary-URL fetch endpoint on the VPN origin. The origin requires a private bearer token from the Worker, uses HTTPS through Caddy and does not publish the Gluetun control or health ports. Gluetun's firewall stays enabled; a failed VPN has no direct-origin fallback. Encrypted streams remain rejected by the existing bridge probe; no DRM or ad removal is implemented.
