@@ -1,4 +1,5 @@
 import {cleanUsageChannel} from './channel-usage.mjs';
+import {cleanSeriesUsageContent} from './series-usage.mjs';
 import {cleanConnectionClient} from './connection-monitor.mjs';
 import {cleanPlaybackActivity} from './playback-activity.mjs';
 const DAY=86400000,RETENTION=30*DAY,MAX_ROWS=10000,PREFIX='client-history:';
@@ -31,8 +32,8 @@ export async function recordPlayback(store,sql,leaseId,lease,now=Date.now()){
  const found=sql?(await rowsFor(store,sql,' WHERE id=?',[eventId]))[0]:await store.get(PREFIX+eventId);
  if(found){if(found.ended_at===null&&lease.until-90000>found.last_seen_at+15000){found.last_seen_at=Math.min(now,lease.until-90000);await save(store,sql,found);}return eventId;}
  await finishPlayback(store,sql,leaseId,'replaced',now);
- const type=String(lease.mediaKey||'').split('|')[0],activity=cleanPlaybackActivity(lease.activity,type),start=Number.isSafeInteger(lease.startedAt)&&lease.startedAt>0&&lease.startedAt<=now?lease.startedAt:now;
- await save(store,sql,{id:eventId,account_id:owner.accountId,line_id:owner.lineId,username:owner.username,kind:'playback',started_at:start,last_seen_at:now,ended_at:null,lease_id:String(leaseId),data:JSON.stringify({client:cleanConnectionClient(lease.client),access:lease.xtream?'xtream':'api',type:['live','movie','series'].includes(type)?type:null,title:activity?.title||null,seriesTitle:activity?.seriesTitle||null,season:activity?.season||null,episode:activity?.episode||null,trafficObserved:false,...(cleanUsageChannel(lease.channel)?{channel:cleanUsageChannel(lease.channel)}:{})})});await trim(store,sql,owner.accountId,now);return eventId;
+ const type=String(lease.mediaKey||'').split('|')[0],activity=cleanPlaybackActivity(lease.activity,type),content=type==='series'?cleanSeriesUsageContent(lease.content):null,start=Number.isSafeInteger(lease.startedAt)&&lease.startedAt>0&&lease.startedAt<=now?lease.startedAt:now;
+ await save(store,sql,{id:eventId,account_id:owner.accountId,line_id:owner.lineId,username:owner.username,kind:'playback',started_at:start,last_seen_at:now,ended_at:null,lease_id:String(leaseId),data:JSON.stringify({client:cleanConnectionClient(lease.client),access:lease.xtream?'xtream':'api',type:['live','movie','series'].includes(type)?type:null,title:activity?.title||null,seriesTitle:activity?.seriesTitle||null,season:activity?.season||null,episode:activity?.episode||null,trafficObserved:false,...(content?{content}:{}),...(cleanUsageChannel(lease.channel)?{channel:cleanUsageChannel(lease.channel)}:{})})});await trim(store,sql,owner.accountId,now);return eventId;
 }
 export async function labelPlayback(store,sql,leaseId,activity){
  const rows=(await rowsFor(store,sql,' WHERE lease_id=? AND ended_at IS NULL',[String(leaseId)])).filter(row=>row.lease_id===String(leaseId)&&row.ended_at===null);
