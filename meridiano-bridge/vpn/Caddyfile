@@ -1,0 +1,3 @@
+{$MERIDIANO_RELAY_HOST} {
+  reverse_proxy vpn:8787
+}

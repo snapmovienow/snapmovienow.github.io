@@ -14,7 +14,9 @@ export function allowedResource(source, value) {
   try {
     if (/[\\\u0000-\u0020]/.test(value) || /%(?:2e|2f|5c)/i.test(value)) return false;
     const url = new URL(value), root = new URL(source.url);
-    return !url.username && !url.password && !url.hash && url.origin === root.origin &&
+    const officialCdn = source.id === 'official-dailymotion' && url.protocol === 'https:' &&
+      ['dmcdn.net', 'dailymotion.com'].some(host => url.hostname === host || url.hostname.endsWith('.' + host));
+    return !url.username && !url.password && !url.hash && (url.origin === root.origin || officialCdn) &&
       url.pathname.startsWith(source.prefix) && !url.pathname.split('/').includes('..');
   } catch { return false; }
 }
@@ -139,27 +141,68 @@ export function rewritePlaylist(source, descriptor, origin) {
   }).join('\n');
 }
 
-export async function handleBridge(request, fetcher = fetch) {
+async function forwardToVpn(request, env, fetcher) {
   const url = new URL(request.url);
   const json = (value, status = 200) => Response.json(value, {status, headers});
+  if (!['/health', '/live.m3u8', '/resource'].includes(url.pathname)) return json({error: 'not_found'}, 404);
+  if (url.pathname === '/resource' && (url.searchParams.size !== 1 || !/^[A-Za-z0-9_-]{43}$/.test(url.searchParams.get('id') || ''))) {
+    return json({error: 'source_scope'}, 403);
+  }
+  let origin;
+  try {
+    origin = new URL(env.VPN_RELAY_ORIGIN);
+    if (origin.protocol !== 'https:' || origin.username || origin.password || origin.hash || origin.search ||
+        origin.pathname !== '/' || origin.origin === url.origin || !env.VPN_RELAY_TOKEN || env.VPN_RELAY_TOKEN.length < 32) throw Error();
+  } catch { return json({ready: false, state: 'vpn_configuration_required'}, 503); }
+  const target = new URL(url.pathname + (url.pathname === '/resource' ? url.search : ''), origin);
+  const out = new Headers({'Authorization': 'Bearer ' + env.VPN_RELAY_TOKEN, 'Accept-Encoding': 'identity'});
+  for (const name of ['Range', 'If-Range']) if (request.headers.has(name)) out.set(name, request.headers.get(name));
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 20000);
+  try {
+    const response = await fetcher(target.href, {method: request.method, headers: out, redirect: 'manual',
+      signal: AbortSignal.any([request.signal, controller.signal])});
+    if (response.status >= 300 && response.status < 400) {
+      await response.body?.cancel();
+      return json({error: 'vpn_relay_redirect'}, 502);
+    }
+    const returned = new Headers(headers);
+    for (const name of ['content-type', 'content-length', 'content-range', 'accept-ranges', 'etag', 'last-modified']) {
+      if (response.headers.has(name)) returned.set(name, response.headers.get(name));
+    }
+    return new Response(request.method === 'HEAD' ? null : response.body, {status: response.status, headers: returned});
+  } catch { return json({ready: false, state: 'vpn_relay_unreachable'}, 503); }
+  finally { clearTimeout(timer); }
+}
+
+export async function handleBridge(request, fetcher = fetch, options = {}) {
+  const url = new URL(request.url);
+  const json = (value, status = 200) => Response.json(value, {status, headers});
+  const env = options.env || {};
+  const sources = options.sources || SOURCES;
   if (!['GET', 'HEAD'].includes(request.method)) return json({error: 'method_not_allowed'}, 405);
+  if (url.pathname === '/vpn-country') {
+    if (!env.VPN_RELAY_TOKEN || request.headers.get('Authorization') !== 'Bearer ' + env.VPN_RELAY_TOKEN) return json({error: 'unauthorized'}, 403);
+    return json({country: request.cf?.country || null});
+  }
+  if (env.VPN_RELAY_ORIGIN) return forwardToVpn(request, env, fetcher);
   if (url.pathname === '/health' || url.pathname === '/live.m3u8') {
     // A failed origin never produces an empty playlist or a fabricated channel.
-    const probes = await Promise.all(SOURCES.map(source => probeSource(source, request, fetcher)));
+    const probes = await Promise.all(sources.map(source => probeSource(source, request, fetcher)));
     const selected = probes.find(probe => probe.ready);
     if (url.pathname === '/health') {
-      return json({service: 'snaptvnow-meridiano-bridge', ready: !!selected, state: selected ? 'media_received' : 'awaiting_source',
+      return json({service: 'snaptvnow-meridiano-bridge', ready: !!selected, vpnConfigured: false, state: selected ? 'media_received' : 'awaiting_source',
         checkedAt: Date.now(), sources: probes.map(({root, ...result}) => result)});
     }
     if (!selected) return json({error: 'meridiano_source_unavailable'}, 503);
-    const source = SOURCES.find(item => item.id === selected.source);
+    const source = sources.find(item => item.id === selected.source);
     try {
       return new Response(request.method === 'HEAD' ? null : rewritePlaylist(source, selected.root, url.origin),
         {headers: {...headers, 'Content-Type': 'application/vnd.apple.mpegurl'}});
     } catch { return json({error: 'source_scope'}, 502); }
   }
   if (url.pathname !== '/resource') return json({error: 'not_found'}, 404);
-  const source = SOURCES.find(item => item.id === url.searchParams.get('source'));
+  const source = sources.find(item => item.id === url.searchParams.get('source'));
   const target = url.searchParams.get('url');
   if (!source || !target || target.length > 4096 || !allowedResource(source, target)) return json({error: 'source_scope'}, 403);
   try {
@@ -180,4 +223,4 @@ export async function handleBridge(request, fetcher = fetch) {
   } catch { return json({error: 'source_unavailable'}, 502); }
 }
 
-export default {fetch: request => handleBridge(request)};
+export default {fetch: (request, env) => handleBridge(request, fetch, {env})};

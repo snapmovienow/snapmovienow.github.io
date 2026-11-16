@@ -1,0 +1,57 @@
+services:
+  vpn:
+    image: qmcgaw/gluetun:v3.41.3
+    cap_add: [NET_ADMIN]
+    devices: [/dev/net/tun:/dev/net/tun]
+    entrypoint: [/bin/sh, /snap/start-vpn.sh]
+    environment:
+      VPN_SERVICE_PROVIDER: surfshark
+      VPN_TYPE: openvpn
+      OPENVPN_PROTOCOL: udp
+      SERVER_COUNTRIES: Venezuela
+      FIREWALL: "on"
+      FIREWALL_INPUT_PORTS: "8787"
+      HEALTH_SERVER_ADDRESS: 127.0.0.1:9999
+      HTTP_CONTROL_SERVER_ADDRESS: 127.0.0.1:8000
+      TZ: America/Chicago
+    volumes:
+      - ./start-vpn.sh:/snap/start-vpn.sh:ro
+    secrets: [surfshark_user, surfshark_password]
+    restart: unless-stopped
+  relay:
+    build:
+      context: ..
+      dockerfile: vpn/Dockerfile
+    network_mode: service:vpn
+    depends_on:
+      vpn:
+        condition: service_healthy
+    environment:
+      EDGE_ORIGIN: ${EDGE_ORIGIN:?EDGE_ORIGIN is required}
+    secrets: [relay_token]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    tmpfs: [/tmp]
+    restart: unless-stopped
+  https:
+    image: caddy:2-alpine
+    depends_on: [relay]
+    environment:
+      MERIDIANO_RELAY_HOST: ${MERIDIANO_RELAY_HOST:?MERIDIANO_RELAY_HOST is required}
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+secrets:
+  surfshark_user:
+    file: ./secrets/surfshark_user
+  surfshark_password:
+    file: ./secrets/surfshark_password
+  relay_token:
+    file: ./secrets/relay_token
+volumes:
+  caddy_data:
+  caddy_config:
