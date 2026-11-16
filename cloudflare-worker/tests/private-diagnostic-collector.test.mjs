@@ -32,6 +32,11 @@ test('disabled and staging do not read or create report data',async()=>{
   const f=fixture();const result=await privateDiagnosticReportRoute(f.storage,value,'/private-diagnostic/run',f.deps);assert.equal(result.status,200);assert.equal(f.calls.length,0);assert.equal(f.storage.rows.size,0);assert.equal(f.logs.length,0);
  }
 });
+test('Cron delivery jitter does not skip the following five-minute window',async()=>{
+ const f=fixture();f.deps.now=()=>at+800;await f.run();
+ f.deps.now=()=>at+300200;await f.run();assert.equal(f.logs.length,2);
+ f.deps.now=()=>at+300900;assert.equal((await(await f.run()).json()).skipped,true);assert.equal(f.logs.length,2);
+});
 test('only ten validated references from existing observations can cause bounded mapping reads',async()=>{
  const f=fixture(),base=f.deps.readSnapshot;f.deps.readSnapshot=async(queries,signal)=>{
   const response=await base(queries,signal),value=await response.json();value.health.recentMediaFailures=[{type:'live',id:'not-numeric',server:'https://secret.invalid'},...Array.from({length:15},(_,i)=>({type:i%2?'series':'live',id:String(i+1),server:'ccf',lastObservedAt:at,httpStatuses:[404]}))];

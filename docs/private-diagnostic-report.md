@@ -6,7 +6,8 @@ browser or an administrator login. It is enabled only when `ENVIRONMENT` is
 `production` and `PRIVATE_DIAGNOSTIC_REPORTS_ENABLED` is exactly `true`.
 
 The collector runs in the dedicated `__smn_private_diagnostic_v1` Durable Object.
-An atomic claim prevents duplicate runs within five minutes. Collection runs
+An atomic claim prevents duplicate runs within each UTC five-minute window,
+without skipping the next window when Cron delivery has slight jitter. Collection runs
 through `waitUntil`, separately from customer playback. Existing tasks on the
 same Cron, including inventory refresh and playback canaries, remain separate
 features; their provider requests are not requests made by this collector.

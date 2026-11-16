@@ -55,7 +55,7 @@ export async function privateDiagnosticReportRoute(storage,env,path,{
  const claim=await storage.transaction(async tx=>{
   const old=await tx.get(controlKey);
   if(old?.nextAt>at)return null;
-  const id=crypto.randomUUID();await tx.put(controlKey,{id,attemptedAt:at,nextAt:at+PRIVATE_DIAGNOSTIC_INTERVAL_MS,state:'running'});return id;
+  const id=crypto.randomUUID();await tx.put(controlKey,{id,attemptedAt:at,nextAt:(Math.floor(at/PRIVATE_DIAGNOSTIC_INTERVAL_MS)+1)*PRIVATE_DIAGNOSTIC_INTERVAL_MS,state:'running'});return id;
  });
  if(!claim)return Response.json({ok:true,skipped:true});
  try{
