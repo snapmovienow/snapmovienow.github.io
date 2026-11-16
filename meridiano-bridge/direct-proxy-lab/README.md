@@ -17,6 +17,22 @@ The owner requires zero additional paid resources and explicitly authorized the 
 
 A successful CONNECT or metadata response is not proof of a Venezuelan exit, regional availability during a live event, or usable video. `offair` describes the queried online live IDs, not the terrestrial broadcaster. Meridiano remains unpublished in the shared channel catalog. An APK/content update cannot supply an absent online emission.
 
+## Morning follow-up: November 16, 2026 (America/Chicago)
+
+The owner asked to establish whether the online signal is continuous or scheduled before drawing further conclusions. Official Meridiano announcements distinguish TV programming from web programming: the February 25 announcement gives Gaceta Hipica a streaming repeat at 11:00 Venezuela, versus its TV slot at 23:00. An April 29 announcement also promotes a specific streaming-only game. Neither establishes a current 24/7 service or a complete opening/closing timetable, and the February timetable's continued validity is unconfirmed.
+
+Public API checks this morning still reported the original three live IDs off air. The alternate owner's public live listing supplied another ID, `x9jav8k`, also off air. `x9sxu9y` is reported as a published, public live video. No currently emitting alternative was found in those checks.
+
+The authorized private probe now returns a sanitized response classification, public player error code and explicit live status when present. It does not infer an off-air state from missing HLS or regard any HTTP 200 JSON as successful player metadata. HLS candidates can be recognized by MIME type or a `.m3u8` URL path without returning the URL. Seven parser cases and the full local TLS fixture passed; nine panel authorization and output-sanitization cases passed.
+
+Real proxy result: HTTP 200 with `metadataShape=player_error`, `playerErrorCode=DM003`, no HLS and no verified media. Dailymotion documents DM003 as a live event that has ended. The direct-network comparison reported DM007 (regional restriction). These are distinct responses; the current proxy response is not proof of live playback. Cloudflare trace still identified the selected proxy exit as CO, which does not prove that Dailymotion uses the same country classification.
+
+Five finite, read-only public availability checks were scheduled: November 16 at 12:00, 16:00 and 20:00 Chicago, then November 17 at 09:00 and 12:00. They compare current live status and verified publisher IDs; they do not reactivate private credentials or publish channels. The final check must report its findings even if every sample remains off air. Such samples can establish observed availability windows, not an unpublished broadcaster schedule.
+
+The private trial was then closed: the original isolated Worker was restored with authorization disabled, and the temporary Sites settings were removed and environment revision 6 deployed. The improved panel diagnostics remain dormant without a new temporary owner secret. Caracas and the encrypted vault remain intact; no shared DNS/catalog entry or billing setting was changed. Actual app playback remains unverified.
+
+Additional primary references: [official TV/web timetable](https://meridiano.net/virales/estos-programas-de-meridiano-television-tendran-nuevo-horario-enterate-cuales-y-a-partir-de-cuando-202622515560), [official streaming-only event](https://meridiano.net/beisbol/beisbol-venezolano/proximo-juego-de-venezuela-en-el-mundial-de-softbol-sub-23-2026-en-vivo-y-gratis-202642911220/amp), [Dailymotion player error definitions](https://developers.dailymotion.com/reference/api-errors).
+
 ## Protected private trial
 
 The existing panel is public. Its audience was preserved; the test did not rely on public Site access or the Sites service-access token for owner authorization. A temporary cryptographically random owner bearer key was stored as a native Sites secret. The Worker stored only its SHA-256 fingerprint and a deadline capped at one hour. No fixed access key was embedded in source.

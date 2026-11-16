@@ -1,4 +1,5 @@
 import {Client} from 'tunnelfetch';
+import {diagnosePlayerMetadata} from '../metadata-diagnostics.mjs';
 const targets={country:'https://www.cloudflare.com/cdn-cgi/trace',metadata:'https://www.dailymotion.com/player/metadata/video/x9sxu9y'};
 const json=(value,status=200)=>Response.json(value,{status,headers:{'Cache-Control':'no-store, private'}});
 
@@ -18,9 +19,7 @@ export async function verifiedOriginProof(mode,credentials,{connect,trust={mode:
         const country=/^loc=([A-Z]{2})$/m.exec(text)?.[1]||null;
         return {proof:mode,completed:response.status===200&&!!country,originHttpStatus:response.status,observedCountry:country,countryVerified:response.status===200&&country==='VE',liveMediaVerified:false};
       }
-      const data=JSON.parse(text),qualities=data?.qualities;
-      const variants=qualities&&typeof qualities==='object'?Object.values(qualities).flat().filter(item=>item&&typeof item==='object'&&typeof item.url==='string'&&/mpegurl/i.test(String(item.type))):[];
-      return {proof:mode,completed:response.status===200,originHttpStatus:response.status,geoBlocked:data?.error?.code==='DM007',hlsQualitiesFound:variants.length,liveMediaVerified:false};
+      return {proof:mode,originHttpStatus:response.status,...diagnosePlayerMetadata(JSON.parse(text),response.status)};
     };
     const result=await Promise.race([operation(),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('proof_deadline')),timeoutMs)})]);
     return json(result);

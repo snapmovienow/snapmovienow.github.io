@@ -6,6 +6,7 @@ import {fileURLToPath} from 'node:url';
 import {buildSync} from 'esbuild';
 
 const base=dirname(fileURLToPath(import.meta.url));
+execFileSync(process.execPath,['--test',join(base,'metadata-diagnostics.test.mjs')],{stdio:'inherit'});
 const temp=mkdtempSync(join(tmpdir(),'meridiano-proxy-check-'));
 const openssl=args=>execFileSync('openssl',args,{cwd:temp,stdio:'ignore'});
 try {
