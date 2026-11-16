@@ -25,7 +25,8 @@ async function fixture(options={}){
   let body={sid,uid:'u'+user,username:'viewer'+user,version:1,xtream:true,server:'ccf',request_id:'request-'+(++sequence),mediaKey:type+'|ccf|'+id+'|'+ext,...(range?{native_media_key:type+'|ccf|'+id+'|'+ext,native_range_id:range}:{}),...extra};
   const begun=await call('/playback-begin',body);assert.equal(begun.status,200);if(begun.data.request_id)body={...body,request_id:begun.data.request_id};return {...await call('/acquire',body),body};
  };
- const report=(result,ok=true,extra={})=>call('/provider-result',{...result.body,...result.data,ok,stage:'validation',elapsedMs:1,...extra});
+ const reportStage=(result,stage,ok=true,extra={})=>call('/provider-result',{...result.body,...result.data,ok,stage,elapsedMs:1,...extra});
+ const report=async(result,ok=true,extra={})=>{const validation=await reportStage(result,'validation',ok,extra);if(ok&&!extra.capacityBusy&&validation.status===200)return reportStage(result,'signal',true,{evidence:'bytes'});return validation;};
  const release=result=>call('/release',{...result.body,lease_id:result.data.lease_id});
  const binding=async(user=0)=>(await storage.get(assignmentKey('u'+user))).groups.ccf;
  const seedActive=async({sid='active-tv',user=0,provider='a',id='seeded-lease',mediaKey='live|ccf|100|ts',request_id='seeded-request'}={})=>{
@@ -33,10 +34,10 @@ async function fixture(options={}){
   await leases.put(id,lease);await storage.put('playback:'+sid,{request_id,revision:1,cancelled:{},providerMedia:{ccf:{uid:lease.uid,version:1,provider_id:provider,mediaKey,lastSeenAt:clock.now}}});return lease;
  };
  const advance=async ms=>{clock.now+=ms;await storage.put('pool',{lines,syncedAt:clock.now,attemptedAt:clock.now,sourceBacked:true});};
- return {storage,state,env,lines,leases,clock,homeAt,call,start,report,release,binding,seedActive,advance,dispose(){Date.now=oldNow;}};
+ return {storage,state,env,lines,leases,clock,homeAt,call,start,report,reportStage,release,binding,seedActive,advance,dispose(){Date.now=oldNow;}};
 }
 
-test('an overdue account rotates only after validation, without reserving an idle assignment',async()=>{
+test('an overdue account rotates only after validation and media evidence, without reserving an idle assignment',async()=>{
  const f=await fixture();try{assert.equal(await f.leases.count(),0);const offered=await f.start();assert.equal(offered.status,200);assert.equal(offered.data.provider_id,'b');assert.equal((await f.binding()).provider_id,'a');assert.equal((await f.binding()).selectedAt,f.homeAt);assert.equal(await f.leases.count(),1);
   assert.equal((await f.report(offered)).status,200);const committed=await f.binding();assert.equal(committed.provider_id,'b');assert.equal(committed.rotationCount,1);assert.equal(committed.selectedAt,f.clock.now);
   await f.release(offered);assert.equal(await f.leases.count(),0,'durable routing preferences never reserve idle capacity');
@@ -112,10 +113,42 @@ test('a valid ninety-second hint from the old generation cannot undo a committed
  }finally{f.dispose();}
 });
 
-test('a fresh credential-bound account proof can commit the offered rotation immediately',async()=>{
+test('a fresh credential-bound account proof still waits for media evidence before committing',async()=>{
  const f=await fixture();try{await f.storage.put('provider-health',{'account|b':{at:f.clock.now,ok:true,ms:5,credentialKey:'generation-b',validatedAt:f.clock.now}});
-  const offered=await f.start();assert.equal(offered.status,200);assert.equal(offered.data.provider_id,'b');assert.equal(offered.data.validatedRecently,true);assert.equal((await f.binding()).provider_id,'b');assert.equal((await f.binding()).rotationCount,1);
+  const offered=await f.start();assert.equal(offered.status,200);assert.equal(offered.data.provider_id,'b');assert.equal(offered.data.validatedRecently,true);assert.equal((await f.binding()).provider_id,'a');assert.equal((await f.binding()).rotationCount,undefined);
+  await f.reportStage(offered,'signal',true,{evidence:'bytes'});assert.equal((await f.binding()).provider_id,'b');assert.equal((await f.binding()).rotationCount,1);
   await f.report(offered);assert.equal((await f.binding()).rotationCount,1,'later reports cannot commit the same rotation twice');
+ }finally{f.dispose();}
+});
+
+test('account validation alone cannot replace the home; either report order commits only after both proofs',async()=>{
+ for(const order of [['validation','signal'],['signal','validation']]){
+  const f=await fixture();try{const offered=await f.start();await f.reportStage(offered,order[0],true,{evidence:'bytes'});assert.equal((await f.binding()).provider_id,'a');assert.equal((await f.binding()).selectedAt,f.homeAt);
+   await f.reportStage(offered,order[1],true,{evidence:'bytes'});assert.equal((await f.binding()).provider_id,'b');assert.equal((await f.binding()).rotationCount,1);
+  }finally{f.dispose();}
+ }
+});
+
+test('a failed scheduled replacement yields the same request back to its healthy home after cleanup',async()=>{
+ for(const failure of ['validation','signal']){
+  const f=await fixture({third:true});try{f.lines[0].expiresAt=BASE+30*24*HOUR;f.lines.push({...f.lines[2],id:'d',key:'physical-d',credentialKey:'generation-d',sourceIds:['panel:d']});await f.advance(0);
+   const offered=await f.start();assert.notEqual(offered.data.provider_id,'a');
+   if(failure==='signal'){await f.reportStage(offered,'validation',true);assert.equal((await f.binding()).provider_id,'a','the title has not produced media yet');}
+   await f.reportStage(offered,failure,false);await f.call('/release',{...offered.body,lease_id:offered.data.lease_id,reason:'upstream_failed'});
+   const retry=await f.call('/acquire',{...offered.body,exclude:[offered.data.provider_id]});assert.equal(retry.status,200);assert.equal(retry.data.provider_id,'a','scheduled offers cannot consume the remaining playback attempts');assert.equal((await f.binding()).selectedAt,f.homeAt);assert.equal((await f.binding()).rotationCount,undefined);
+  }finally{f.dispose();}
+ }
+});
+
+test('a busy validation cannot commit a replacement even after a positive media report',async()=>{
+ const f=await fixture();try{const offered=await f.start();await f.reportStage(offered,'validation',true,{capacityBusy:true});await f.reportStage(offered,'signal',true,{evidence:'bytes'});assert.equal((await f.binding()).provider_id,'a');assert.equal((await f.binding()).selectedAt,f.homeAt);
+ }finally{f.dispose();}
+});
+
+test('a temporary overflow on a retry cannot silently become another scheduled offer',async()=>{
+ const f=await fixture({third:true});try{f.lines[0].external=3;await f.advance(0);
+  const overflow=await f.start({exclude:['b']});assert.equal(overflow.status,200);assert.equal(overflow.data.provider_id,'c');assert.equal((await f.leases.get(overflow.data.lease_id)).rotation,undefined);
+  await f.report(overflow);assert.equal((await f.binding()).provider_id,'a');assert.equal((await f.binding()).selectedAt,f.homeAt);assert.equal((await f.binding()).rotationCount,undefined);
  }finally{f.dispose();}
 });
 

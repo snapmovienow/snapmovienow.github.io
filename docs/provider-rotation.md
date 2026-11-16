@@ -48,11 +48,12 @@ For a new home or due rotation, accounts with at least two calendar months of
 remaining service form the normal tier. Shorter or unknown expiry is an
 emergency tier used when no normal available account exists. A healthy normal
 home is retained if it is the only normal candidate. A different physical
-account and a different known source panel are preferred where possible. Source
-utilization balances available healthy inventory; existing health ranking then
-favors proven accounts, spare capacity and later expiry (including three months
-when other conditions are equal). Unknown source membership gains no artificial
-empty-panel advantage.
+account and a different known source panel are preferred where possible. Health
+bands favor proven accounts and avoid recent failures before balancing
+source utilization. Capacity and later expiry (including three months when
+other conditions are equal) then break ties. Unknown source membership gains
+no artificial empty-panel advantage. A healthy shorter-lived account can serve
+as emergency fallback when the longer-lived alternatives recently failed.
 
 Existing active assignments are not evicted merely for having fewer than two
 months left. Background canaries keep their separate preferences and cannot
@@ -61,12 +62,16 @@ rotate customer homes.
 ## Validation and visibility
 
 A selected replacement is a pending offer on its lease. Other devices can use
-that pending target subject to capacity. Positive account validation (or an
-already fresh credential-bound account proof) commits the new home with a
-compare-and-swap against the old provider, key and selection timestamp. Late
-callbacks cannot undo a newer home. Failed or busy validation leaves the old
-home and its rotation age intact. No new inventory/network request is added to
-the playback allocation path.
+that pending target subject to capacity. Commit requires both positive account
+validation (or an already fresh credential-bound proof) and the existing
+positive media report for that requested content. Either report may arrive
+first. A compare-and-swap against the old provider, key and selection timestamp
+prevents late callbacks from undoing a newer home. Failed or busy validation,
+or a failed media response, leaves the old home and its rotation age intact.
+A scheduled move gets only the first offer of a playback request; after a
+failed offer the remaining startup retries prefer the healthy old home and
+normal failover. No new inventory/network request is added to the playback
+allocation path.
 
 The administrator's provider dashboard exposes the global policy, each active
 customer's scheduling dates and overdue state, and a cumulative successful
