@@ -4,7 +4,7 @@ export function mountAdminSecurity({api,notice,onSessionChanged,onRestored=()=>{
  <p id="adminLoginAlert" class="status" role="status" hidden></p>
  <p id="securityState">Consulta el estado de seguridad.</p>
  <p id="securityNotice" class="status" role="status" aria-live="polite" tabindex="-1"></p>
- <form id="securityForm">
+ <form method="post" id="securityForm">
   <label>Contraseña actual<input name="password" type="password" autocomplete="current-password" required></label>
   <label>Código del autenticador o código de recuperación<input name="code" autocomplete="one-time-code" aria-describedby="securityNotice"></label>
   <button type="button" id="mfaBegin">Configurar segundo factor</button>
@@ -28,7 +28,7 @@ export function mountAdminSecurity({api,notice,onSessionChanged,onRestored=()=>{
   <textarea id="mfaCodes" readonly rows="8" aria-label="Códigos de recuperación" style="width:100%;min-height:12em;background:#071016;color:#fff;padding:12px;overflow-wrap:anywhere"></textarea>
   <button type="button" id="mfaSaved">Ya guardé los códigos; iniciar sesión</button>
  </dialog>
- <h3>Cambiar contraseña del administrador</h3><form id="passwordForm"><label>Contraseña actual<input name="password" type="password" autocomplete="current-password" required maxlength="256"></label><label>Código actual del autenticador<input name="code" autocomplete="one-time-code"></label><label>Contraseña nueva<input name="newPassword" type="password" autocomplete="new-password" required minlength="12" maxlength="256"></label><label>Repite la contraseña nueva<input name="confirmPassword" type="password" autocomplete="new-password" required minlength="12" maxlength="256"></label><button type="button" id="passwordChange">Cambiar contraseña y cerrar sesiones</button><p>Usa una contraseña única de al menos 12 caracteres. Si el segundo factor está activo, introduce un código nuevo. Los datos y el autenticador se conservan.</p></form>
+ <h3>Cambiar contraseña del administrador</h3><form method="post" id="passwordForm"><label>Contraseña actual<input name="password" type="password" autocomplete="current-password" required maxlength="256"></label><label>Código actual del autenticador<input name="code" autocomplete="one-time-code"></label><label>Contraseña nueva<input name="newPassword" type="password" autocomplete="new-password" required minlength="12" maxlength="256"></label><label>Repite la contraseña nueva<input name="confirmPassword" type="password" autocomplete="new-password" required minlength="12" maxlength="256"></label><button type="button" id="passwordChange">Cambiar contraseña y cerrar sesiones</button><p>Usa una contraseña única de al menos 12 caracteres. Si el segundo factor está activo, introduce un código nuevo. Los datos y el autenticador se conservan.</p></form>
  <hr><h3>Copia cifrada</h3>
  <p>Incluye usuarios, permisos, vencimientos y servidores. Para restaurarla se necesita la clave del servidor original. No incluye favoritos, progreso, sesiones ni el segundo factor del administrador.</p>
  <p id="backupStatus" role="status">Consultando las copias del servidor…</p><p id="recoveryStatus" role="status"></p>

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {readFileSync} from 'node:fs';
+import {readFileSync, readdirSync} from 'node:fs';
 import test from 'node:test';
 import worker from '../src/index.js';
 import {matchesStaticAdminURL, staticAdminResponse} from '../src/static-admin-response.mjs';
@@ -7,11 +7,12 @@ import {matchesStaticAdminURL, staticAdminResponse} from '../src/static-admin-re
 const https = 'https://app.snaptvnow.com';
 test('only the static admin route goes straight to Pages, preserving conditional requests and bytes', async () => {
   const original = globalThis.fetch;
-  const request = new Request(https + '/admin.js?v=43', {headers:{'If-None-Match':'"fixture"'}});
+  const request = new Request(https + '/admin.js?v=43', {headers:{'If-None-Match':'"fixture"', Cookie:'synthetic=private', Authorization:'Bearer synthetic', 'X-Test-Secret':'dummy'}});
   let calls = 0;
   globalThis.fetch = async (req, options) => {
     calls++;
-    assert.equal(req,request);
+    assert.equal(req.url,request.url);
+    assert.deepEqual(Object.fromEntries(req.headers),{'if-none-match':'"fixture"'});
     assert.equal(options.redirect,'manual');
     return new Response('fixture JS', {headers:{'Content-Type':'application/javascript','Cache-Control':'max-age=600',
       ETag:'"fixture"','Content-Security-Policy':"script-src 'self'"}});
@@ -37,17 +38,47 @@ test('only the static admin route goes straight to Pages, preserving conditional
     assert.equal(matchesStaticAdminURL(new URL(url)),false);
   }
 });
-test('static route preserves HTTP redirects, cache revalidation and HEAD behavior',async()=>{
-  for(const status of [301,304,404]){
-    const req=new Request('http://app.snaptvnow.com/admin.html?lang=es',{method:'HEAD'});
-    const res=await staticAdminResponse(req,async(input,options)=>{
-      assert.equal(input.method,'HEAD');assert.equal(options.redirect,'manual');
-      return new Response(null,{status,headers:status===301?{Location:https+'/admin.html?lang=es'}:{}});
+test('safe HTTP page entries upgrade without sending a request to Pages',async()=>{
+  const noFetch=()=>assert.fail('static request must not reach Pages');
+  const response=await staticAdminResponse(new Request('http://app.snaptvnow.com/admin.html'),noFetch);
+  assert.equal(response.status,301);
+  assert.equal(response.headers.get('location'),https+'/admin.html');
+  for(const [path, method, headers, status] of [
+    ['http://app.snaptvnow.com/admin.html?username=fixture','GET',{},400],
+    ['http://app.snaptvnow.com/admin.html','POST',{},400],
+    ['http://app.snaptvnow.com/admin.html','GET',{Cookie:'test=1'},400],
+    ['http://app.snaptvnow.com/admin.js','GET',{},400],
+    [https+'/admin.html','POST',{},405],
+    [https+'/admin.html?username=fixture','GET',{},400],
+    [https+'/admin.js?v=1&token=fixture','GET',{},400],
+    [https+'/owner-security/unexpected','GET',{},404],
+  ]) {
+    const rejected=await staticAdminResponse(new Request(path,{method,headers}),noFetch);
+    assert.equal(rejected.status,status);
+    assert.equal(rejected.headers.get('location'),null);
+    assert.equal(rejected.headers.get('cache-control'),'no-store');
+  }
+});
+test('HTTPS Pages conditional HEAD requests retain origin status and have no body',async()=>{
+  for(const status of [304,404]){
+    const req=new Request(https+'/admin.js?v=43.10',{method:'HEAD'});
+    const res=await staticAdminResponse(req,async(input)=>{
+      assert.equal(input.method,'HEAD');
+      return new Response(null,{status});
     });
     assert.equal(res.status,status);
     assert.equal(res.body,null);
-    assert.equal(res.headers.has('strict-transport-security'),false);
-    if(status===301)assert.equal(res.headers.get('location'),https+'/admin.html?lang=es');
+  }
+});
+test('admin forms protect native submission when the client module fails to run',async()=>{
+  const cached=await staticAdminResponse(new Request(https+'/admin.html'),()=>new Response('old HTML'));
+  assert.match(cached.headers.get('content-security-policy'),/form-action 'none'/);
+  const root=new URL('../../',import.meta.url);
+  const page=readFileSync(new URL('admin.html',root),'utf8');
+  assert.ok(page.includes("form-action 'none'"));
+  for(const file of readdirSync(root).filter(p=>p==='admin.html'||/^admin(?:-[\w-]+)?\.js$/.test(p))){
+    const source=readFileSync(new URL(file,root),'utf8');
+    for(const [form] of source.matchAll(/<form\b[^>]*>/gi))assert.match(form,/\bmethod="post"/i,file);
   }
 });
 test('Worker maps only the selected path to the existing Pages origin',()=>{

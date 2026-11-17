@@ -5,7 +5,7 @@ export function mountAdminCapacity({container,document:doc=document}) {
   section.innerHTML=`<h2>Capacidad y coste por espectador</h2>
     <p>Compara un escenario con los cupos del proveedor. El tráfico se estima con la tasa de video que indiques; la calidad 1080p por sí sola no determina esa tasa.</p>
     <p id="capacityInventory" role="status">Inventario pendiente de comprobar.</p>
-    <form id="capacityForm" class="capacity-form">
+    <form method="post" id="capacityForm" class="capacity-form">
       <label>Espectadores simultáneos<input name="viewers" type="number" min="0" max="100000" step="1" required placeholder="Ej. 10"></label>
       <label>Video por espectador (Mbps)<input name="mbps" type="number" min="0.1" max="100" step="any" required placeholder="Ej. 6"></label>
       <label>Horas al día por espectador<input name="hours" type="number" min="0" max="24" step="any" required placeholder="Ej. 2"></label>
