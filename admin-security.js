@@ -1,6 +1,7 @@
 export function mountAdminSecurity({api,notice,onSessionChanged,onRestored=()=>{},onFactorEnabled=()=>{},container}){
  const section=document.createElement('section');section.className='wide';
  section.innerHTML=`<h2>Seguridad y recuperación</h2>
+ <p id="adminLoginAlert" class="status" role="status" hidden></p>
  <p id="securityState">Consulta el estado de seguridad.</p>
  <p id="securityNotice" class="status" role="status" aria-live="polite" tabindex="-1"></p>
  <form id="securityForm">
@@ -65,9 +66,26 @@ export function mountAdminSecurity({api,notice,onSessionChanged,onRestored=()=>{
    $('recoveryStatus').textContent=(recovery.status==='success'?'Último ensayo correcto: '+new Date(recovery.completedAt).toLocaleString()+'. Copia del '+new Date(recovery.backupCreatedAt).toLocaleString()+'. Almacenamiento de ensayo limpiado.':recovery.status==='failed'?'El último ensayo falló. Conserva la copia y revisa el problema antes de una recuperación.':recovery.status==='running'?'Ensayo de recuperación en curso.':'Restauración aislada pendiente de comprobar.')+' '+file;
   }catch(e){if(e.code!=='operation_not_allowed')throw e;for(const id of ['backupRefresh','backupCreate','backupVerify'])$(id).hidden=true;recoveryAvailable=false;$('backupDrill').hidden=true;$('backupFileDrill').hidden=true;$('recoveryStatus').textContent='';$('backupStatus').textContent='El estado y la verificación de las copias estarán disponibles al actualizar el servidor.'}
  }
+ let signalTimer=null,readingSignal=false;
+ function renderLoginAlert(signal){
+  const alert=$('adminLoginAlert'),last=signal?.last;
+  if(signal?.available===false){alert.textContent='No se pudieron consultar las alertas de acceso administrativo.';alert.hidden=false;}
+  else if(last){alert.textContent='Alerta de acceso administrativo. Al menos '+last.minimumCount+' intentos rechazados en '+last.windowMinutes+' minutos. Última detección: '+new Date(last.detectedAt).toLocaleString()+'.';alert.hidden=false;}
+  else{alert.hidden=true;alert.textContent='';}
+ }
+ async function refreshLoginAlert(){
+  if(document.hidden||readingSignal||busy||$('mfaRecovery').open)return;
+  const generation=epoch;
+  readingSignal=true;
+  try{renderLoginAlert((await api('security-status')).loginAlert);}
+  catch{if(generation===epoch)renderLoginAlert({available:false});}
+  finally{readingSignal=false;}
+ }
  async function refresh(){try{
   await refreshBackups();available=true;for(const field of section.querySelectorAll('input,select,textarea'))field.disabled=false;
-  const state=await api('security-status');$('securityState').textContent=state.mfaEnabled?'Segundo factor activado · '+state.recoveryRemaining+' códigos de recuperación disponibles.':'Segundo factor desactivado.';
+  const state=await api('security-status');renderLoginAlert(state.loginAlert);
+  if(!signalTimer&&state.loginAlert)signalTimer=setInterval(refreshLoginAlert,60_000);
+  $('securityState').textContent=state.mfaEnabled?'Segundo factor activado · '+state.recoveryRemaining+' códigos de recuperación disponibles.':'Segundo factor desactivado.';
   $('mfaBegin').hidden=state.mfaEnabled;for(const id of ['mfaDisable','mfaRenew','mfaRenewHelp','mfaReplace','mfaReplaceHelp'])$(id).hidden=!state.mfaEnabled;
   if(state.mfaEnabled&&!enrollmentUntil)stopEnrollment();lock();return state;
  }catch(e){if(e.code!=='operation_not_allowed')throw e;available=false;stopEnrollment();for(const field of section.querySelectorAll('button,input,select,textarea'))field.disabled=true;$('securityState').textContent='Seguridad y recuperación pendientes de actualizar el servidor. La administración de usuarios sigue disponible.';return {available:false}}}
@@ -97,5 +115,5 @@ export function mountAdminSecurity({api,notice,onSessionChanged,onRestored=()=>{
  $('backupFile').onchange=async e=>{const generation=epoch,selection=++fileEpoch;blob=null;plan=null;$('restoreControls').hidden=true;$('backupFileDrill').hidden=true;$('backupPlan').textContent='';try{const file=e.target.files[0];if(!file)return;if(file.size>4000000)throw Error('El archivo es demasiado grande.');const data=JSON.parse(await file.text());if(generation!==epoch||selection!==fileEpoch)return;if(data.format!=='SNAP-encrypted-backup-v1'||typeof data.blob!=='string')throw Error('El archivo no es una copia SNAP válida.');const preview=await api('backup-preview',{blob:data.blob});if(generation!==epoch||selection!==fileEpoch)return;plan=preview;blob=data.blob;$('backupPlan').textContent=plan.users+' usuarios · '+plan.providers+' servidores · '+new Date(plan.createdAt).toLocaleString()+'. Archivo válido. Ensaya su recuperación antes de usarlo.';$('restoreWord').value='';$('restoreControls').hidden=false;$('backupFileDrill').hidden=!recoveryAvailable}catch(e){if(generation===epoch&&selection===fileEpoch)tell(e.message,true)}};
  $('backupRestore').onclick=e=>run(e.target,async()=>{if(!blob||!plan||!$('securityForm').reportValidity())return;await api('backup-restore',{...credentials(),blob,confirmation:plan.confirmation,confirmText:$('restoreWord').value});$('securityForm').reset();$('restoreControls').hidden=true;blob=null;plan=null;tell('Copia restaurada. Los clientes deben iniciar sesión nuevamente.');await onRestored()});
  $('auditRefresh').onclick=e=>run(e.target,async()=>{const events=await api('audit');$('auditList').replaceChildren();const labels={admin_login:'Inicio de sesión',admin_password_changed:'Contraseña administrativa cambiada',mfa_replaced:'Autenticador reemplazado',mfa_enabled:'Segundo factor activado',mfa_disabled:'Segundo factor desactivado',mfa_recovery_renewed:'Códigos de recuperación renovados',backup_exported:'Copia descargada',backup_downloaded:'Copia automática descargada',backup_automatic:'Copia automática creada',backup_created:'Copia creada en el servidor',backup_verified:'Integridad de copia comprobada',backup_failed:'La creación de copia falló',backup_restored:'Copia restaurada',backup_drill_verified:'Restauración aislada comprobada',backup_drill_failed:'El ensayo de restauración falló',user_saved:'Usuario guardado',user_deleted:'Usuario borrado',provider_saved:'Servidor guardado',provider_removed:'Servidor retirado',xtream_changed:'Acceso Xtream cambiado'};for(const event of events){const p=document.createElement('p');p.textContent=new Date(event.at).toLocaleString()+' · '+(labels[event.action]||event.action)+' · '+event.actor+(event.target?' · '+event.target:'');$('auditList').append(p)}if(!events.length)$('auditList').textContent='Aún no hay cambios registrados.'});
- return {refresh,clear(){epoch++;fileEpoch++;recoveryAvailable=false;busy=false;available=true;stopEnrollment();$('mfaRecovery').close();blob=null;plan=null;$('securityForm').reset();$('passwordForm').reset();$('securityNotice').textContent='';$('mfaCodes').value='';for(const id of ['mfaRecovery','restoreControls','backupDrill','backupFileDrill'])$(id).hidden=true;$('auditList').replaceChildren();$('backupFile').value='';$('backupStatus').textContent='';$('recoveryStatus').textContent='';$('backupPlan').textContent='';$('automaticBackups').replaceChildren(new Option('Sin copias disponibles',''));lock()}};
+ return {refresh,clear(){epoch++;clearInterval(signalTimer);signalTimer=null;$('adminLoginAlert').hidden=true;$('adminLoginAlert').textContent='';fileEpoch++;recoveryAvailable=false;busy=false;available=true;stopEnrollment();$('mfaRecovery').close();blob=null;plan=null;$('securityForm').reset();$('passwordForm').reset();$('securityNotice').textContent='';$('mfaCodes').value='';for(const id of ['mfaRecovery','restoreControls','backupDrill','backupFileDrill'])$(id).hidden=true;$('auditList').replaceChildren();$('backupFile').value='';$('backupStatus').textContent='';$('recoveryStatus').textContent='';$('backupPlan').textContent='';$('automaticBackups').replaceChildren(new Option('Sin copias disponibles',''));lock()}};
 }

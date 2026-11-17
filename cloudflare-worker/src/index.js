@@ -1,3 +1,4 @@
+import {requireControlHTTPS} from './public-transport.mjs';
 import {boundedTsRoute} from './bounded-ts-route.mjs';
 import {createClientSupportObservation} from './client-support-observation.mjs';
 import {createGatewayRotation} from './gateway-rotation.mjs';
@@ -540,8 +541,16 @@ const ownerPortalRequest=createOwnerPortal({getConfig:portalConfig,supportCall:a
 const telegramTick=createTelegramTick({getConfig:portalConfig});
 const boxClientRequest=createBoxClient({call:boxpanelCall});
 async function handleRequest(req,env,ctx,trace){
+const u=new URL(req.url);
+if (u.protocol !== 'https:' && (
+  ['/admin', '/reseller-bridge', '/bounded-ts-diagnostic', '/owner-panel'].includes(u.pathname) ||
+  u.pathname.startsWith('/owner-panel/') || u.pathname.startsWith('/api/boxpanel/builds/')
+)) {
+  const denied = requireControlHTTPS(req);
+  if (denied) return denied;
+}
 const boxClientResult=await boxClientRequest(req,env);if(boxClientResult)return boxClientResult;
-if(matchesOwnerPortal(req))return ownerPortalRequest(req,env,ctx);if(matchesResellerPortal(req))return resellerPortalRequest(req,env);const u=new URL(req.url);
+if(matchesOwnerPortal(req))return ownerPortalRequest(req,env,ctx);if(matchesResellerPortal(req))return resellerPortalRequest(req,env);
 if(req.method==='POST'&&req.headers.get('Cookie')?.includes('__Host-smn_')&&!canUseCookie(req,env))return json({error:'origin_not_allowed'},403);
 if(req.headers.get('Origin')&&!allowedOrigins(env).has(req.headers.get('Origin'))&&req.method==='POST')return json({error:'origin_not_allowed'},403);
 if(req.method==="OPTIONS")return new Response(null,{status:204,headers:cors});
@@ -566,6 +575,8 @@ if(req.method!=="POST")return json({error:"method_not_allowed"},405);
 const support=createClientSupportObservation({ctx,method:req.method,access:'api',serviceCheck:requestConnectionClient(req).serviceCheck===true,write:async body=>{const response=await directory(env,'/client-support-observe',body);await response.body?.cancel();}});
 try{const b=await readLimitedJSON(req),op=String(b.op||"");if(!["auth","logout","gnula_catalog","gnula_series_info","gnula_token","stream_token","session_info","playback_heartbeat","playback_release","playback_cancel","profile_get","profile_patch","playback_metric"].includes(op)&&!Object.hasOwn(actions,op))return json({error:"operation_not_allowed"},403);
 if(op==="auth"){
+ const transportResponse = requireControlHTTPS(req);
+ if (transportResponse) return transportResponse;
  if(!b.username||!b.password)return json({error:'credentials_required'},400);
  const has=await (await directory(env,"/has",{username:b.username})).json();let session,a;
  if(has.exists){const r=await directory(env,"/login",{username:b.username,password:b.password,client:req.headers.get("CF-Connecting-IP")||"unknown",connection:requestConnectionClient(req)});if(!r.ok)return json(await r.json(),r.status);const user=await r.json();session=await ownSession(env,user);a=accountInfo(session)}

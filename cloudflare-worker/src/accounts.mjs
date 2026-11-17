@@ -1,3 +1,4 @@
+import {recordRejectedAdminLogin} from './admin-login-alert.mjs';
 import {readXtreamReferences} from './xtream-reference-diagnostic.mjs';
 import {liveProcessingPreparation} from './live-processing-preparation.mjs';
 import {usageChannel,readChannelUsage,observeChannelUsage} from './channel-usage.mjs';
@@ -46,6 +47,8 @@ import {clientSupportRoute} from './client-support.mjs';
 import {recordLocalStartup} from './local-startup-observations.mjs';
 import {cleanPlaybackActivity} from './playback-activity.mjs';
 import {securityRoute,checkFactor,writeAudit} from './security.mjs';
+import {passwordHash,newVerifier,usesPepper,upgradeEnabled,upgradeVerifier} from './password-verifier.mjs';
+export {passwordHash};
 import {legacyAuthBudget} from './legacy-auth-budget.mjs';
 import {backupRoute,automaticBackup} from './backups.mjs';
 const answer=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:{'content-type':'application/json'}});
@@ -59,8 +62,10 @@ const alive=u=>u&&u.status==='active'&&(!u.expiresAt||u.expiresAt>Date.now());
 const enc=new TextEncoder();
 async function digest(x){return new Uint8Array(await crypto.subtle.digest('SHA-256',enc.encode(String(x))))}
 async function same(a,b){const x=await digest(a),y=await digest(b);let n=0;for(let i=0;i<x.length;i++)n|=x[i]^y[i];return n===0}
-export async function passwordHash(password,salt){const key=await crypto.subtle.importKey('raw',enc.encode(password),'PBKDF2',false,['deriveBits']);const bits=await crypto.subtle.deriveBits({name:'PBKDF2',hash:'SHA-256',salt:enc.encode(salt),iterations:100000},key,256);return Array.from(new Uint8Array(bits),x=>x.toString(16).padStart(2,'0')).join('')}
-async function withPassword(u,password){if(typeof password!=='string'||password.length<12||password.length>256)throw Error('password_length');const salt=crypto.randomUUID();return {...u,salt,hash:await passwordHash(password,salt)}}
+async function withPassword(u,password,env){
+ if(typeof password!=='string'||password.length<12||password.length>256)throw Error('password_length');
+ return {...u,...await newVerifier(password,env)};
+}
 function expiry(value){if(value===null||value===''||value===undefined)return null;const n=Number(value);if(!Number.isFinite(n)||n<=Date.now())throw Error('invalid_expiry');return n}
 export async function accountsFetch(state,env,req){
  const p=new URL(req.url).pathname.replace('/accounts','');const b=await req.json();const store=state.storage;
@@ -119,19 +124,19 @@ export async function accountsFetch(state,env,req){
  if(p==='/reseller-client-history'){await leases.prune();return store.transaction(tx=>readClientHistory(tx,store.sql,b));}
  if(p==='/customer-logout'){const user=await store.get('user:'+normal(b.username));if(user?.id===b.uid)await safelyRecord(()=>recordClientAccess(store,store.sql,user,'logout',b.connection));return answer({ok:true});}
  if(p==='/reseller-integrity')return resellerIntegrity(store,b);
- if(['/native-list','/native-record','/native-claim','/native-verify','/native-recover'].includes(p))return nativeResellerImport(store,p,b);
+ if(['/native-list','/native-record','/native-claim','/native-verify','/native-recover'].includes(p))return await nativeResellerImport(store,p,b,env);
  if(p==='/reseller-portal-recipient')return answer(await store.get('reseller-portal-recipient:'+b.accountId)||null);
  if(p==='/reseller-portal-recipient-ensure')return store.transaction(async tx=>{const key='reseller-portal-recipient:'+b.accountId,current=await tx.get(key);if(current)return answer(current);if(!b.accountId||typeof b.encrypted!=='string'||b.encrypted.length>12000)return answer({error:'bridge_input'},400);const value={encrypted:b.encrypted};await tx.put(key,value);return answer(value);});
  if(p==='/reseller-portal-configure')return store.transaction(async tx=>{if(!b.accountId||typeof b.encrypted!=='string'||b.encrypted.length>12000||!Number.isSafeInteger(b.revision)||typeof b.payloadHash!=='string')return answer({error:'bridge_input'},400);const key='reseller-portal:'+b.accountId,old=await tx.get(key);if(old?.revision>b.revision)return answer({error:'bridge_stale'},409);if(old?.revision===b.revision&&old.payloadHash!==b.payloadHash)return answer({error:'bridge_version_conflict'},409);await tx.put(key,{encrypted:b.encrypted,revision:b.revision,payloadHash:b.payloadHash});return answer({ok:true,configured:true});});
- if(p==='/reseller-reserve'||p==='/reseller-release'||p==='/reseller-apply')return resellerAccounts(store,p,b,{passwordHash,leases,writeAudit});
+ if(p==='/reseller-reserve'||p==='/reseller-release'||p==='/reseller-apply')return await resellerAccounts(store,p,b,{passwordHash:(v,s)=>passwordHash(v,s,env),newVerifier:v=>newVerifier(v,env),leases,writeAudit});
  if(p==='/audit-write'){await store.transaction(tx=>writeAudit(tx,b.actor,b.action,b.target));return answer({ok:true})}
  if(p==='/audit')return answer((await store.get('security-audit')||[]).slice(-100).reverse());
  if(p==='/backup-automatic')return answer(await automaticBackup(store,env));
- if(['/backup-preview','/backup-list','/backup-status','/backup-verify'].includes(p))return backupRoute(store,env,p,b,leases);
+ if(['/backup-preview','/backup-list','/backup-status','/backup-verify'].includes(p))return await backupRoute(store,env,p,b,leases);
  if(['/security-status','/admin-password','/mfa-begin','/mfa-replace-begin','/mfa-confirm','/mfa-disable','/mfa-recovery-renew','/backup-export','/backup-restore','/backup-download','/backup-create','/backup-drill'].includes(p)){
-  const result=await securityRoute(store,env,p,b,{passwordHash,withPassword,audit:writeAudit});
+  const result=await securityRoute(store,env,p,b,{passwordHash:(v,s)=>passwordHash(v,s,env),withPassword:(u,v)=>withPassword(u,v,env),audit:writeAudit});
   if(result)return result;
-  return backupRoute(store,env,p,b,leases);
+  return await backupRoute(store,env,p,b,leases);
  }
  if(p==='/catalog-references-put')return answer({ok:await saveCatalogReferences(store,b)});
  if(p==='/catalog-references-status')return answer(await store.transaction(tx=>readCatalogReferences(tx,Date.now(),b.references)));
@@ -156,7 +161,7 @@ export async function accountsFetch(state,env,req){
  if(p==='/setup'){
   if(!env.ADMIN_SETUP_SECRET||env.ADMIN_SETUP_SECRET.length<32||!await same(b.setupSecret,env.ADMIN_SETUP_SECRET))return answer({error:'setup_denied'},403);
   const username=normal(b.username);if(!validName(username))return answer({error:'invalid_username'},400);
-  const admin=await withPassword({id:crypto.randomUUID(),username,version:1},b.password);
+  const admin=await withPassword({id:crypto.randomUUID(),username,version:1},b.password,env);
   return store.transaction(async tx=>{if(await tx.get('admin'))return answer({error:'already_configured'},409);await tx.put('admin',admin);return answer({ok:true})});
  }
  if(p==='/admin-login'||p==='/login'){
@@ -164,14 +169,30 @@ export async function accountsFetch(state,env,req){
   // share its client budget. Customer budgets remain isolated by username.
   const username=normal(b.username),bucket=p==='/admin-login'?'admin-attempt:'+String(b.client||''):'attempt:'+String(b.client||'')+':'+username.slice(0,80),now=Date.now();
   const allowed=await store.transaction(async tx=>{let a=await tx.get(bucket);if(!a||a.until<now)a={count:0,until:now+15*60000};a.count++;await tx.put(bucket,a);return a.count<=10});
-  if(!allowed)return answer({error:'try_later'},429);
+  if(!allowed){if(p==='/admin-login')await recordRejectedAdminLogin(store,now);return answer({error:'try_later'},429);}
   const u=await store.get(p==='/admin-login'?'admin':'user:'+username);
-  const hash=await passwordHash(String(b.password||'').slice(0,256),u?.salt||'missing-account-salt');
-  if(!u||!await same(hash,u.hash)||(p==='/admin-login'&&username!==u.username)||(p==='/login'&&!alive(u))){if(p==='/login')await safelyRecord(()=>recordClientAccess(store,store.sql,u,'login_failed',b.connection,b.authKey?'xtream':'api'));return answer({error:'invalid_credentials'},401);}
+  const hash=await passwordHash(String(b.password||'').slice(0,256),u?.salt||'missing-account-salt',env);
+  if(!u||!await same(hash,u.hash)||(p==='/admin-login'&&username!==u.username)||(p==='/login'&&!alive(u))){
+   if(p==='/admin-login')await recordRejectedAdminLogin(store,now);
+   else await safelyRecord(()=>recordClientAccess(store,store.sql,u,'login_failed',b.connection,b.authKey?'xtream':'api'));
+   return answer({error:'invalid_credentials'},401);
+  }
   if(p==='/admin-login'){
    const factor=await store.transaction(async tx=>{const current=await tx.get('admin');if(current?.version!==u.version)return {valid:false};const r=await checkFactor(env,current,b.code);if(r.valid&&current.mfa?.enabled)await tx.put('admin',r.admin);return r});
-   if(!factor.valid)return answer({error:b.code?'mfa_invalid':'mfa_required'},401);
+   if(!factor.valid){
+    if(b.code)await recordRejectedAdminLogin(store,now);
+    return answer({error:b.code?'mfa_invalid':'mfa_required'},401);
+   }
    await store.transaction(tx=>writeAudit(tx,u.username,'admin_login'));
+  }
+  if(upgradeEnabled(env)&&!usesPepper(u.salt)){
+   const key=p==='/admin-login'?'admin':'user:'+username;
+   const replacement=await upgradeVerifier(u.salt,hash,env);
+   await store.transaction(async tx=>{
+    const current=await tx.get(key);
+    if(current?.id===u.id&&current.version===u.version&&current.hash===u.hash&&current.salt===u.salt)
+     await tx.put(key,{...current,...replacement});
+   });
   }
   if(p==='/login'){await safelyRecord(()=>recordClientAccess(store,store.sql,u,'login',b.connection,b.authKey?'xtream':'api'));await safelyRecord(()=>recordCustomerActivity(store,u.id,Date.now(),b.connection));}
   await store.delete(bucket);return answer({id:u.id,username:usernameSpelling(u),version:u.version,expiresAt:u.expiresAt,permissions:contentPermissions(u.permissions)});
@@ -217,8 +238,8 @@ export async function accountsFetch(state,env,req){
   const permissions=b.permissions===undefined?contentPermissions(old?.permissions):{movies:b.permissions?.movies===true,series:b.permissions?.series===true,tv:b.permissions?.tv===true,adults:Object.hasOwn(b.permissions||{},'adults')?b.permissions.adults===true:contentPermissions(old?.permissions).adults};
   const expiresAt=expiry(b.expiresAt),accessChanged=!old||!!b.password||old.status!==b.status||old.expiresAt!==expiresAt||JSON.stringify(contentPermissions(old.permissions))!==JSON.stringify(permissions);
   let u={...old,permissions,id:old?.id||crypto.randomUUID(),username,displayUsername:old?usernameSpelling(old):String(b.username).trim(),name:String(b.name||'').slice(0,120),comments:b.comments===undefined?(old?.comments||''):b.comments,status:b.status,expiresAt,createdAt:old?.createdAt||Date.now(),updatedAt:Math.max(Date.now(),(old?.updatedAt||0)+1),version:accessChanged?(old?.version||0)+1:old.version};
-  if(b.password)u=await withPassword(u,b.password);else if(!old)return answer({error:'password_required'},400);
-  return store.transaction(async tx=>{const latest=await tx.get('user:'+username),held=await tx.get('reseller-reservation:'+username);if(!latest&&held?.until>Date.now())return answer({error:'username_reserved'},409);if((latest?.version||0)!==(old?.version||0)||latest?.updatedAt!==old?.updatedAt)return answer({error:'edit_conflict'},409);await tx.put('user:'+username,u);if(accessChanged)await leases.in(tx).removeFor({uid:u.id});return answer({...adminUser(u),sessionsRevoked:accessChanged})});
+  if(b.password)u=await withPassword(u,b.password,env);else if(!old)return answer({error:'password_required'},400);
+  return store.transaction(async tx=>{const latest=await tx.get('user:'+username),held=await tx.get('reseller-reservation:'+username);if(!latest&&held?.until>Date.now())return answer({error:'username_reserved'},409);if((latest?.version||0)!==(old?.version||0)||latest?.updatedAt!==old?.updatedAt)return answer({error:'edit_conflict'},409);if(old&&!b.password){u.salt=latest.salt;u.hash=latest.hash;}await tx.put('user:'+username,u);if(accessChanged)await leases.in(tx).removeFor({uid:u.id});return answer({...adminUser(u),sessionsRevoked:accessChanged})});
  }
  if(p==='/delete')return store.transaction(async tx=>{const key='user:'+normal(b.username),u=await tx.get(key);if(!u)return answer({error:'not_found'},404);if(u.resellerBridge){const receipt=await tx.get('reseller-line:'+u.resellerBridge.accountId+':'+u.resellerBridge.lineId);if(receipt?.revoked!==true)return answer({error:'reseller_archive_required'},409);}await tx.delete(key);await tx.delete(assignmentKey(u.id));await leases.in(tx).removeFor({uid:u.id});return answer({ok:true})});
  if(p==='/provider-save')return store.transaction(async tx=>{await tx.put('provider',{encrypted:b.encrypted,username:b.username,mode:b.mode||"single",maxConnections:Math.min(3,Math.max(1,Number(b.maxConnections)||3))});await leases.in(tx).clear();await tx.delete('pool');return answer({ok:true})});
@@ -512,7 +533,7 @@ export async function accountsFetch(state,env,req){
  });
  if(p==='/release-session'){await store.transaction(async tx=>{await leases.in(tx).removeFor({sid:b.sid});await tx.delete('playback:'+b.sid)});return answer({ok:true})}
  return answer({error:'not_found'},404);
- }catch(e){return answer({error:['password_length','invalid_expiry'].includes(e.message)?e.message:'account_operation_failed'},400)}
+ }catch(e){if(e.message==='password_key_unavailable')return answer({error:e.message},503);return answer({error:['password_length','invalid_expiry'].includes(e.message)?e.message:'account_operation_failed'},400)}
 }
 
 

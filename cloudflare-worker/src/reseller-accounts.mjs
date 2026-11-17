@@ -3,7 +3,7 @@ const normal=value=>String(value||'').trim().toLowerCase();
 const identifier=value=>typeof value==='string'&&/^[A-Za-z0-9_.:-]{1,80}$/.test(value);
 const name=value=>/^[a-z0-9_.@-]{8,80}$/.test(value);
 async function digest(value){return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value))),v=>v.toString(16).padStart(2,'0')).join('');}
-export async function resellerAccounts(store,path,b,{passwordHash,leases,writeAudit}){
+export async function resellerAccounts(store,path,b,{passwordHash,newVerifier,leases,writeAudit}){
  const nativeMode=b.preserveCredentials===true||b.replaceNativeCredentials===true,accountId=b.accountId;if(!identifier(accountId)||!identifier(b.lineId)||!(name(normal(b.username))||(nativeMode||b.ccfCopy===true&&b.legacy===true)&&/^[a-z0-9_.@!-]{3,80}$/.test(normal(b.username))))return answer({error:'bridge_input'},400);
  const username=normal(b.username),lineKey='reseller-line:'+accountId+':'+b.lineId,operationKey='reseller-operation:'+accountId+':'+b.operationKey,reservationKey='reseller-reservation:'+username;
  if(path==='/reseller-release'){
@@ -27,7 +27,7 @@ export async function resellerAccounts(store,path,b,{passwordHash,leases,writeAu
  if(b.replaceNativeCredentials===true&&(!old?.resellerBridge?.native||b.preserveCredentials===true))return answer({error:'bridge_import_credentials'},409);
  if(old?.resellerBridge?.native&&b.preserveCredentials!==true&&b.replaceNativeCredentials!==true)return answer({error:'bridge_import_credentials'},409);
  if(b.preserveCredentials===true&&(!old?.resellerBridge?.native||!old.hash||!old.salt||Object.hasOwn(b,'password')))return answer({error:'bridge_import_credentials'},409);
- let passwordChanged=false,salt,hash;if(!b.revoke){if(b.preserveCredentials===true){salt=old.salt;hash=old.hash;}else if(old&&await passwordHash(b.password,old.salt)===old.hash){salt=old.salt;hash=old.hash;}else{passwordChanged=true;salt=crypto.randomUUID();hash=await passwordHash(b.password,salt);}}
+ let passwordChanged=false,salt,hash;if(!b.revoke){if(b.preserveCredentials===true){salt=old.salt;hash=old.hash;}else if(old&&await passwordHash(b.password,old.salt)===old.hash){salt=old.salt;hash=old.hash;}else{passwordChanged=true;({salt,hash}=await newVerifier(b.password));}}
  return store.transaction(async tx=>{
   const latest=await tx.get(lineKey),target=await tx.get('user:'+username),current=renaming?await tx.get('user:'+previous):target;if(latest?.version>b.version)return answer({error:'bridge_stale',currentVersion:latest.version},409);if(latest?.version===b.version)return replay(latest,tx);
   if(renaming&&(latest?.username!==previous||latest.revoked||target||!current||current.resellerBridge?.accountId!==accountId||current.resellerBridge.lineId!==b.lineId))return answer({error:'bridge_username_conflict'},409);
