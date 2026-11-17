@@ -1,5 +1,14 @@
 # Willax TV alternative in Peru
 
+The finite publication runs only when `ENVIRONMENT=production`,
+`CATALOG_MAINTENANCE_ENABLED=true` and `WILLAX_IMPORT_ENABLED=true` are all set.
+The channel-specific flag is enabled in the production Wrangler variables and
+is absent from staging. Missing or false flags leave the import pending without
+opening a source connection or changing the catalog. This opt-in also prevents
+unrelated maintenance runtime fixtures from contacting the public TCP origin.
+Disabling the import flag prevents future publication attempts; it does not hide
+an already saved channel or change its existing playback permissions.
+
 Owner request: add a tested Willax feed after the existing three Willax entries
 in Peru, and expose the same saved channel in the own-content usage panel.
 

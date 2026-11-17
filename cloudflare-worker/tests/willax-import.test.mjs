@@ -13,7 +13,7 @@ class Store{
  async list({prefix}){return new Map([...this.data].filter(([k])=>k.startsWith(prefix)));}
  transaction(fn){const p=this.queue.then(()=>fn(this));this.queue=p.catch(()=>{});return p;}
 }
-const env={ENVIRONMENT:'production',CATALOG_MAINTENANCE_ENABLED:'true'};
+const env={ENVIRONMENT:'production',CATALOG_MAINTENANCE_ENABLED:'true',WILLAX_IMPORT_ENABLED:'true'};
 assert.equal(PUBLIC_TV_CHANNELS.length,20,'original public-channel import remains unchanged');
 assert.equal(channel.id,'public-willax-peru');assert.equal(channel.xtreamId,'2000023');assert.equal(channel.adapter,'willax-public');assert.equal(channel.page,'https://willax.pe/en-vivo');
 assert.equal(ALL_TV_CHANNELS.filter(c=>c.id===channel.id).length,1);assert.equal(new Set(ALL_TV_CHANNELS.map(c=>c.xtreamId).filter(Boolean)).size,ALL_TV_CHANNELS.map(c=>c.xtreamId).filter(Boolean).length);
@@ -39,5 +39,5 @@ assert.ok(!JSON.stringify(report).includes('https://'));assert.ok(!JSON.stringif
 const jobKey=[...store.data.keys()].find(key=>key.startsWith('catalog-import:willax-'));
 await store.put(jobKey,{...(await store.get(jobKey)),state:'running',claimUntil:1});
 await runWillaxImport(store,{},env,{probe:()=>{throw Error('an interrupted third attempt must not run a fourth probe');}});assert.equal((await willaxImportStatus(store)).state,'completed');assert.equal((await willaxImportStatus(store)).attempts,3);
-for(const config of [{...env,ENVIRONMENT:'staging'},{...env,CATALOG_MAINTENANCE_ENABLED:'false'}]){store=new Store();await runWillaxImport(store,{},config,{probe:()=>{throw Error('disabled import');}});assert.equal((await willaxImportStatus(store)).state,'pending');}
+for(const config of [{...env,ENVIRONMENT:'staging'},{...env,CATALOG_MAINTENANCE_ENABLED:'false'},{...env,WILLAX_IMPORT_ENABLED:undefined},{...env,WILLAX_IMPORT_ENABLED:'false'}]){store=new Store();await runWillaxImport(store,{},config,{probe:()=>{throw Error('disabled import');}});assert.equal((await willaxImportStatus(store)).state,'pending');assert.equal((await exclusiveSnapshot(store)).items.length,0);}
 console.log('PASS: finite private Willax import, concurrent deduplication, fixed identity, Peru monitoring before first use, manual edits/hides, unavailable retry cap and staging isolation.');

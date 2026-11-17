@@ -11,7 +11,7 @@ export async function willaxImportStatus(store){
 // One finite owner-authorized addition through the existing private catalog
 // maintenance tick. Existing provider rows and manual catalog edits stay intact.
 export async function runWillaxImport(store,leases,env,{probe=inspectCatalogSource,now=Date.now}={}){
- if(env.ENVIRONMENT!=='production'||env.CATALOG_MAINTENANCE_ENABLED!=='true')return;
+ if(env.ENVIRONMENT!=='production'||env.CATALOG_MAINTENANCE_ENABLED!=='true'||env.WILLAX_IMPORT_ENABLED!=='true')return;
  const claim=await store.transaction(async tx=>{
   const old=await tx.get(KEY);if(old?.state==='completed'||old?.claimUntil>now())return null;
   if(old?.attempts>=3){await tx.put(KEY,{...old,state:'completed',claimUntil:0,finishedAt:now()});return null;}
