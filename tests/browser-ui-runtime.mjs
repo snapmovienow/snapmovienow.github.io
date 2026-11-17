@@ -26,7 +26,7 @@ try{
   if(op==='overview')value={provider:null,connections:0};if(op==='xtream-settings')value={enabled:true,url:'https://api.snaptvnow.com',port:'443'};
   if(op==='xtream-series-check'){assert.equal(b.username,'testuser');assert.equal(b.query,'El Halcón');value={results:[{name:'El Halcón (test)',publicId:20,httpStatus:200,state:'ready',episodes:8,seasons:[{number:1,episodes:8}]}]}}
   if(op==='provider-dashboard')value={sources:[],accounts:[],assignments:[],generatedAt:Date.now(),stale:inventoryStale,summary:{accounts:1,activeAccounts:1,totalCapacity:3,reported:0,reserved:1,available:2}};
-  if(op==='security-status')value={mfaEnabled,recoveryRemaining:mfaEnabled?8:0};if(op==='playback-health')value={groups:[],alerts:[]};
+  if(op==='security-status')value={mfaEnabled,recoveryRemaining:mfaEnabled?8:0,loginAlert:{available:true,last:{minimumCount:10,windowMinutes:5,detectedAt:Date.now()}}};if(op==='playback-health')value={groups:[],alerts:[]};
   if(op==='mfa-confirm'&&mfaError){await route.fulfill({status:401,contentType:'application/json',headers:{'Access-Control-Allow-Origin':base},body:JSON.stringify({error:mfaError})});return}
   if(op==='mfa-confirm'||op==='mfa-recovery-renew'){mfaEnabled=true;value={replaced:op==='mfa-confirm'&&replacing,recoveryCodes:Array.from({length:8},(_,i)=>(op==='mfa-recovery-renew'?'SYNTHETIC-NEW-':'SYNTHETIC-RECOVERY-')+i)}};
   if(op==='alerts-status'&&monitorFailure){await route.fulfill({status:503,contentType:'application/json',headers:{'Access-Control-Allow-Origin':base},body:JSON.stringify({error:'monitor_unavailable'})});return}
@@ -59,6 +59,7 @@ try{
  await page.locator('#movieRow .card').first().click();await page.locator('#heartBtn').click();await page.waitForTimeout(1500);assert.ok([...profile.values()].some(p=>p.kind==='favorite'&&!p.deleted));
  await page.locator('#detailClose').click();await page.locator('header [data-action="menu"]').click();await page.locator('#favoritesMenu').click();assert.equal(await page.locator('#favoritesResults .card').count(),1);await page.locator('#favoritesClose').click();
  const panel=await context.newPage();panel.on('pageerror',e=>errors.push(e.message));await panel.goto(base+'/admin.html');await panel.locator('#loginForm [name="username"]').fill('owner');await panel.locator('#loginForm [name="password"]').fill('owner-password-test');await panel.locator('#loginForm button').click();await panel.locator('#securityState').filter({hasText:'desactivado'}).waitFor();
+ await panel.locator('#adminLoginAlert').filter({hasText:'10 intentos rechazados en 5 minutos'}).waitFor();
  await panel.locator('#capacityInventory').filter({hasText:'3 cupos totales'}).waitFor();
  await panel.locator('#alertSummary').filter({hasText:'1 incidencias abiertas'}).waitFor();
  assert.match(await panel.locator('#alertApiStatus').textContent(),/API del panel accesible/);

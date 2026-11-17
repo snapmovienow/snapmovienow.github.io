@@ -1,4 +1,5 @@
 import {exportExclusives,validExclusiveBackup,restoreExclusives} from './exclusive-catalog.mjs';
+import {usesPepper,pepperId} from './password-verifier.mjs';
 import {seal,unseal,hashSecret,writeAudit} from './security.mjs';
 const format='SNAP-encrypted-backup-v1';
 const keys=['provider','providers','source-pools','pool','xtream-config'];
@@ -10,9 +11,18 @@ function validSnapshot(snapshot,env){
  return snapshot?.format===format&&snapshot.environment===(env.ENVIRONMENT||'production')&&Array.isArray(snapshot.users)&&snapshot.users.length<=10000&&snapshot.users.every(validUser)&&new Set(snapshot.users.map(u=>u.username)).size===snapshot.users.length&&snapshot.settings&&typeof snapshot.settings==='object'&&!Array.isArray(snapshot.settings)&&Object.keys(snapshot.settings).every(k=>keys.includes(k)||k==='exclusive-content')&&(!snapshot.settings['exclusive-content']||validExclusiveBackup(snapshot.settings['exclusive-content']))&&Number.isSafeInteger(snapshot.createdAt)&&snapshot.createdAt>0&&snapshot.createdAt<=Date.now()+60000;
 }
 const planFor=snapshot=>({users:snapshot.users.length,providers:snapshot.settings.providers?.length||(snapshot.settings.provider?1:0),createdAt:snapshot.createdAt});
+async function validatePasswordRecovery(snapshot,env) {
+ const salts=snapshot.users.map(user=>user.salt).filter(usesPepper);
+ if(!salts.length)return;
+ const current=await pepperId(env);
+ if(salts.some(s=>!s.startsWith('snap-pw-v1$'+current+'$')))throw Error('password_key_unavailable');
+}
 export async function readBackup(env,blob){
  if(typeof blob!=='string'||blob.length>4000000)return null;
- const snapshot=await unseal(env,blob);return validSnapshot(snapshot,env)?snapshot:null;
+ const snapshot=await unseal(env,blob);
+ if(!validSnapshot(snapshot,env))return null;
+ await validatePasswordRecovery(snapshot,env);
+ return snapshot;
 }
 async function exportSnapshot(store,env){
  const snapshot=await store.transaction(async tx=>{
@@ -21,6 +31,7 @@ async function exportSnapshot(store,env){
   const exclusives=await exportExclusives(tx);if(exclusives)settings['exclusive-content']=exclusives;
   return {format,environment:env.ENVIRONMENT||'production',createdAt:Date.now(),users,settings};
  });
+ await validatePasswordRecovery(snapshot,env);
  if(JSON.stringify(snapshot).length>2000000||snapshot.users.length>10000)return null;
  return {format,createdAt:snapshot.createdAt,blob:await seal(env,snapshot)};
 }
@@ -132,7 +143,7 @@ export async function backupRoute(store,env,path,b,leases){
  });
  if(path==='/backup-download'||path==='/backup-verify'){
   const saved=await savedCopy(store,b.id);if(saved.error)return answer(saved,saved.error==='not_found'?404:400);
-  const snapshot=await unseal(env,saved.blob);if(!validSnapshot(snapshot,env)||snapshot.createdAt!==saved.createdAt)return answer({error:'invalid_backup'},400);
+  const snapshot=await readBackup(env,saved.blob);if(!snapshot||snapshot.createdAt!==saved.createdAt)return answer({error:'invalid_backup'},400);
   if(path==='/backup-download'){await store.transaction(async tx=>{await tx.put('backup-download-status',{preparedAt:Date.now(),createdAt:saved.createdAt,checksum:await hashSecret(saved.blob)});await writeAudit(tx,b.actor,'backup_downloaded')});return answer({format,createdAt:saved.createdAt,blob:saved.blob})}
   const verifiedAt=Date.now(),checksum=await hashSecret(saved.blob);
   const current=await store.transaction(async tx=>{
@@ -144,8 +155,8 @@ export async function backupRoute(store,env,path,b,leases){
   if(!current)return answer({error:'backup_changed'},409);
   return answer({...planFor(snapshot),verified:true,verifiedAt});
  }
- const snapshot=await unseal(env,b.blob);
- if(!validSnapshot(snapshot,env))return answer({error:'invalid_backup'},400);
+ const snapshot=await readBackup(env,b.blob);
+ if(!snapshot)return answer({error:'invalid_backup'},400);
  const confirmation=await hashSecret(b.blob),plan={...planFor(snapshot),confirmation};
  if(path==='/backup-preview')return answer(plan);
  if(b.confirmation!==confirmation||b.confirmText!=='RESTAURAR')return answer({error:'restore_confirmation_required'},409);

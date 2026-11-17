@@ -1,3 +1,4 @@
+import {requireControlHTTPS} from './public-transport.mjs';
 import {portalReadDeadline} from './portal-read-deadline.mjs';
 import {gatewayDiagnostic} from './portal-gateway-diagnostics.mjs';
 import {boxpanelAsset} from './boxpanel-portal.mjs';
@@ -18,7 +19,7 @@ export function matchesResellerPortal(req){const u=new URL(req.url);return u.hos
 export async function readPortalInput(req,max=24000){const length=Number(req.headers.get('content-length')||0);if(length>max)throw Error('input_limit');const reader=req.body?.getReader();if(!reader)return {};let size=0,parts=[];const deadline=AbortSignal.timeout(5000);try{while(true){deadline.throwIfAborted();const next=await new Promise((resolve,reject)=>{const abort=()=>{void reader.cancel();reject(Error('input_timeout'));};deadline.addEventListener('abort',abort,{once:true});reader.read().then(resolve,reject).finally(()=>deadline.removeEventListener('abort',abort));});if(next.done)break;size+=next.value.byteLength;if(size>max){await reader.cancel();throw Error('input_limit');}parts.push(next.value);}const bytes=new Uint8Array(size);let at=0;for(const part of parts){bytes.set(part,at);at+=part.length;}const body=JSON.parse(new TextDecoder().decode(bytes));if(!body||typeof body!=='object'||Array.isArray(body))throw Error('input_invalid');return body;}finally{reader.releaseLock();}}
 export function createResellerPortal({getConfig,fetcher=fetch,boxpanel,catalog}){const handle=async(req,env)=>{
  const u=new URL(req.url),unified=u.hostname===UNIFIED_PORTAL_HOST||u.pathname===UNIFIED_PORTAL_PREFIX||u.pathname.startsWith(UNIFIED_PORTAL_PREFIX+'/'),host=unified?UNIFIED_PORTAL_HOST:PORTAL_HOST,prefix=unified?UNIFIED_PORTAL_PREFIX:PREFIX,base=u.hostname===host?'':prefix,path=u.pathname.slice(base.length)||'/',cookieName=unified?UNIFIED_COOKIE:COOKIE;
- if(u.protocol!=='https:')return new Response(null,{status:301,headers:{Location:'https://'+u.host+u.pathname+u.search}});
+ if(u.protocol!=='https:')return requireControlHTTPS(req)||json({error:'https_required'},400);
  // Native phone delivery uses a revocable device credential, never a portal cookie.
  if(path==='/api/sms-device'){
   if(req.method!=='POST')return json({error:'portal_method'},405);

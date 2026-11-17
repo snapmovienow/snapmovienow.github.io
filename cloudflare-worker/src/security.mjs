@@ -1,3 +1,4 @@
+import {readAdminLoginAlert} from './admin-login-alert.mjs';
 const encoder=new TextEncoder();
 const alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 const base64=bytes=>{let text='';for(let i=0;i<bytes.length;i+=8192)text+=String.fromCharCode(...bytes.subarray(i,i+8192));return btoa(text).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'')};
@@ -32,7 +33,7 @@ export async function checkFactor(env,admin,code,now=Date.now()){
 export async function securityRoute(store,env,path,b,{passwordHash,withPassword,audit}){
  const answer=(data,status=200)=>Response.json(data,{status});
  const admin=await store.get('admin');if(!admin)return answer({error:'admin_required'},401);
- if(path==='/security-status')return answer({mfaEnabled:admin.mfa?.enabled===true,recoveryRemaining:admin.mfa?.recovery?.length||0});
+ if(path==='/security-status')return answer({mfaEnabled:admin.mfa?.enabled===true,recoveryRemaining:admin.mfa?.recovery?.length||0,loginAlert:await readAdminLoginAlert(store)});
  // Reauthenticate before changing MFA/recovery or exporting private data.
  const attempt='security-attempt:'+String(b.actor||admin.id),now=Date.now();
  const allowed=await store.transaction(async tx=>{let a=await tx.get(attempt);if(!a||a.until<now)a={count:0,until:now+15*60000};a.count++;await tx.put(attempt,a);return a.count<=10});
@@ -76,10 +77,23 @@ export async function securityRoute(store,env,path,b,{passwordHash,withPassword,
   await tx.delete(attempt);await audit(tx,b.actor,'mfa_recovery_renewed');
   return answer({ok:true,recoveryCodes:codes,signInAgain:true});
  });
- const factor=await store.transaction(async tx=>{const current=await tx.get('admin');const r=await checkFactor(env,current,b.code,now);if(r.valid&&current.mfa?.enabled)await tx.put('admin',r.admin);return r});
- if(!factor.valid)return answer({error:'mfa_invalid'},401);
- if(path==='/mfa-disable')return store.transaction(async tx=>{const current=await tx.get('admin');await tx.put('admin',{...current,mfa:null,version:current.version+1});await tx.delete(attempt);await audit(tx,b.actor,'mfa_disabled');return answer({ok:true,signInAgain:true})});
- await store.delete(attempt);return null; // verified backup operation continues in accountsFetch
+ return store.transaction(async tx=>{
+  const current=await tx.get('admin');
+  if(!current||current.id!==admin.id||current.version!==admin.version||current.hash!==admin.hash){
+   return answer({error:'admin_required'},401);
+  }
+  const factor=await checkFactor(env,current,b.code,now);
+  if(!factor.valid)return answer({error:'mfa_invalid'},401);
+  if(path==='/mfa-disable'){
+   await tx.put('admin',{...current,mfa:null,version:current.version+1});
+   await tx.delete('mfa-pending');
+   await audit(tx,b.actor,'mfa_disabled');
+  }else if(current.mfa?.enabled){
+   await tx.put('admin',factor.admin);
+  }
+  await tx.delete(attempt);
+  return path==='/mfa-disable'?answer({ok:true,signInAgain:true}):null;
+ });
 }
 export async function writeAudit(store,actor,action,target=null){
  const events=await store.get('security-audit')||[];
