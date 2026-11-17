@@ -1,3 +1,4 @@
+import {matchesStaticAdminURL,staticAdminResponse} from './static-admin-response.mjs';
 import {requireControlHTTPS} from './public-transport.mjs';
 import {boundedTsRoute} from './bounded-ts-route.mjs';
 import {createClientSupportObservation} from './client-support-observation.mjs';
@@ -698,7 +699,9 @@ export default {scheduled(event,env,ctx){
  }).catch(()=>console.error({event:'telegram_tick_failed'})));ctx.waitUntil(monitorCall(env,'/tick').then(async response=>{if(!response.ok)console.error({event:'monitor_failed'});await response.body?.cancel()}).catch(()=>console.error({event:'monitor_failed'})));if(env.CATALOG_MAINTENANCE_ENABLED==='true')ctx.waitUntil(directory(env,'/catalog-maintenance-tick').then(async r=>{await r.body?.cancel()}).catch(()=>console.error({event:'catalog_maintenance_failed'})));return}
  if(event.cron&&event.cron!=='17 5 * * *')return;
  ctx.waitUntil(directory(env,'/backup-automatic').then(async response=>{const result=await response.json();if(result.error)console.error({event:'backup_failed',reason:result.error});if(result.recovery?.error)console.error({event:'backup_drill_failed',reason:result.recovery.error})}).catch(()=>console.error({event:'backup_failed',reason:'backup_service_unavailable'})).finally(async()=>{const response=await monitorCall(env,'/tick');await response.body?.cancel()}));
-},async fetch(req, env, ctx) {lqsaBootstrap(env,ctx);ownedMediaBootstrap(env,ctx);localAuditBootstrap(env,ctx);await markServiceVerification(req);const response=await traceRequest(req, trace => handleRequest(req, env, ctx,trace), {allowedOrigin: SITE,fastMediaFailureBudget:env.ENVIRONMENT==='production'&&env.FAST_MEDIA_FAILURE_LOGS_ENABLED==='true'?fastMediaFailureBudget:undefined,onTiming:timing=>{if(new URL(req.url).pathname!=='/stream'&&ctx?.waitUntil&&env.PLAYBACK_SESSIONS)ctx.waitUntil(env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_operations_v1')).fetch('https://private/operations/timing-ingest',{method:'POST',body:JSON.stringify({timing})}).then(r=>r.body?.cancel()).catch(()=>{}))}});return browserResponse(response,req,env);}};
+},async fetch(req, env, ctx) {
+ if(matchesStaticAdminURL(new URL(req.url)))return staticAdminResponse(req);
+ lqsaBootstrap(env,ctx);ownedMediaBootstrap(env,ctx);localAuditBootstrap(env,ctx);await markServiceVerification(req);const response=await traceRequest(req, trace => handleRequest(req, env, ctx,trace), {allowedOrigin: SITE,fastMediaFailureBudget:env.ENVIRONMENT==='production'&&env.FAST_MEDIA_FAILURE_LOGS_ENABLED==='true'?fastMediaFailureBudget:undefined,onTiming:timing=>{if(new URL(req.url).pathname!=='/stream'&&ctx?.waitUntil&&env.PLAYBACK_SESSIONS)ctx.waitUntil(env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_operations_v1')).fetch('https://private/operations/timing-ingest',{method:'POST',body:JSON.stringify({timing})}).then(r=>r.body?.cancel()).catch(()=>{}))}});return browserResponse(response,req,env);}};
 
 
 
