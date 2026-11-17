@@ -8,7 +8,8 @@ import {expectedPlaybackOutcome,playbackErrorCode} from './playback-outcomes.mjs
 
 const DAY=86400000,RETENTION=30*DAY,INCIDENT_LIMIT=100,RECEIPT_LIMIT=128,RECEIPT_AGE=30*60000,SOURCE_RECENT=5*60000;
 const TYPES=['live','movie','series'],STATES=['open','investigating','fixed_pending','resolved'];
-const PATHS=new Set(['/client-support-read','/client-support-check','/client-support-incident-save','/client-support-observe']);
+const PORTAL_ACTIONS=new Set(['client-support-read','client-support-check','client-support-incident-save']);
+const PATHS=new Set(['/client-support-read','/client-support-check','/client-support-incident-save','/client-support-observe','/client-support-portal']);
 const normal=value=>String(value||'').trim().toLowerCase();
 const validUsername=value=>typeof value==='string'&&/^[a-zA-Z0-9_.@!-]{3,80}$/.test(value);
 const validId=value=>typeof value==='string'&&/^[A-Za-z0-9_.:-]{1,80}$/.test(value);
@@ -177,17 +178,29 @@ async function saveManualIncident(store,sql,user,b,now){
 
 export async function clientSupportRoute(store,path,b,{sql=store.sql,now=Date.now()}={}){
  if(!PATHS.has(path))return fail('not_found',404);
- if(!b||typeof b!=='object'||Array.isArray(b)||!validUsername(b.username)||!Number.isSafeInteger(now)||now<=0)return fail('invalid_support_input');
+ const portal=path==='/client-support-portal';
+ if(!b||typeof b!=='object'||Array.isArray(b)||!Number.isSafeInteger(now)||now<=0)return fail('invalid_support_input');
+ if(portal?(!PORTAL_ACTIONS.has(b.action)||!validId(b.accountId)||!validId(b.lineId)||!validUsername(b.confirmedUsername)):!validUsername(b.username))return fail('invalid_support_input');
  try{
   return await transaction(store,async tx=>{
-   const user=await tx.get('user:'+normal(b.username));if(!user||!validId(user.id))return fail('support_not_found',404);
-   if(path==='/client-support-observe'){
+   // The portal authenticates the owner and confirms a current Site row first.
+   // Resolve that exact row through the saved bridge mapping inside this same
+   // transaction; never trust a browser username or inherit a reused name.
+   let username=normal(b.username),operation=path;
+   if(portal){
+    const line=await tx.get('reseller-line:'+b.accountId+':'+b.lineId);
+    if(!line||!validUsername(line.username)||normal(line.username)!==normal(b.confirmedUsername))return fail('support_scope',403);
+    username=normal(line.username);operation='/'+b.action;
+   }
+   const user=await tx.get('user:'+username);if(!user||!validId(user.id))return fail(portal?'support_scope':'support_not_found',portal?403:404);
+   if(portal&&(normal(user.username)!==username||user.resellerBridge?.accountId!==b.accountId||user.resellerBridge.lineId!==b.lineId))return fail('support_scope',403);
+   if(operation==='/client-support-observe'){
     const error=validateObservation(b,user,now);if(error)return fail(error,error==='support_scope'?403:400);
     if(b.serviceCheck===true)return answer({ok:true,ignored:true});
    }
    schema(sql);
-   if(path==='/client-support-observe')return observe(tx,sql,user,b,now);
-   if(path==='/client-support-incident-save')return saveManualIncident(tx,sql,user,b,now);
+   if(operation==='/client-support-observe')return observe(tx,sql,user,b,now);
+   if(operation==='/client-support-incident-save')return saveManualIncident(tx,sql,user,portal?{...b,actor:'owner'}:b,now);
    return readSupport(tx,sql,user,b,now);
   });
  }catch{return fail('support_unavailable',503);}

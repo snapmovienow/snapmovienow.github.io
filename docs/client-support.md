@@ -1,9 +1,22 @@
 # Owner client support
 
-Open the administrator panel, find the customer under **Usuarios**, and select
-**Soporte** below that account's existing actions. The private dialog loads only
-after selection. Its three sections are saved catalogue requests, an account
-check, and a thirty-day incident history. The controls also work on a phone.
+In **Panel admin reseller**, open **Líneas** and select **Soporte** below
+**Editar cliente** in the first column. **Consultar soporte** is also in the
+line's actions menu and detail view. These entries appear only for the owner
+using the protected `/owner-panel/` session, including when managing a reseller.
+The main application administrator also retains **Usuarios → Soporte**.
+The private dialog loads only after selection. Its three sections are saved
+catalogue requests, an account check, and a thirty-day incident history. The
+controls also work on a phone.
+
+The owner portal revalidates its existing HttpOnly session for every support
+request. A dedicated authorization call reads only the current Site line ID,
+account ID and username, without snapshot enrichment, queue synchronization,
+credential decryption or provider checks. The Worker then resolves the exact
+account/line pair through its bridge registry inside the support transaction,
+and requires the current customer's bridge ownership and username to match.
+The browser cannot select an arbitrary username or supply an actor. Both entry
+points use the same UUID-scoped history; no records are copied between panels.
 
 ## Evidence and scope
 

@@ -64,7 +64,8 @@ function expiry(value){if(value===null||value===''||value===undefined)return nul
 export async function accountsFetch(state,env,req){
  const p=new URL(req.url).pathname.replace('/accounts','');const b=await req.json();const store=state.storage;
  try{
- if(['/client-support-read','/client-support-check','/client-support-incident-save','/client-support-observe'].includes(p))return clientSupportRoute(store,p,b,{sql:store.sql});
+ if(['/client-support-read','/client-support-check','/client-support-incident-save','/client-support-observe','/client-support-portal'].includes(p))return clientSupportRoute(store,p,b,{sql:store.sql});
+ if(p==='/reseller-portal-config')return answer(await store.get('reseller-portal:'+b.accountId)||null);
  if(p==='/server-diagnostic-snapshot')return store.transaction(async tx=>answer(await serverDiagnosticSnapshot({get:key=>tx.get(key),sql:store.sql},{now:Date.now(),rotationEnabled:rotationEnabled(env),queries:b.queries||[]})));
  if(['/live-processing-read','/live-processing-save'].includes(p))return liveProcessingPreparation(store,p,b);
  if(['/bounded-ts-claim','/bounded-ts-status','/bounded-ts-result'].includes(p))return boundedTsQuota(store,p,b,env);
@@ -119,7 +120,6 @@ export async function accountsFetch(state,env,req){
  if(['/native-list','/native-record','/native-claim','/native-verify','/native-recover'].includes(p))return nativeResellerImport(store,p,b);
  if(p==='/reseller-portal-recipient')return answer(await store.get('reseller-portal-recipient:'+b.accountId)||null);
  if(p==='/reseller-portal-recipient-ensure')return store.transaction(async tx=>{const key='reseller-portal-recipient:'+b.accountId,current=await tx.get(key);if(current)return answer(current);if(!b.accountId||typeof b.encrypted!=='string'||b.encrypted.length>12000)return answer({error:'bridge_input'},400);const value={encrypted:b.encrypted};await tx.put(key,value);return answer(value);});
- if(p==='/reseller-portal-config')return answer(await store.get('reseller-portal:'+b.accountId)||null);
  if(p==='/reseller-portal-configure')return store.transaction(async tx=>{if(!b.accountId||typeof b.encrypted!=='string'||b.encrypted.length>12000||!Number.isSafeInteger(b.revision)||typeof b.payloadHash!=='string')return answer({error:'bridge_input'},400);const key='reseller-portal:'+b.accountId,old=await tx.get(key);if(old?.revision>b.revision)return answer({error:'bridge_stale'},409);if(old?.revision===b.revision&&old.payloadHash!==b.payloadHash)return answer({error:'bridge_version_conflict'},409);await tx.put(key,{encrypted:b.encrypted,revision:b.revision,payloadHash:b.payloadHash});return answer({ok:true,configured:true});});
  if(p==='/reseller-reserve'||p==='/reseller-release'||p==='/reseller-apply')return resellerAccounts(store,p,b,{passwordHash,leases,writeAudit});
  if(p==='/audit-write'){await store.transaction(tx=>writeAudit(tx,b.actor,b.action,b.target));return answer({ok:true})}

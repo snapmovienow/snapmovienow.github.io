@@ -73,6 +73,8 @@ jobs:
         run: node tests/admin-boxpanel-runtime.mjs
       - name: Reseller client forms from the production artifact
         run: node tests/reseller-client-forms-runtime.mjs
+      - name: Owner portal client support on mobile and desktop
+        run: node tests/owner-support-runtime.mjs
       - name: Real video concurrency smoke
         run: node tests/video-capacity-runtime.mjs
         env:
