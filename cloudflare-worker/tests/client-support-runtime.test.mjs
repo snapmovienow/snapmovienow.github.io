@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {build} from 'esbuild';
 import {Miniflare,convertV4MiniflareOptions} from 'miniflare';
 import {fileURLToPath} from 'node:url';
+import {PORTAL_ACCOUNT,PORTAL_SOURCE} from '../src/reseller-portal.mjs';
 
 const fixture=String.raw`
 import worker,{PlaybackSession,OperationsMonitor,BackupRecovery} from '../src/index.js';
@@ -59,8 +60,13 @@ export default {async fetch(request,env,ctx){
 }};
 `;
 const built=await build({stdin:{contents:fixture,sourcefile:'client-support-runtime-fixture.mjs',resolveDir:fileURLToPath(new URL('.',import.meta.url))},bundle:true,format:'esm',platform:'browser',external:['cloudflare:sockets'],write:false});
-let outbound=0;
-const runtime=new Miniflare(convertV4MiniflareOptions({name:'support-runtime',modules:true,script:built.outputFiles[0].text,compatibilityDate:'2026-10-03',compatibilityFlags:['enable_request_signal'],bindings:{ENVIRONMENT:'production',TICKET_SECRET:'support-runtime-ticket-secret-never-published',ADMIN_SETUP_SECRET:'support-runtime-setup-secret-never-published'},durableObjects:{PLAYBACK_SESSIONS:{className:'SupportFixture',useSQLite:true},OPERATION_ALERTS:{className:'OperationsMonitor',useSQLite:true},BACKUP_RECOVERY:{className:'BackupRecovery',useSQLite:true}},durableObjectsPersist:false,outboundService:()=>{outbound++;throw Error('Support runtime must not contact providers or other external services');}}));
+let outbound=0,portalAuthorizations=0,portalActive=false;
+const runtime=new Miniflare(convertV4MiniflareOptions({name:'support-runtime',modules:true,script:built.outputFiles[0].text,compatibilityDate:'2026-10-03',compatibilityFlags:['enable_request_signal'],bindings:{ENVIRONMENT:'production',TICKET_SECRET:'support-runtime-ticket-secret-never-published',ADMIN_SETUP_SECRET:'support-runtime-setup-secret-never-published'},durableObjects:{PLAYBACK_SESSIONS:{className:'SupportFixture',useSQLite:true},OPERATION_ALERTS:{className:'OperationsMonitor',useSQLite:true},BACKUP_RECOVERY:{className:'BackupRecovery',useSQLite:true}},durableObjectsPersist:false,outboundService:async request=>{
+ if(request.url===PORTAL_SOURCE+'/api/owner-portal'){
+  portalAuthorizations++;assert.equal(request.method,'POST');assert.equal(request.headers.get('OAI-Sites-Authorization'),'Bearer fixture-site-only-token');const body=await request.json();assert.deepEqual(body,{action:'support-authorize',token:'s'.repeat(64),input:{accountId:'portal-fixture-account',lineId:'portal-fixture-line'},accountId:PORTAL_ACCOUNT});
+  return portalActive?Response.json({ok:true,actor:{id:'owner',role:'owner'},customer:{accountId:'portal-fixture-account',lineId:'portal-fixture-line',username:'Customer'}}):Response.json({error:'owner_entry_required'},{status:401});
+ }
+ outbound++;throw Error('Support runtime must not contact providers or other external services');} }));
 const post=async(path,body)=>{
  const response=await runtime.dispatchFetch('https://api.snaptvnow.com'+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
  return {status:response.status,headers:response.headers,data:await response.json()};
@@ -79,8 +85,9 @@ const list=async(action,{method='GET',categoryId,serviceCheck=false}={})=>{
 try{
  await runtime.ready;
  const isolated='support-read-only-fixture',at=Date.now(),isolatedUser={id:'support-isolated-user',username:'isolated',displayUsername:'Isolated',version:1,status:'active',expiresAt:at+86400000,permissions:{movies:true,series:true,tv:true,adults:false}};
- await seed({'user:isolated':isolatedUser,'business-sentinel':{preserve:true}},isolated);
+ await seed({'user:isolated':isolatedUser,'business-sentinel':{preserve:true},['reseller-portal:'+PORTAL_ACCOUNT]:{encrypted:'fixture-encrypted-configuration',revision:1}},isolated);
  const untouched=await inspect(isolated);assert.equal(untouched.leaseTables,0);
+ const configuration=await internal('/accounts/reseller-portal-config',{accountId:PORTAL_ACCOUNT},isolated);assert.equal(configuration.status,200);assert.equal(configuration.data.encrypted,'fixture-encrypted-configuration');assert.deepEqual(await inspect(isolated),untouched,'portal configuration reads cannot initialize or migrate business leases');
  for(const path of ['/accounts/client-support-read','/accounts/client-support-check']){
   const checked=await internal(path,{username:'isolated'},isolated);assert.equal(checked.status,200,JSON.stringify(checked.data));assert.equal(checked.data.check.connections.status,'unknown');assert.equal(checked.data.check.source.status,'unknown');assert.equal(checked.data.check.playbackValidated,false);assert.ok(checked.data.lists.every(row=>row.status==='not_observed'));assert.equal(checked.data.recordingSince,null);assertPrivate(checked.data);
  }
@@ -137,6 +144,25 @@ try{
  assert.equal((await admin('client-support-incident-save',{username:'customer',id:original.id,status:'resolved',note:'',expectedRevision:original.revision})).status,409,'a stale editor cannot overwrite a newer incident');
  assert.equal((await admin('client-support-incident-save',{username:'customer',title:'Unsafe link https://credential.invalid/private',status:'open',note:''})).status,400,'private URLs are not retained in support notes');
  report=(await admin('client-support-read',{username:'customer'})).data;assertPrivate(report);assert.ok(report.incidents.rows.some(row=>row.id===original.id&&row.status==='investigating'));
+ // The exact owner portal route uses its configured Site authorization, then
+ // the same SQLite account mapping. This authorizer is a local fixture only;
+ // no provider or real Site is contacted by the runtime.
+ const encode=new TextEncoder(),iv=crypto.getRandomValues(new Uint8Array(12)),config={accountId:PORTAL_ACCOUNT,sourceOrigin:PORTAL_SOURCE,siteToken:'fixture-site-only-token',gatewaySecret:'f'.repeat(64)};
+ const configKey=await crypto.subtle.importKey('raw',await crypto.subtle.digest('SHA-256',encode.encode('support-runtime-ticket-secret-never-published')),'AES-GCM',false,['encrypt']);
+ const cipher=await crypto.subtle.encrypt({name:'AES-GCM',iv,additionalData:encode.encode('reseller-portal:'+PORTAL_ACCOUNT)},configKey,encode.encode(JSON.stringify(config)));
+ const encrypted=Buffer.concat([iv,Buffer.from(cipher)]).toString('base64url'),storedCustomer=(await inspect()).business.users.find(row=>row.username==='customer');
+ await seed({['reseller-portal:'+PORTAL_ACCOUNT]:{encrypted,revision:1},'user:customer':{...storedCustomer,resellerBridge:{accountId:'portal-fixture-account',lineId:'portal-fixture-line'}},'reseller-line:portal-fixture-account:portal-fixture-line':{username:'customer',version:1,revoked:false}});
+ const portalBefore=await inspect(),portal=async(action,extra={})=>{
+  const response=await runtime.dispatchFetch('https://api.snaptvnow.com/owner-panel/api/client-support',{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://api.snaptvnow.com',Cookie:'__Host-SNAP_Owner_Portal='+'s'.repeat(64)},body:JSON.stringify({action,accountId:'portal-fixture-account',lineId:'portal-fixture-line',...extra})});return {status:response.status,headers:response.headers,data:await response.json()};
+ };
+ portalActive=true;
+ for(const action of ['client-support-read','client-support-check']){const checked=await portal(action);assert.equal(checked.status,200,JSON.stringify(checked.data));assert.equal(checked.data.customer.id,customer.id);assert.equal(checked.data.check.playbackValidated,false);assertPrivate(checked.data);assert.ok(checked.headers.get('Cache-Control').includes('no-store'));}
+ assert.deepEqual(await inspect(),portalBefore,'owner portal read/check cannot change real users or lease rows');
+ const countFollowups=async()=>((await internal('/accounts/audit')).data).filter(row=>row.action==='client_support_followup'&&row.actor==='owner'&&row.target==='Customer').length;
+ const auditsBefore=await countFollowups(),portalCase=await portal('client-support-incident-save',{title:'Owner portal synthetic case',status:'open',note:''});assert.equal(portalCase.status,200,JSON.stringify(portalCase.data));assert.equal(portalCase.data.incident.note,'');assert.equal(await countFollowups(),auditsBefore+1,'exactly one safe follow-up audit is queued after a successful save');
+ const auditRows=(await internal('/accounts/audit')).data.filter(row=>row.action==='client_support_followup'&&row.target==='Customer');assert.ok(auditRows.every(row=>!JSON.stringify(row).includes('synthetic case')&&!Object.hasOwn(row,'note')),'audit excludes title and optional note');
+ assert.equal((await portal('client-support-incident-save',{id:portalCase.data.incident.id,status:'resolved',expectedRevision:999,note:''})).status,409);assert.equal(await countFollowups(),auditsBefore+1,'failed edits never queue another follow-up audit');
+ assert.equal((await portal('client-support-read',{username:'other'})).status,400);const checkedCalls=portalAuthorizations;portalActive=false;assert.equal((await portal('client-support-read')).status,401);assert.equal(portalAuthorizations,checkedCalls+1,'each support operation revalidates the owner portal session');
  assert.equal(outbound,0,'support checks and cached catalogue observations must start no provider or media requests');
  console.log('PASS: actual workerd/SQLite owner-only support, authenticated Xtream/API list metadata, empty/filter/HEAD/service-check scope, nonblocking write failures, unknown 502 cause, optional notes, update conflicts, privacy and restart persistence.');
 }finally{await runtime.dispose();}

@@ -532,12 +532,16 @@ const rotatePortalConfig=createGatewayRotation({directory,openConfig:openPortalC
 const resellerBridgeRequest=createResellerBridge(directory,undefined,{rotatePortalConfig,allOriginConnections,ccfExport:(env,body)=>ccfExporter(env,body),ownerAccess:(env,action,body)=>ownerAdminAccess.bridge(env,action,body),sealConfig:(env,body)=>sealPortalConfig(env,body),portalRecipient,mediaProbe:(env,body,ctx)=>probeResellerMedia(env,body,{unticket,sessionCall,directory,origin:ORIGIN,fetchMedia:fetchValidatedMedia,allocate:(env,session,server)=>managedPlayback(env,session,server,ctx),channel:async(env,session,id,server)=>{const permissions=contentPermissions(await (await directory(env,'/permissions',{username:session.username})).json());if(!permissions.tv)throw Error('content_disabled');const catalog=createProviderCatalog(catalogDeps,env,ctx),rows=await catalog('get_live_streams',server),allowed=permissions.adults?rows:await createAdultPolicy(catalog).filter('get_live_streams',rows);return allowed.find(row=>String(row.stream_id)===id&&String(row._server||'ccf')===server);}})});
 const portalConfig=async env=>{const stored=await (await directory(env,'/reseller-portal-config',{accountId:PORTAL_ACCOUNT})).json();return stored?.encrypted?openPortalConfig(env,stored.encrypted):null;};
 const resellerPortalRequest=createResellerPortal({getConfig:portalConfig,catalog:env=>boxpanelCall(env,{action:'boxpanel-catalog'},{role:'public'}),boxpanel:(env,body,accountId)=>boxpanelCall(env,body,{role:'reseller',accountId})});
-const ownerPortalRequest=createOwnerPortal({getConfig:portalConfig});
+const ownerPortalRequest=createOwnerPortal({getConfig:portalConfig,supportCall:async(env,body,ctx)=>{
+ const response=await directory(env,'/client-support-portal',body);
+ if(response.ok&&body.action==='client-support-incident-save'&&ctx?.waitUntil)try{ctx.waitUntil(directory(env,'/audit-write',{actor:'owner',action:'client_support_followup',target:body.confirmedUsername}).then(r=>r.body?.cancel()).catch(()=>{}));}catch{}
+ return response;
+}});
 const telegramTick=createTelegramTick({getConfig:portalConfig});
 const boxClientRequest=createBoxClient({call:boxpanelCall});
 async function handleRequest(req,env,ctx,trace){
 const boxClientResult=await boxClientRequest(req,env);if(boxClientResult)return boxClientResult;
-if(matchesOwnerPortal(req))return ownerPortalRequest(req,env);if(matchesResellerPortal(req))return resellerPortalRequest(req,env);const u=new URL(req.url);
+if(matchesOwnerPortal(req))return ownerPortalRequest(req,env,ctx);if(matchesResellerPortal(req))return resellerPortalRequest(req,env);const u=new URL(req.url);
 if(req.method==='POST'&&req.headers.get('Cookie')?.includes('__Host-smn_')&&!canUseCookie(req,env))return json({error:'origin_not_allowed'},403);
 if(req.headers.get('Origin')&&!allowedOrigins(env).has(req.headers.get('Origin'))&&req.method==='POST')return json({error:'origin_not_allowed'},403);
 if(req.method==="OPTIONS")return new Response(null,{status:204,headers:cors});
