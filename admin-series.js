@@ -1,7 +1,7 @@
 export function mountAdminSeries({api,container}){
   const section=document.createElement('div');let generation=0;
   section.id='seriesDiagnostic';
-  section.innerHTML='<h3>Comprobar episodios de una serie</h3><p>Revisa lo que el servidor entrega para ese usuario sin iniciar vídeos.</p><form><label>Usuario SNAP<select name="username" required></select></label><label>Nombre de la serie<input name="query" required minlength="3" maxlength="120" placeholder="El Halcón"></label><button type="submit">Comprobar serie</button></form><p role="status" aria-live="polite"></p><ul></ul>';
+  section.innerHTML='<h3>Comprobar episodios de una serie</h3><p>Revisa lo que el servidor entrega para ese usuario sin iniciar vídeos.</p><form method="post"><label>Usuario SNAP<select name="username" required></select></label><label>Nombre de la serie<input name="query" required minlength="3" maxlength="120" placeholder="El Halcón"></label><button type="submit">Comprobar serie</button></form><p role="status" aria-live="polite"></p><ul></ul>';
   container.append(section);
   const form=section.querySelector('form'),select=form.elements.username,status=section.querySelector('[role=status]'),list=section.querySelector('ul'),button=form.querySelector('button');
   form.onsubmit=async event=>{
