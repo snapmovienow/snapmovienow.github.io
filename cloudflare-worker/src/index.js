@@ -1,4 +1,5 @@
 import {boundedTsRoute} from './bounded-ts-route.mjs';
+import {createClientSupportObservation} from './client-support-observation.mjs';
 import {createGatewayRotation} from './gateway-rotation.mjs';
 import {ROTATION_POLICY,rotationEnabled} from './provider-rotation-state.mjs';
 import {privateDiagnosticReportRoute,schedulePrivateDiagnosticReport,privateDiagnosticEnabled,PRIVATE_DIAGNOSTIC_OBJECT} from './private-diagnostic-collector.mjs';
@@ -330,6 +331,11 @@ async function adminRequest(req,env,ctx){
  if(action==="setup"){const r=await directory(env,"/setup",b);return json(await r.json(),r.status)}
  if(action==="login"){const r=await directory(env,"/admin-login",{username:b.username,password:b.password,code:b.code,client});if(!r.ok)return json(await r.json(),r.status);const user=await r.json(),session=await ownSession(env,user,true);const token=await ticket(env,session);return withSessionCookie(json({access_token:b.browser_cookie&&canUseCookie(req,env)?null:token,username:user.username}),req,env,"admin",token,7200)}
  const s=await unticket(env,String(b.access_token||cookieToken(req,env,"admin")));if(s?.kind!=="admin"||!(await sessionCall(env,s.sid,"/check")).ok)return json({error:"admin_required"},401);
+ if(['client-support-read','client-support-check','client-support-incident-save'].includes(action)){
+  const response=await directory(env,'/'+action,{username:b.username,page:b.page,pageSize:b.pageSize,...(action==='client-support-incident-save'?{id:b.id,title:b.title,status:b.status,note:b.note,expectedRevision:b.expectedRevision,actor:s.username}:{})});
+  if(response.ok&&action==='client-support-incident-save'&&ctx?.waitUntil)ctx.waitUntil(directory(env,'/audit-write',{actor:s.username,action:'client_support_followup',target:b.username}).then(r=>r.body?.cancel()).catch(()=>{}));
+  const result=json(await response.json(),response.status);result.headers.set('Cache-Control','no-store');return result;
+ }
  if(action.startsWith('live-processing-'))return liveProcessingAdmin(env,ctx,b,s.username);
  if(action==='xtream-reference-diagnostic'){const r=await registry(env,'/xtream-reference-diagnostic',{queries:b.queries}),response=json(await r.json(),r.status);response.headers.set('Cache-Control','no-store');return response;}
  if(action.startsWith('boxpanel-'))return boxpanelCall(env,b,{role:'owner',candidates:BOXPANEL_RESELLER_ACCOUNTS});
@@ -536,7 +542,7 @@ if(req.method==='POST'&&req.headers.get('Cookie')?.includes('__Host-smn_')&&!can
 if(req.headers.get('Origin')&&!allowedOrigins(env).has(req.headers.get('Origin'))&&req.method==='POST')return json({error:'origin_not_allowed'},403);
 if(req.method==="OPTIONS")return new Response(null,{status:204,headers:cors});
 if(u.pathname==='/bounded-ts-diagnostic'&&req.method==='POST')return boundedTsRoute(req,env,ctx,{unticket,cookieToken,sessionCall,directory,registry,validatedMediaTarget,catalog:(env,ctx)=>createProviderCatalog(catalogDeps,env,ctx)});
-if(u.pathname==="/health")return json({ok:true,service:"snapmovienow-edge",version:SERVICE_VERSION,privateDiagnostics:{enabled:privateDiagnosticEnabled(env),intervalMinutes:5,access:'private_cloudflare_observability',schema:1},providerRotation:{...ROTATION_POLICY,enabled:rotationEnabled(env)},...await publicHealthSnapshot(env),capabilities:['reseller-service-monitor-v1','xtream','admin-recovery-renewal','backup-integrity','native-profile','metric-retry','admin-credentials-rotation','isolated-backup-recovery','xtream-series-diagnostic','operational-alerts','rotating-media-origins','admin-user-activity','admin-user-comments','reseller-bridge-v1','private-media-diagnostics-v1','live-startup-budget-v1','native-playback-release-v1','viewer-provider-affinity-v1','persistent-provider-assignment-v1','safe-daily-provider-rotation-v1','private-server-diagnostic-report-v1','vod-startup-budget-v1','hedged-detail-catalog-v1','first-media-byte-check-v1','playback-stage-timings-v1','provider-circuit-recovery-v1','own-account-playback-canary-v1','performance-release-gate-v1','bounded-catalog-lookups-v1','shared-provider-validation-v1','customer-priority-playback-v1','indexed-playback-policy-v1','owner-playback-comparison-v1','pelisflix-voe-v1','official-local-tv-v1','private-owned-media-v1','existing-series-supplement-v1','series-usage-sessions-v1']});
+if(u.pathname==="/health")return json({ok:true,service:"snapmovienow-edge",version:SERVICE_VERSION,clientSupport:{enabled:true,schema:1,scope:"account",retentionDays:30},privateDiagnostics:{enabled:privateDiagnosticEnabled(env),intervalMinutes:5,access:'private_cloudflare_observability',schema:1},providerRotation:{...ROTATION_POLICY,enabled:rotationEnabled(env)},...await publicHealthSnapshot(env),capabilities:['client-support-v1','reseller-service-monitor-v1','xtream','admin-recovery-renewal','backup-integrity','native-profile','metric-retry','admin-credentials-rotation','isolated-backup-recovery','xtream-series-diagnostic','operational-alerts','rotating-media-origins','admin-user-activity','admin-user-comments','reseller-bridge-v1','private-media-diagnostics-v1','live-startup-budget-v1','native-playback-release-v1','viewer-provider-affinity-v1','persistent-provider-assignment-v1','safe-daily-provider-rotation-v1','private-server-diagnostic-report-v1','vod-startup-budget-v1','hedged-detail-catalog-v1','first-media-byte-check-v1','playback-stage-timings-v1','provider-circuit-recovery-v1','own-account-playback-canary-v1','performance-release-gate-v1','bounded-catalog-lookups-v1','shared-provider-validation-v1','customer-priority-playback-v1','indexed-playback-policy-v1','owner-playback-comparison-v1','pelisflix-voe-v1','official-local-tv-v1','private-owned-media-v1','existing-series-supplement-v1','series-usage-sessions-v1']});
 if(u.pathname==='/reseller-bridge')return resellerBridgeRequest(req,env,ctx);
 if(u.pathname==='/local-tv-health'&&req.method==='GET'){
  try{return json(await (await env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_local_tv_audit_20261104_v1')).fetch('https://private/local-tv-audit-status')).json());}catch{return json({state:'unavailable'},503)}
@@ -553,6 +559,7 @@ if(u.pathname==="/admin"&&req.method==="POST"){try{return await adminRequest(req
 if(u.pathname==="/gnula-media"&&["GET","HEAD"].includes(req.method)){try{return await gnulaMedia(req,env,u,ctx)}catch{return json({error:"media_unavailable"},502)}}
 if(u.pathname==='/stream'&&['GET','HEAD'].includes(req.method)){const headers=new Headers(req.headers);headers.delete('X-SMN-Prepare');headers.delete('X-SMN-Startup-Deadline');const mediaRequest=new Request(req,{headers});try{return await serverStream(mediaRequest,env,u,ctx,trace)}catch(e){return json({error:e.message==='media_origin_unapproved'?'media_origin_unapproved':'stream_unavailable'},502)}}
 if(req.method!=="POST")return json({error:"method_not_allowed"},405);
+const support=createClientSupportObservation({ctx,method:req.method,access:'api',serviceCheck:requestConnectionClient(req).serviceCheck===true,write:async body=>{const response=await directory(env,'/client-support-observe',body);await response.body?.cancel();}});
 try{const b=await readLimitedJSON(req),op=String(b.op||"");if(!["auth","logout","gnula_catalog","gnula_series_info","gnula_token","stream_token","session_info","playback_heartbeat","playback_release","playback_cancel","profile_get","profile_patch","playback_metric"].includes(op)&&!Object.hasOwn(actions,op))return json({error:"operation_not_allowed"},403);
 if(op==="auth"){
  if(!b.username||!b.password)return json({error:'credentials_required'},400);
@@ -564,6 +571,7 @@ if(op==="auth"){
 }
 let session=await timed(trace,'auth',()=>unticket(env,String(b.access_token||cookieToken(req,env,"session"))));if(session?.kind!=="session"||!(await timed(trace,'auth',()=>sessionCall(env,session.sid,"/check"))).ok)return json({error:"session_required"},401);
 const permissions=contentPermissions(session.managed?await (await directory(env,'/permissions',{username:session.username})).json():null);session.permissions=permissions;
+if(session.managed){const type={live:'live',vod:'movie',series:'series'}[op];if(type)support.start(session,{kind:'catalog',type,selection:b.server?'source':'all'});else if(op==='stream_token')support.start(session,{kind:'playback',type:['live','series'].includes(b.type)?b.type:'movie'});}
 const catalogCost=(op==='vod_info'||op==='stream_token'&&String(b.type||'movie')==='movie')?trace?.movieCatalog(op):null;
 const rawCatalog=createProviderCatalog(catalogDeps,env,ctx,{catalogCost}),catalog=(...args)=>timed(trace,'catalog',()=>rawCatalog(...args)),adultPolicy=createAdultPolicy(catalog,rawCatalog.inspect);
 if(op==='session_info')return json(accountInfo(session));
@@ -581,7 +589,7 @@ if(op==='profile_get'||op==='profile_patch'){
 }
 
 const required=op.startsWith('live')||(op==='stream_token'&&b.type==='live')?'tv':op.startsWith('series')||op==='gnula_series_info'||(op==='stream_token'&&b.type==='series')?'series':['vod','vod_info','vod_categories'].includes(op)||(op==='stream_token'&&b.type!=='series')?'movies':null;
-if(required&&!permissions[required])return json({error:'content_disabled'},403);
+if(required&&!permissions[required])return support.finish(json({error:'content_disabled'},403));
 
 if(op==="playback_cancel"){if(!session.managed)return json({ok:true});const r=await directory(env,"/playback-cancel",{sid:session.sid,request_id:b.request_id,revision:b.revision});return json(await r.json(),r.status)}
 if(op==="playback_heartbeat"){if(!session.managed||!b.lease_id)return json({ok:true});const r=await directory(env,"/heartbeat",{sid:session.sid,lease_id:b.lease_id,request_id:b.request_id});return json(await r.json(),r.status)}
@@ -622,10 +630,10 @@ if(op==="stream_token"){
   if(b.type==='series'&&!parentId)parentId=(await (await registry(env,'/xtream-episode',{server:b.server||'ccf',id:b.id})).json())?.parentId;
   if(!await adultPolicy.allowed({kind:b.type==='series'?'episode':b.type||'movie',server:b.server||'ccf',upstreamId:b.id,parentId}))return json({error:'adult_content_disabled'},403);
  }
- return await prepareWebPlayback(b,session,req.url,env,ctx,{signal:req.signal,trace,directory,managedPlayback,ticket,serverStream,json,cleanExt,catalog:rawCatalog,permissions,origin:ORIGIN,client:requestConnectionClient(req),activity:async item=>{
+ return support.finish(await prepareWebPlayback(b,session,req.url,env,ctx,{signal:req.signal,trace,directory,managedPlayback,ticket,serverStream,json,cleanExt,catalog:rawCatalog,permissions,origin:ORIGIN,client:requestConnectionClient(req),activity:async item=>{
   if(item.type==='series'&&!item.parentId){const record=await (await registry(env,'/xtream-episode',{server:item.server,id:item.id})).json();if(record?.activity)return record.activity;item.parentId=record?.parentId}
   return cachedPlaybackActivity(rawCatalog,item);
- }});
+ }}));
 }
 if(session.managed){
  if(op==='live_epg'&&!/^\d+$/.test(String(b.stream_id||'')))return json({error:'invalid_stream'},400);
@@ -645,9 +653,9 @@ if(session.managed){
   const entries=Object.entries(data.episodes).flatMap(([season,rows])=>(Array.isArray(rows)?rows:[]).filter(ep=>/^\d+$/.test(String(ep.id))).map(ep=>({kind:'episode',server:b.server||'ccf',upstreamId:String(ep.id),parentId:String(b.series_id),activity:episodeActivity(data.info,ep,season),ext:cleanExt(ep.container_extension)})));
   if(entries.length)await registry(env,'/xtream-register',{entries});
  }
- return json(data);
+ support.reply(data);return support.finish(json(data));
 }
-const x=new URL(ORIGIN+"/player_api.php");x.searchParams.set("username",String(b.username));x.searchParams.set("password",String(b.password));if(op!=="auth")x.searchParams.set("action",actions[op]);if(op==="series_info"&&b.series_id)x.searchParams.set("series_id",String(b.series_id));if(op==="vod_info"&&b.vod_id)x.searchParams.set("vod_id",String(b.vod_id));if(op==="live_epg"){x.searchParams.set("stream_id",String(b.stream_id));x.searchParams.set("limit","24")}const up=await fetch(x,{headers:{"User-Agent":"SnapMovieNow/1.0"},redirect:"follow"});return new Response(await up.text(),{status:up.status,headers:{...cors,"content-type":up.headers.get("content-type")||"application/json"}})}catch(e){return json({error:["body_too_large","invalid_json"].includes(e.message)?e.message:"upstream_unavailable"},e.message==="body_too_large"?413:e.message==="invalid_json"?400:502)}}
+const x=new URL(ORIGIN+"/player_api.php");x.searchParams.set("username",String(b.username));x.searchParams.set("password",String(b.password));if(op!=="auth")x.searchParams.set("action",actions[op]);if(op==="series_info"&&b.series_id)x.searchParams.set("series_id",String(b.series_id));if(op==="vod_info"&&b.vod_id)x.searchParams.set("vod_id",String(b.vod_id));if(op==="live_epg"){x.searchParams.set("stream_id",String(b.stream_id));x.searchParams.set("limit","24")}const up=await fetch(x,{headers:{"User-Agent":"SnapMovieNow/1.0"},redirect:"follow"});return new Response(await up.text(),{status:up.status,headers:{...cors,"content-type":up.headers.get("content-type")||"application/json"}})}catch(e){return support.finish(json({error:["body_too_large","invalid_json"].includes(e.message)?e.message:"upstream_unavailable"},e.message==="body_too_large"?413:e.message==="invalid_json"?400:502))}}
 export default {scheduled(event,env,ctx){
  if(env.ENVIRONMENT==='staging')return;
  lqsaBootstrap(env,ctx,{force:true});

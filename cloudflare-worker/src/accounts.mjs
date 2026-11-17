@@ -42,6 +42,7 @@ import {inspectCatalog} from './catalog-permissions.mjs';
 import {providerDashboard} from './provider-dashboard.mjs';
 import {openLeaseStore} from './lease-store.mjs';
 import {serverDiagnosticSnapshot} from './server-diagnostic-snapshot.mjs';
+import {clientSupportRoute} from './client-support.mjs';
 import {recordLocalStartup} from './local-startup-observations.mjs';
 import {cleanPlaybackActivity} from './playback-activity.mjs';
 import {securityRoute,checkFactor,writeAudit} from './security.mjs';
@@ -63,6 +64,7 @@ function expiry(value){if(value===null||value===''||value===undefined)return nul
 export async function accountsFetch(state,env,req){
  const p=new URL(req.url).pathname.replace('/accounts','');const b=await req.json();const store=state.storage;
  try{
+ if(['/client-support-read','/client-support-check','/client-support-incident-save','/client-support-observe'].includes(p))return clientSupportRoute(store,p,b,{sql:store.sql});
  if(p==='/server-diagnostic-snapshot')return store.transaction(async tx=>answer(await serverDiagnosticSnapshot({get:key=>tx.get(key),sql:store.sql},{now:Date.now(),rotationEnabled:rotationEnabled(env),queries:b.queries||[]})));
  if(['/live-processing-read','/live-processing-save'].includes(p))return liveProcessingPreparation(store,p,b);
  if(['/bounded-ts-claim','/bounded-ts-status','/bounded-ts-result'].includes(p))return boundedTsQuota(store,p,b,env);

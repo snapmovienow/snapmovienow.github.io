@@ -63,6 +63,8 @@ jobs:
           SMN_CAPACITY_SCREENSHOT: artifacts/capacity-mobile.png
       - name: Administrator users and activity on mobile and desktop
         run: node tests/admin-users-runtime.mjs
+      - name: Private client support on mobile and desktop
+        run: node tests/admin-support-runtime.mjs
       - name: Exclusive catalog administrator on mobile and desktop
         run: node tests/admin-exclusive-runtime.mjs
       - name: Selective channel preparation in the main administrator
