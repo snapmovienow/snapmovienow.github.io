@@ -13,6 +13,12 @@ const supportActions=new Set(['client-support-read','client-support-check','clie
 const supportFields=new Set(['action','accountId','lineId','page','pageSize','id','title','status','note','expectedRevision']);
 const supportIdentity=v=>typeof v==='string'&&/^[A-Za-z0-9_.:-]{1,80}$/.test(v);
 const supportUsername=v=>typeof v==='string'&&/^[a-zA-Z0-9_.@!-]{3,80}$/.test(v);
+const record=v=>!!v&&typeof v==='object'&&!Array.isArray(v);
+const sameUsername=(a,b)=>supportUsername(a)&&supportUsername(b)&&a.toLowerCase()===b.toLowerCase();
+function validSupportReply(value,username){
+ return record(value)&&value.schema===1&&record(value.customer)&&supportIdentity(value.customer.id)&&sameUsername(value.customer.username,username)&&Array.isArray(value.lists)&&record(value.check)&&record(value.incidents)&&Array.isArray(value.incidents.rows);
+}
+const supportErrors=new Map([['support_scope',403],['support_conflict',409],['support_not_found',404],['invalid_support_note',400],['invalid_support_input',400],['support_unavailable',503]]);
 function validSupportInput(v){
  if(!v||typeof v!=='object'||Array.isArray(v)||Object.keys(v).some(k=>!supportFields.has(k))||!supportActions.has(v.action)||!supportIdentity(v.accountId)||!supportIdentity(v.lineId))return false;
  if(v.page!==undefined&&(!Number.isSafeInteger(v.page)||v.page<1||v.page>1000000)||v.pageSize!==undefined&&![10,25,50].includes(v.pageSize))return false;
@@ -35,13 +41,17 @@ export function createOwnerPortal({getConfig,fetcher=fetch,supportCall}){return 
  const session=tokenOf(req);if(!isEntry&&!session)return ['/','/security/gateway-rotation'].includes(path)?blocked():json({error:'owner_entry_required',message:'Entra desde Panel admin reseller.'},401);
  let readDeadline,supportInput;
  const diagnostic=gatewayDiagnostic('owner',req);
+ const supportFailure=(code,status=503,kind,error,extra={})=>json(diagnostic.failure({error:code},status,error,kind,code),status,extra);
  try{
   if(path==='/api/client-support'){
-   if(u.search)return json({error:'invalid_support_input'},400);
-   try{supportInput=await readPortalInput(req);}catch{return json({error:'invalid_support_input'},400);}
-   if(!validSupportInput(supportInput))return json({error:'invalid_support_input'},400);
-   if(typeof supportCall!=='function')return json({error:'support_unavailable'},503);
+   diagnostic.phase('input');
+   if(u.search)return supportFailure('invalid_support_input',400,'input');
+   try{supportInput=await readPortalInput(req);}catch{return supportFailure('invalid_support_input',400,'input');}
+   if(!validSupportInput(supportInput))return supportFailure('invalid_support_input',400,'input');
+   diagnostic.action({action:supportInput.action});
+   if(typeof supportCall!=='function')return supportFailure('support_unavailable',503,'configuration');
   }
+  if(supportInput)diagnostic.phase('configuration');
   const cfg=await getConfig(env);if(cfg?.accountId!==PORTAL_ACCOUNT||cfg.sourceOrigin!==PORTAL_SOURCE||!/^[a-f0-9]{64}$/.test(cfg.gatewaySecret||'')||typeof cfg.siteToken!=='string')throw Error('config_unavailable');
   diagnostic.phase('input');let body;
   if(supportInput)body={action:'support-authorize',token:session,input:{accountId:supportInput.accountId,lineId:supportInput.lineId}};
@@ -50,15 +60,25 @@ export function createOwnerPortal({getConfig,fetcher=fetch,supportCall}){return 
   else if(path==='/api/portal/logout')body={action:'logout',token:session};
   else if(req.method==='POST')body={action:'write',token:session,input:await readPortalInput(req)};
   else {const allowed=new Set(['gatewayRotation','telegram','slug','source','sourceLineId','sourceAccountId','choices','purpose','lineId','requestId','view','q','filter','page','pageSize','version','sort','direction','paid','lineType','mode','stream','connectionLine','player','connectionSort','connectionDirection','connectionAccount','logAccount','logKind','logFrom','logTo','monitorAccount','monitorHours','monitorContent','monitorProvider']);if(u.search.length>4000||[...u.searchParams.keys()].some(k=>!allowed.has(k)))return json({error:'owner_query'},400);body={action:'read',token:session,query:Object.fromEntries(u.searchParams)};}
-  diagnostic.action(body);diagnostic.phase('fetch');
+  diagnostic.action(supportInput?{action:supportInput.action}:body);diagnostic.phase('fetch');
   readDeadline=portalReadDeadline(req,path,body.action);readDeadline.signal.throwIfAborted();
   const response=await fetcher(PORTAL_SOURCE+'/api/owner-portal',{method:'POST',redirect:'manual',headers:{'Content-Type':'application/json','OAI-Sites-Authorization':'Bearer '+cfg.siteToken,'X-SNAP-Portal-Gateway-Token':cfg.gatewaySecret},body:JSON.stringify({...body,accountId:PORTAL_ACCOUNT}),signal:readDeadline.signal});diagnostic.status(response.status);diagnostic.phase('body');const raw=await response.text();if(raw.length>1048576||response.status>=300&&response.status<400)throw Error('owner_reply');let result=JSON.parse(raw);diagnostic.phase('scope');
   if(supportInput){
-   if(!response.ok){const status=[401,403,404].includes(response.status)?response.status:503;return json({error:status===404?'support_not_found':status===503?'support_unavailable':'owner_entry_required'},status,[401,403].includes(status)?{'Set-Cookie':cookie('',0)}:{});}
+   if(!response.ok){const status=[401,403,404].includes(response.status)?response.status:503;return supportFailure(status===404?'support_not_found':status===503?'support_unavailable':'owner_entry_required',status,'upstream_http',undefined,[401,403].includes(status)?{'Set-Cookie':cookie('',0)}:{});}
    const customer=result?.customer;
-   if(result?.ok!==true||result.actor?.id!=='owner'||result.actor.role!=='owner'||customer?.accountId!==supportInput.accountId||customer.lineId!==supportInput.lineId||!supportUsername(customer.username))return json({error:'support_scope'},403);
+   if(result?.ok!==true||result.actor?.id!=='owner'||result.actor.role!=='owner'||customer?.accountId!==supportInput.accountId||customer.lineId!==supportInput.lineId||!supportUsername(customer.username))return supportFailure('support_scope',403,'scope');
+   diagnostic.phase('support');
+   diagnostic.status(null); // A missing directory reply is not the Site's 200.
    const supported=await supportCall(env,{...supportInput,confirmedUsername:customer.username},ctx);
-   return json(await supported.json(),supported.status);
+   diagnostic.status(supported.status);let view;
+   try{view=await supported.json();}catch{return supportFailure('support_invalid_response',503,'invalid_response');}
+   if(!supported.ok){
+    if(supported.status===404&&view?.error==='not_found')return supportFailure('support_initializing',503,'upstream_http',undefined,{'Retry-After':'10'});
+    const code=supportErrors.get(view?.error)===supported.status?view.error:'support_unavailable';
+    return supportFailure(code,supportErrors.get(code)||503,'upstream_http');
+   }
+   if(supportInput.action!=='client-support-incident-save'&&!validSupportReply(view,customer.username))return supportFailure('support_invalid_response',503,'invalid_response');
+   return json(view,supported.status);
   }
   if(path==='/security/gateway-rotation'){if(!response.ok||result.actorId!=='owner'||typeof result.rotation?.enabled!=='boolean')return blocked();return new Response(ROTATION_HTML,{headers:{...headers,'Content-Type':'text/html; charset=utf-8','Content-Security-Policy':csp}});}
   if(isEntry){if(!response.ok)return blocked();if(result.ok!==true||!ticket(result.token)||!Number.isSafeInteger(result.exp)||result.exp<=Date.now()||result.exp>Date.now()+1800000)throw Error('owner_reply');return new Response(null,{status:303,headers:{...headers,Location:path==='/security/enter'?PREFIX+'/security/gateway-rotation':PREFIX+'/', 'Set-Cookie':cookie(result.token,Math.floor((result.exp-Date.now())/1000))}});}
@@ -67,5 +87,5 @@ export function createOwnerPortal({getConfig,fetcher=fetch,supportCall}){return 
   if(path==='/'){if(!response.ok)return blocked();if(result.actor?.role!=='owner')throw Error('owner_scope');return new Response('<!doctype html><html lang="es" data-portal-base="'+PREFIX+'" data-portal-mode="owner"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SNAPTVNOW · Panel admin reseller</title><link rel="icon" href="'+PREFIX+'/assets/favicon.svg"><link rel="stylesheet" href="'+PREFIX+'/assets/panel.css?v='+PORTAL_ASSET_VERSION+'"></head><body><div id="portal-root"></div><script src="'+PREFIX+'/assets/panel.js?v='+PORTAL_ASSET_VERSION+'" defer></script></body></html>',{headers:{...headers,'Content-Type':'text/html; charset=utf-8','Content-Security-Policy':csp}});}
   diagnostic.phase('response');if(response.status>=500)result=diagnostic.failure(result,response.status,undefined,'upstream_http');
   const extra={...([401,403].includes(response.status)?{'Set-Cookie':cookie('',0)}:{}),...(response.status===429&&/^\d{1,3}$/.test(response.headers.get('Retry-After')||'')?{'Retry-After':response.headers.get('Retry-After')}:{})};return json(result,response.status,extra);
- }catch(error){return json(diagnostic.failure({error:'owner_unavailable',message:'No se pudo comprobar el acceso. Vuelve al administrador principal.',final:false},503,error),503);}finally{readDeadline?.cleanup();}
+ }catch(error){if(path==='/api/client-support')return supportFailure('support_unavailable',503,undefined,error);return json(diagnostic.failure({error:'owner_unavailable',message:'No se pudo comprobar el acceso. Vuelve al administrador principal.',final:false},503,error),503);}finally{readDeadline?.cleanup();}
 };}

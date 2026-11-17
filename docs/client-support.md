@@ -18,6 +18,30 @@ and requires the current customer's bridge ownership and username to match.
 The browser cannot select an arbitrary username or supply an actor. Both entry
 points use the same UUID-scoped history; no records are copied between panels.
 
+## Failed reads and rollout readiness
+
+A failed read is not an empty history. The dialog keeps its sections hidden
+until a complete response for the selected customer has been checked. On a
+first failure it says that the sheet could not be loaded; it only mentions
+previously dated observations after a successful earlier read.
+
+The gateway validates the real read/check DTO and classifies an older directory
+that returns `404 not_found` as `503 support_initializing`, with a short
+`Retry-After`. It does not retry automatically, fall back to username-only
+access or restart a live object. Unexpected formats and transport failures stay
+distinct. Technical failures carry one safe UUID reference in the response and
+bounded private gateway diagnostics. No customer identity, request body, URL,
+header or cookie is included. Expected revision conflicts retain their existing
+status and do not become playback incidents.
+
+The Site API wrapper excludes `support-authorize` from unrelated background
+delivery. The Site source's `scripts/verify-owner-support-runtime.mjs` exercises
+the actual HTTP wrapper, owner authorization, D1 line, signed bridge and account
+DO together with synthetic data; it also feeds the real DTO into the widget's
+presentation. Browser tests separately cover an unavailable first load, its
+safe reference and a subsequent successful refresh. These controls do not by
+themselves establish the cause of any particular production customer's failure.
+
 ## Evidence and scope
 
 This feature observes authenticated managed customers using our server, through

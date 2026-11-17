@@ -11,7 +11,8 @@ import {PORTAL_ACCOUNT,PORTAL_SOURCE} from '../cloudflare-worker/src/reseller-po
 const now=Date.now(),target={id:'fixture-support-panel',slug:'fixture-support-panel',name:'Panel ficticio',role:'reseller',status:'active',balance:5200,revision:0};
 const lines=['FixtureUno','FixtureDos'].map((username,index)=>({id:'fixture-support-line-'+index,account_id:target.id,account_name:target.name,username,label:'Cliente ficticio '+index,status:'registered',password:'Synthetic-client-password',notes:'',revision:0,connections:3,created_at:now,expires_at:now+86400000,package_id:'months-1',package_name:'1 mes',adult_access:0,sourceMetadata:{expiryTimezone:'America/Chicago'}}));
 const packages=[{id:'months-1',name:'1 mes',months:1,bonus_months:0,cost:100,connections:3,active:1,revision:1}];
-let ownerMode=true,browser,runtime,heldLine=null,releaseHeld;
+let ownerMode=true,browser,runtime,heldLine=null,releaseHeld,failSupport=false;
+const technicalReference='db7bc27a-9a81-4665-a10d-66eb1e3fc4d4';
 const errors=[],supportCalls=[],unexpected=[];
 const snapshot=()=>({actor:ownerMode?{id:'owner',role:'owner',name:'Propietario ficticio'}:target,target,authMode:ownerMode?'owner-portal':'password',portalBase:ownerMode?'/owner-panel':'',overview:false,accounts:ownerMode?[target]:[],lines,ledger:[],operations:[],packages,trialPolicy:{enabled:1,minutes:60,daily_limit:5,active_limit:3,revision:0},serverTime:now,stats:{total:2,expiring:0,suspended:0},integration:{connected:true,accountId:target.id,accountName:target.name,accounts:[{accountId:target.id}]}});
 const supportData=line=>({schema:1,checkedAt:now,recordingSince:now,customer:{id:'synthetic-uuid-'+line.id,username:line.username,name:line.label,status:'active',expiresAt:line.expires_at,permissions:{tv:true,movies:true,series:true}},lists:[{type:'live',lastRequestedAt:now-2000,lastRespondedAt:now-1000,status:'delivered',httpStatus:200,itemCount:350,selection:'all',access:'xtream'}],check:{checkedAt:now,access:'active',permissions:{tv:true,movies:true,series:true},connections:{status:'observed',reserved:2,limit:3},source:{status:'unknown',observedAt:null,usableAccounts:null},playbackValidated:false},incidents:{rows:[{id:'issue-1',type:'manual',title:'Consulta ficticia '+line.username,status:'open',firstSeenAt:now,lastSeenAt:now,updatedAt:now,count:1,note:'',revision:1}],total:1,page:1,pages:1,retentionDays:30}});
@@ -34,7 +35,9 @@ try{
    assert.equal(body.accountId,target.id);assert.ok(lines.some(line=>line.id===body.lineId));assert.equal('username' in body,false);assert.equal('actor' in body,false);
    assert.ok(['client-support-read','client-support-check','client-support-incident-save'].includes(body.action));
    const data=supportValues.get(body.lineId);
-   if(body.action==='client-support-incident-save'){
+   if(failSupport){
+    response=Response.json({error:'support_initializing',message:'Detalle interno ficticio. Referencia: '+technicalReference+'. PRIVATE_RESPONSE_DETAIL'},{status:503});
+   }else if(body.action==='client-support-incident-save'){
     assert.equal(body.id,'issue-1');assert.equal(body.note,'');assert.equal(body.expectedRevision,data.incidents.rows[0].revision);
     Object.assign(data.incidents.rows[0],{status:body.status,note:body.note,revision:body.expectedRevision+1});response=Response.json({ok:true,incident:data.incidents.rows[0]});
    }else{
@@ -69,8 +72,22 @@ try{
   if(width===390){fs.mkdirSync('artifacts',{recursive:true});await dialog.screenshot({path:'artifacts/owner-support-mobile.png'});}
   await dialog.getByRole('button',{name:'Cerrar soporte',exact:true}).click();await dialog.waitFor({state:'hidden'});
   await page.getByRole('button',{name:'Acciones de '+lines[0].username,exact:true}).click();const actions=page.locator('dialog[open]').filter({has:page.getByRole('button',{name:'Consultar soporte',exact:true})});
-  await actions.getByRole('button',{name:'Consultar soporte',exact:true}).click();await dialog.waitFor({state:'visible'});await dialog.getByRole('button',{name:'Cerrar soporte',exact:true}).click();
+  await actions.getByRole('button',{name:'Consultar soporte',exact:true}).click();await dialog.waitFor({state:'visible'});await dialog.locator('.support-card').nth(2).waitFor({state:'visible'});await dialog.getByRole('button',{name:'Cerrar soporte',exact:true}).click();
  }
+
+ // A first-load server error shows a bounded reason and safe reference, not
+ // nonexistent prior records. A later refresh can recover the same sheet.
+ failSupport=true;await page.setViewportSize({width:390,height:1000});await page.goto(ownerUrl);
+ const recoverOpen=page.getByRole('button',{name:'Soporte de '+lines[0].username,exact:true});await recoverOpen.waitFor({state:'visible'});await recoverOpen.click();
+ const failedDialog=page.locator('#clientSupport');await failedDialog.waitFor({state:'visible'});
+ await page.waitForFunction(()=>document.querySelector('#clientSupport .support-status')?.textContent.includes('Referencia:'));
+ const failureText=await failedDialog.locator('.support-status').innerText();
+ assert.match(failureText,/aún no está disponible en el servidor/);assert.ok(failureText.includes('Referencia: '+technicalReference+'.'));
+ assert.doesNotMatch(failureText,/datos anteriores|PRIVATE_RESPONSE_DETAIL|Detalle interno/);assert.equal(await failedDialog.locator('.support-body').isVisible(),false);
+ assert.equal(supportCalls.at(-1).lineId,lines[0].id);assert.equal(supportCalls.at(-1).action,'client-support-read');
+ failSupport=false;await failedDialog.getByRole('button',{name:'Actualizar ficha',exact:true}).click();await failedDialog.locator('.support-card').nth(2).waitFor({state:'visible'});
+ assert.equal(await failedDialog.locator('.support-card').count(),3);assert.equal(await failedDialog.locator('.support-status').innerText(),'');assert.match(await failedDialog.innerText(),/Respuesta generada/);assert.ok(!(await failedDialog.innerText()).includes(technicalReference));
+ await failedDialog.getByRole('button',{name:'Cerrar soporte',exact:true}).click();await failedDialog.waitFor({state:'hidden'});
 
  // An old request is released after another customer has been selected.
  heldLine=lines[0].id;const heldStarted=page.waitForRequest(req=>req.url().includes('/api/client-support')&&req.postDataJSON()?.lineId===heldLine);
@@ -87,5 +104,5 @@ try{
  assert.equal(await page.getByRole('button',{name:/^Soporte de /}).count(),0,'a reseller cannot see owner support controls');
  await page.getByRole('button',{name:'Acciones de '+lines[0].username,exact:true}).click();assert.equal(await page.getByRole('button',{name:'Consultar soporte',exact:true}).count(),0);
  assert.deepEqual(unexpected,[]);assert.deepEqual(errors,[]);
- console.log('PASS: actual owner portal bundle exposes private support from customer rows and More actions on mobile/desktop; exact account/line scope, optional blank notes, checks, late-response isolation and reseller exclusion; zero provider requests.');
+ console.log('PASS: actual owner portal bundle exposes private support from customer rows and More actions on mobile/desktop; exact account/line scope, optional blank notes, checks, first-load failure with safe reference and refresh recovery, late-response isolation and reseller exclusion; zero provider requests.');
 }finally{releaseHeld?.();await browser?.close();await runtime?.dispose();}

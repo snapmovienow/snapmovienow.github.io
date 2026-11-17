@@ -5,6 +5,8 @@ import {createOwnerPortal} from '../src/owner-portal.mjs';
 import {accountsFetch} from '../src/accounts.mjs';
 import {clientSupportRoute} from '../src/client-support.mjs';
 import {PORTAL_ACCOUNT,PORTAL_SOURCE} from '../src/reseller-portal.mjs';
+import {takeGatewayFailure} from '../src/portal-gateway-diagnostics.mjs';
+import {traceRequest} from '../src/request-diagnostics.mjs';
 
 const origin='https://api.snaptvnow.com',endpoint=origin+'/owner-panel/api/client-support';
 const session='s'.repeat(64),cookie='__Host-SNAP_Owner_Portal='+session;
@@ -23,14 +25,15 @@ class Store{
 }
 function harness(){
  const store=new Store(),authorizations=[],support=[];
+ const requests=[],logs=[];let reply;
  let authorize=()=>Response.json({ok:true,actor:{id:'owner',role:'owner'},customer:{accountId,lineId,username:'Cliente01'}});
  const handle=createOwnerPortal({
   getConfig:async()=>({accountId:PORTAL_ACCOUNT,sourceOrigin:PORTAL_SOURCE,siteToken:'PRIVATE_SITE_TOKEN',gatewaySecret:'f'.repeat(64)}),
   fetcher:async(url,options)=>{assert.equal(url,PORTAL_SOURCE+'/api/owner-portal');assert.equal(options.redirect,'manual');assert.equal(options.headers.Cookie,undefined);const body=JSON.parse(options.body);authorizations.push(body);return authorize(body);},
-  supportCall:async(env,body)=>{support.push(body);return accountsFetch({storage:store},env,new Request('https://private/accounts/client-support-portal',{method:'POST',body:JSON.stringify(body)}));}
+  supportCall:async(env,body)=>{support.push(body);return reply?reply(body):accountsFetch({storage:store},env,new Request('https://private/accounts/client-support-portal',{method:'POST',body:JSON.stringify(body)}));}
  });
- const request=(body={action:'client-support-read',accountId,lineId},options={})=>handle(new Request(endpoint+(options.query||''),{method:options.method||'POST',headers:{'Content-Type':'application/json',Origin:origin,Cookie:cookie,...options.headers},...((options.method||'POST')==='POST'?{body:options.raw??JSON.stringify(body)}:{})}),{});
- return {store,authorizations,support,request,setAuthorize(fn){authorize=fn;}};
+ const request=(body={action:'client-support-read',accountId,lineId},options={})=>{const req=new Request(endpoint+(options.query||''),{method:options.method||'POST',headers:{'Content-Type':'application/json',Origin:origin,Cookie:cookie,...options.headers},...((options.method||'POST')==='POST'?{body:options.raw??JSON.stringify(body)}:{})});requests.push(req);return options.trace?traceRequest(req,()=>handle(req,{}),{logger:value=>logs.push(value)}):handle(req,{});};
+ return {store,authorizations,support,requests,logs,request,setAuthorize(fn){authorize=fn;},setSupportReply(fn){reply=fn;}};
 }
 async function result(response){return {status:response.status,data:await response.json(),headers:response.headers};}
 const payload=(action='client-support-read',extra={})=>({action,accountId,lineId,...extra});
@@ -67,7 +70,7 @@ test('owner support demands a freshly authorized owner and exact Site account/li
  }
  assert.equal(h.support.length,0);
  h.setAuthorize(()=>Response.json({error:'PRIVATE_SITE_TOKEN'},{status:401}));const expired=await result(await h.request());assert.equal(expired.status,401);assert.ok(expired.headers.get('Set-Cookie').includes('Max-Age=0'));safe(expired.data);
- h.setAuthorize(()=>Response.json({error:'PRIVATE_SITE_TOKEN'},{status:503}));const unavailable=await result(await h.request());assert.equal(unavailable.status,503);assert.deepEqual(unavailable.data,{error:'support_unavailable'});safe(unavailable.data);
+ h.setAuthorize(()=>Response.json({error:'PRIVATE_SITE_TOKEN'},{status:503}));const unavailable=await result(await h.request());assert.equal(unavailable.status,503);assert.equal(unavailable.data.error,'support_unavailable');assert.equal(unavailable.data.diagnostic.phase,'scope');assert.equal(unavailable.data.diagnostic.upstreamStatus,503);assert.match(unavailable.data.diagnostic.reference,/^[a-f0-9-]{36}$/);safe(unavailable.data);
 });
 
 test('owner support revalidates every read/check and resolves the UUID through the current account/line mapping without changing business state',async()=>{
@@ -91,7 +94,29 @@ test('owner support manual notes remain optional, actor is server-defined, revis
 
 test('owner support fails closed when Site identity or bridge ownership changes between authorization and directory lookup',async()=>{
  for(const change of [async s=>s.delete('reseller-line:'+accountId+':'+lineId),async s=>s.put('reseller-line:'+accountId+':'+lineId,{username:'cliente02'}),async s=>s.delete('user:cliente01'),async s=>s.put('user:cliente01',{...customer,resellerBridge:{accountId:'foreign',lineId}}),async s=>s.put('user:cliente01',{...customer,resellerBridge:{accountId,lineId:'foreign'}})]){
-  const h=harness();h.setAuthorize(async()=>{await change(h.store);return Response.json({ok:true,actor:{id:'owner',role:'owner'},customer:{accountId,lineId,username:'Cliente01'}});});const response=await result(await h.request());assert.equal(response.status,403);assert.deepEqual(response.data,{error:'support_scope'});assert.equal(h.store.db.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE name LIKE 'smn_support_%'").get().n,0);
+  const h=harness();h.setAuthorize(async()=>{await change(h.store);return Response.json({ok:true,actor:{id:'owner',role:'owner'},customer:{accountId,lineId,username:'Cliente01'}});});const response=await result(await h.request());assert.equal(response.status,403);assert.equal(response.data.error,'support_scope');assert.equal(response.data.diagnostic.errorCode,'support_scope');assert.equal(h.store.db.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE name LIKE 'smn_support_%'").get().n,0);
+ }
+});
+
+test('an older directory without the support route is explicit readiness, with safe evidence and no retries',async()=>{
+ const h=harness(),before=business(h.store);h.setSupportReply(()=>Response.json({error:'not_found'},{status:404}));
+ const response=await result(await h.request(undefined,{trace:true}));assert.equal(response.status,503);assert.equal(response.data.error,'support_initializing');assert.equal(response.headers.get('Retry-After'),'10');
+ assert.equal(h.logs.length,1);const record=h.logs[0].portal;assert.deepEqual(record,response.data.diagnostic);assert.equal(response.headers.get('X-SMN-Request-ID'),record.reference);assert.equal(record.phase,'support');assert.equal(record.action,'client-support-read');assert.equal(record.operation,'client-support-read');assert.equal(record.errorCode,'support_initializing');assert.equal(record.upstreamStatus,404);assert.equal(record.status,503);assert.match(record.reference,/^[a-f0-9-]{36}$/);assert.equal(takeGatewayFailure(h.requests.at(-1)),undefined,'the real wrapper consumes each record once');safe(h.logs);safe(response.data);
+ assert.equal(h.authorizations.length,1);assert.equal(h.support.length,1);assert.equal(business(h.store),before);
+});
+
+test('support replies validate the actual read/check DTO and record unknown or malformed results without private bodies',async()=>{
+ for(const action of ['client-support-read','client-support-check'])for(const bad of [{schema:1,customer:{id:customer.id,username:'foreign'},lists:[],check:{},incidents:{rows:[]}},{schema:1,customer:{username:'Cliente01'},lists:[],check:{},incidents:{rows:[]}},{schema:2,customer:{id:customer.id,username:'Cliente01'},lists:[],check:{},incidents:{rows:[]}},null,[]]){
+  const h=harness(),before=business(h.store);h.setSupportReply(()=>Response.json(bad));const response=await result(await h.request(payload(action)));assert.equal(response.status,503);assert.equal(response.data.error,'support_invalid_response');assert.equal(response.data.diagnostic.phase,'support');assert.equal(response.data.diagnostic.kind,'invalid_response');assert.equal(response.data.diagnostic.upstreamStatus,200);safe(response.data);assert.equal(h.support.length,1);assert.equal(business(h.store),before);
+ }
+ const h=harness();h.setSupportReply(()=>new Response('PRIVATE_HASH PRIVATE_SITE_TOKEN',{status:502}));const invalid=await result(await h.request());assert.equal(invalid.status,503);assert.equal(invalid.data.error,'support_invalid_response');safe(invalid.data);
+ h.setSupportReply(()=>Response.json({error:'PRIVATE_HASH',message:'PRIVATE_SITE_TOKEN'},{status:500}));const unknown=await result(await h.request());assert.equal(unknown.status,503);assert.equal(unknown.data.error,'support_unavailable');assert.equal(unknown.data.diagnostic.upstreamStatus,500);safe(unknown.data);
+ h.setSupportReply(()=>{throw TypeError('PRIVATE_HASH PRIVATE_SITE_TOKEN');});const unavailable=await result(await h.request());assert.equal(unavailable.status,503);assert.equal(unavailable.data.error,'support_unavailable');assert.equal(unavailable.data.diagnostic.phase,'support');assert.equal(unavailable.data.diagnostic.upstreamStatus,undefined,'no directory response must not inherit the authorization response status');safe(unavailable.data);
+});
+
+test('known support errors retain their status and code while providing one safe correlation reference',async()=>{
+ for(const [error,status]of [['support_scope',403],['support_conflict',409],['support_not_found',404],['invalid_support_note',400],['invalid_support_input',400],['support_unavailable',503]]){
+  const h=harness();h.setSupportReply(()=>Response.json({error,message:'PRIVATE_HASH PRIVATE_SITE_TOKEN'},{status}));const response=await result(await h.request());assert.equal(response.status,status);assert.equal(response.data.error,error);assert.equal(response.data.diagnostic.errorCode,error);assert.equal(response.data.diagnostic.upstreamStatus,status);assert.equal(response.data.diagnostic.phase,'support');safe(response.data);assert.equal(h.support.length,1);
  }
 });
 
