@@ -27,6 +27,8 @@ jobs:
         run: npm ci --fetch-timeout=30000
         working-directory: cloudflare-worker
       - run: node scripts/build-pages.mjs
+      - name: Guard source secrets and private Pages files
+        run: node scripts/security-check.mjs
       - run: npm test
       - name: Playback startup performance release gate
         run: npm run test:performance

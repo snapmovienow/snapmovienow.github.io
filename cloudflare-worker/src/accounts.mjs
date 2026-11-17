@@ -46,6 +46,7 @@ import {clientSupportRoute} from './client-support.mjs';
 import {recordLocalStartup} from './local-startup-observations.mjs';
 import {cleanPlaybackActivity} from './playback-activity.mjs';
 import {securityRoute,checkFactor,writeAudit} from './security.mjs';
+import {legacyAuthBudget} from './legacy-auth-budget.mjs';
 import {backupRoute,automaticBackup} from './backups.mjs';
 const answer=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:{'content-type':'application/json'}});
 const normal=x=>String(x||'').trim().toLowerCase();
@@ -64,6 +65,7 @@ function expiry(value){if(value===null||value===''||value===undefined)return nul
 export async function accountsFetch(state,env,req){
  const p=new URL(req.url).pathname.replace('/accounts','');const b=await req.json();const store=state.storage;
  try{
+ if(p==='/legacy-auth-begin'||p==='/legacy-auth-success')return legacyAuthBudget(store,env,p,b);
  if(['/client-support-read','/client-support-check','/client-support-incident-save','/client-support-observe','/client-support-portal'].includes(p))return clientSupportRoute(store,p,b,{sql:store.sql});
  if(p==='/reseller-portal-config')return answer(await store.get('reseller-portal:'+b.accountId)||null);
  if(p==='/server-diagnostic-snapshot')return store.transaction(async tx=>answer(await serverDiagnosticSnapshot({get:key=>tx.get(key),sql:store.sql},{now:Date.now(),rotationEnabled:rotationEnabled(env),queries:b.queries||[]})));

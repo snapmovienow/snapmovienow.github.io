@@ -17,5 +17,8 @@
     "playwright": "1.62.1",
     "wrangler": "4.149.0"
   },
-  "type": "module"
+  "type": "module",
+  "overrides": {
+    "undici": "7.30.1"
+  }
 }

@@ -19,9 +19,18 @@ export function withSessionCookie(response,req,env,kind,token,maxAge){
 export function browserResponse(response,req,env){
  const origin=req.headers.get('Origin'),headers=new Headers(response.headers);
  if(allowedOrigins(env).has(origin)){
-  headers.set('Access-Control-Allow-Origin',origin);headers.set('Vary','Origin');
+  headers.set('Access-Control-Allow-Origin',origin);
+  const vary=headers.get('Vary');if(!vary)headers.set('Vary','Origin');else if(vary!=='*'&&!vary.split(',').some(v=>v.trim().toLowerCase()==='origin'))headers.set('Vary',vary+', Origin');
   if(canUseCookie(req,env))headers.set('Access-Control-Allow-Credentials','true');
  }else if(origin){headers.delete('Access-Control-Allow-Origin');headers.delete('Access-Control-Allow-Credentials')}
  headers.set('X-Content-Type-Options','nosniff');headers.set('Referrer-Policy','no-referrer');
+ // Do not upgrade legacy player URLs or impose document policies on media.
+ // Preserve the stricter portal policies and every transport/cookie header.
+ if(new URL(req.url).protocol==='https:'&&!headers.has('Strict-Transport-Security'))headers.set('Strict-Transport-Security','max-age=86400');
+ if(!headers.has('Permissions-Policy'))headers.set('Permissions-Policy','camera=(), microphone=(), geolocation=(), usb=()');
+ if(/^application\/json(?:\s*;|$)/i.test(headers.get('Content-Type')||'')){
+  if(!headers.has('Content-Security-Policy'))headers.set('Content-Security-Policy',"frame-ancestors 'none'; object-src 'none'; base-uri 'none'");
+  if(!headers.has('X-Frame-Options'))headers.set('X-Frame-Options','DENY');
+ }
  return new Response(response.body,{status:response.status,statusText:response.statusText,headers});
 }
