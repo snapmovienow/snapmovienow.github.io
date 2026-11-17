@@ -25,6 +25,17 @@ async function passwordKey(env) {
 export async function pepperId(env) {
   return (await passwordKey(env)).id;
 }
+export async function passwordProtectionReadiness(env, generatedAt=Date.now()) {
+  let keyReady=false;
+  try {
+    await passwordKey(env);
+    keyReady=true;
+  } catch {
+    // The scheduler reports only readiness. Cryptographic exceptions stay private.
+  }
+  return {event:'password_protection_readiness_v1',schema:'SNAP-password-protection-readiness-v1',
+    generatedAt,upgradeEnabled:upgradeEnabled(env),keyReady};
+}
 export async function checkPasswordKey(salt, env) {
   if (usesPepper(salt) && (!salt.startsWith(prefix + await pepperId(env) + '$') || salt.length <= prefix.length + 33)) {
     throw Error('password_key_unavailable');
