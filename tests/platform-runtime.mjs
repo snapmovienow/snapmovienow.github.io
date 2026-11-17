@@ -11,7 +11,12 @@ const outboundService=async request=>{
  mailRequests.push({headers:Object.fromEntries(request.headers),body:await request.json()});
  return mailStatus===200?Response.json({id:'synthetic-local-email'}):new Response(null,{status:mailStatus,headers:{Location:'https://example.invalid/must-not-receive-credentials'}});
 };
-const common={modules:true,script:bundled.outputFiles[0].text,compatibilityDate:'2026-10-03',compatibilityFlags:['enable_request_signal'],outboundService,durableObjects:{PLAYBACK_SESSIONS:{className:'PlaybackSession',useSQLite:true},BACKUP_RECOVERY:{className:'BackupRecovery',useSQLite:true},OPERATION_ALERTS:{className:'OperationsMonitor',useSQLite:true}},bindings:{TICKET_SECRET:'local-runtime-secret-never-deployed-123456',ADMIN_SETUP_SECRET:'local-runtime-setup-secret-never-deployed-123456',WEB_ORIGINS:'http://127.0.0.1:8788'}};
+// Drive both authenticator and isolated Workers from one clock. Enrollment,
+// renewal and replacement consume distinct TOTP steps within the allowed skew.
+const fixtureNow=Math.floor(Date.now()/30000)*30000+29999;
+const fixtureStep=Math.floor(fixtureNow/30000);
+const workerScript='Date.now=()=>'+String(fixtureNow)+';\n'+bundled.outputFiles[0].text;
+const common={modules:true,script:workerScript,compatibilityDate:'2026-10-03',compatibilityFlags:['enable_request_signal'],outboundService,durableObjects:{PLAYBACK_SESSIONS:{className:'PlaybackSession',useSQLite:true},BACKUP_RECOVERY:{className:'BackupRecovery',useSQLite:true},OPERATION_ALERTS:{className:'OperationsMonitor',useSQLite:true}},bindings:{TICKET_SECRET:'local-runtime-secret-never-deployed-123456',ADMIN_SETUP_SECRET:'local-runtime-setup-secret-never-deployed-123456',WEB_ORIGINS:'http://127.0.0.1:8788'}};
 const options={workers:[{...common,name:'production-test',bindings:{...common.bindings,ENVIRONMENT:'production'}},{...common,name:'staging-test',bindings:{...common.bindings,ENVIRONMENT:'staging'}}],durableObjectsPersist:false};
 const mf=new Miniflare(convertV4MiniflareOptions?convertV4MiniflareOptions(options):options);
 try{
@@ -80,10 +85,10 @@ try{
  assert.equal((await admin('users')).data.find(u=>u.username==='customer').comments,privateNotes,'encrypted backup and restoration preserve administrator comments');
  assert.equal((await call(prod,{op:'profile_get',access_token:customer},'/')).status,401);
  const begin=await admin('mfa-begin',{password:'owner-password-test'});assert.equal(begin.status,200);
- const confirmed=await admin('mfa-confirm',{password:'owner-password-test',code:await totp(begin.data.seed,Math.floor(Date.now()/30000)-1)});assert.equal(confirmed.status,200);assert.equal(confirmed.data.recoveryCodes.length,8);
+ const confirmed=await admin('mfa-confirm',{password:'owner-password-test',code:await totp(begin.data.seed,fixtureStep-1)});assert.equal(confirmed.status,200);assert.equal(confirmed.data.recoveryCodes.length,8);
  assert.equal((await admin('users')).status,401);
  const afterMfa=await call(prod,{action:'login',username:'owner',password:'owner-password-test',code:confirmed.data.recoveryCodes[0]});assert.equal(afterMfa.status,200);activeToken=afterMfa.data.access_token;
- const renewed=await admin('mfa-recovery-renew',{password:'owner-password-test',code:await totp(begin.data.seed,Math.floor(Date.now()/30000))});assert.equal(renewed.status,200);assert.equal(renewed.data.recoveryCodes.length,8);assert.equal(renewed.data.signInAgain,true);
+ const renewed=await admin('mfa-recovery-renew',{password:'owner-password-test',code:await totp(begin.data.seed,fixtureStep)});assert.equal(renewed.status,200);assert.equal(renewed.data.recoveryCodes.length,8);assert.equal(renewed.data.signInAgain,true);
  assert.equal((await admin('users')).status,401,'real SQLite recovery renewal revokes the prior session');
  assert.equal((await call(prod,{action:'login',username:'owner',password:'owner-password-test',code:confirmed.data.recoveryCodes[1]})).status,401,'SQLite rejects a superseded recovery code');
  const afterRenew=await call(prod,{action:'login',username:'owner',password:'owner-password-test',code:renewed.data.recoveryCodes[0]});assert.equal(afterRenew.status,200);activeToken=afterRenew.data.access_token;
@@ -107,11 +112,11 @@ try{
  assert.equal((await admin('overview')).data.provider.username,'synthetic-provider');assert.equal((await admin('xtream-settings')).data.enabled,false);
  assert.equal((await call(prod,{op:'session_info',access_token:oldCustomer},'/')).status,401);assert.equal((await admin('security-status')).data.mfaEnabled,true);
  assert.equal((await call(prod,{op:'auth',username:'customer',password:'customer-password-test'},'/')).status,200,'recovered credentials still work');
- const rotating=await admin('mfa-replace-begin',{password:'owner-password-test',code:await totp(begin.data.seed,Math.floor(Date.now()/30000)+1)});assert.equal(rotating.status,200);assert.equal((await admin('security-status')).data.mfaEnabled,true);assert.equal((await admin('users')).status,200,'current session/MFA remains active until the replacement is confirmed');
- const rotated=await admin('mfa-confirm',{password:'owner-password-test',code:await totp(rotating.data.seed,Math.floor(Date.now()/30000))});assert.equal(rotated.status,200);assert.equal((await admin('users')).status,401);
+ const rotating=await admin('mfa-replace-begin',{password:'owner-password-test',code:await totp(begin.data.seed,fixtureStep+1)});assert.equal(rotating.status,200);assert.equal((await admin('security-status')).data.mfaEnabled,true);assert.equal((await admin('users')).status,200,'current session/MFA remains active until the replacement is confirmed');
+ const rotated=await admin('mfa-confirm',{password:'owner-password-test',code:await totp(rotating.data.seed,fixtureStep)});assert.equal(rotated.status,200);assert.equal((await admin('users')).status,401);
  assert.equal((await call(prod,{action:'login',username:'owner',password:'owner-password-test',code:renewed.data.recoveryCodes[4]})).status,401,'old recovery is invalid after authenticator replacement');
  const rotatedLogin=await call(prod,{action:'login',username:'owner',password:'owner-password-test',code:rotated.data.recoveryCodes[0]});assert.equal(rotatedLogin.status,200);activeToken=rotatedLogin.data.access_token;
- const changedPassword=await admin('admin-password',{password:'owner-password-test',newPassword:'synthetic-owner-new-password',code:await totp(rotating.data.seed,Math.floor(Date.now()/30000)+1)});assert.equal(changedPassword.status,200);assert.equal((await admin('users')).status,401,'password change revokes real SQLite administrator sessions');
+ const changedPassword=await admin('admin-password',{password:'owner-password-test',newPassword:'synthetic-owner-new-password',code:await totp(rotating.data.seed,fixtureStep+1)});assert.equal(changedPassword.status,200);assert.equal((await admin('users')).status,401,'password change revokes real SQLite administrator sessions');
  assert.equal((await call(prod,{action:'login',username:'owner',password:'owner-password-test',code:rotated.data.recoveryCodes[1]})).status,401);assert.equal((await call(prod,{action:'login',username:'owner',password:'synthetic-owner-new-password',code:rotated.data.recoveryCodes[1]})).status,200);
  mkdirSync('artifacts',{recursive:true});writeFileSync('artifacts/recovery-runtime.json',JSON.stringify({testedAt:new Date().toISOString(),runtime:'local workerd / real SQLite',data:'synthetic only',remoteProduction:false,checks:{reauthentication:true,separateNamespace:true,productionUsersUnchanged:true,existingSessionPreserved:true,authenticatedFileRestoration:true,userPermissionsExpiry:true,providerSettings:true,identitiesRotated:true,leasesCleared:true,adminMfaPreserved:true,sqliteCleanup:true,wrongEnvironmentRejected:true,manualDoesNotProveCron:true}},null,2)+'\n');
  console.log('PASS: actual workerd/SQLite production modules; isolated staging, protected profile storage, encrypted export, atomic restoration, old-session revocation, MFA enrollment and authenticated recovery renewal, authenticator replacement and administrator password rotation.');
