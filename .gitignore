@@ -7,3 +7,16 @@ artifacts/
 
 phone-sms-bridge/build/
 phone-sms-bridge/.signing/
+
+# Local secrets and database exports must never enter source control.
+.env*
+*.key
+*.pem
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.db
+*.sqlite
+*.sqlite3
+/backups/

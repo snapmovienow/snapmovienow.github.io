@@ -17,5 +17,8 @@
       }
     }
   },
-  "type": "module"
+  "type": "module",
+  "overrides": {
+    "undici": "7.30.1"
+  }
 }

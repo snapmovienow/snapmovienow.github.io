@@ -34,7 +34,18 @@ try{
  // provider timing or another provider fetch.
  let release,started;const startedPromise=new Promise(r=>{started=r});globalThis.fetch=()=>{fetches++;started();return new Promise(r=>{release=()=>r(Response.json(movie))})};const pendingEnv=env(),first=new CatalogCost('vod_info',()=>clock),second=new CatalogCost('vod_info',()=>clock),before=fetches;
  const one=createProviderCatalog(deps,pendingEnv,ctx,{catalogCost:first})('get_vod_info','ccf',{vod_id:1});await startedPromise;
- const two=createProviderCatalog(deps,pendingEnv,ctx,{catalogCost:second})('get_vod_info','ccf',{vod_id:1});await new Promise(r=>setTimeout(r,5));clock+=20;release();await Promise.all([one,two]);await Promise.all(background.splice(0));assert.equal(fetches,before+1);assert.equal(second.snapshot().ms.provider,0);assert.ok(second.snapshot().ms.unattributed>=20);
+ // HMAC/cache work runs asynchronously: a real-time sleep does not prove that
+ // the second request has reached the shared-work wait before we move clock.
+ const joined=Promise.withResolvers(),beginSecond=second.begin.bind(second);
+ second.begin=action=>{
+  const sample=beginSecond(action);if(!sample)return sample;
+  const phase=sample.phase;
+  sample.phase=name=>{const end=phase(name);if(name==='unattributed')joined.resolve();return end;};
+  return sample;
+ };
+ const two=createProviderCatalog(deps,pendingEnv,ctx,{catalogCost:second})('get_vod_info','ccf',{vod_id:1});
+ try{await Promise.race([joined.promise,two.then(()=>assert.fail('second request must join the pending provider read'))]);clock+=20;}finally{release();}
+ await Promise.all([one,two]);await Promise.all(background.splice(0));assert.equal(fetches,before+1);assert.equal(second.snapshot().ms.provider,0);assert.ok(second.snapshot().ms.unattributed>=20);
 }finally{globalThis.fetch=realFetch;Date.now=realDate;}
 class Store{constructor(){this.data=new Map()}async get(k){return structuredClone(this.data.get(k))}async put(k,v){this.data.set(k,structuredClone(v))}async delete(k){this.data.delete(k)}async list({prefix}){return new Map([...this.data].filter(([k])=>k.startsWith(prefix)))}async transaction(fn){return fn(this)}}
 const storage=new Store(),route=(path,timing)=>playbackTimingsRoute(storage,new Request('https://private/operations/'+path,{method:'POST',body:JSON.stringify(timing?{timing}:{})}));
