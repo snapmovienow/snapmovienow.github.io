@@ -135,6 +135,9 @@ export async function handleXtream(req, deps) {
   const auth = await deps.authenticate(username, password, req, action);
   if (auth instanceof Response) return auth;
   auth.password = password;
+  const supportType={get_live_streams:'live',get_vod_streams:'movie',get_series:'series'}[action];
+  if(stream)deps.onSupportRequest?.({kind:'playback',type:stream[1],publicId:stream[4]});
+  else if(supportType)deps.onSupportRequest?.({kind:'catalog',type:supportType,selection:params.get('category_id')?'category':'all'});
   if (stream) {
     const [, kind, , , publicId, ext] = stream;
     if (!EXTENSIONS.has(ext.toLowerCase())) return deps.json({error: 'invalid_stream'}, 400);

@@ -1,4 +1,5 @@
 import {setResolvedMedia,resetMediaPhase,recordInitialMediaResponse} from './failure-correlation.mjs';
+import {createClientSupportObservation} from './client-support-observation.mjs';
 import {playbackStartup,LiveStartup,LIVE_STARTUP_MS,reportLiveResult,deferPlaybackReport} from './live-startup.mjs';
 import {initialMediaEvidence} from './initial-media-evidence.mjs';
 import {responseMediaFailure} from './media-failure-cause.mjs';
@@ -30,8 +31,10 @@ function startupRecovery(item,original,attempt,nextChannel){
 
 export function createXtreamBridge(deps) {
   return async function xtreamRequest(req, env, ctx,trace) {
-    let flowPublicId;
+    let flowPublicId,supportUser;
     const privateCall = (path, body) => deps.directory(env, path, body);
+    const support=createClientSupportObservation({ctx,method:req.method,access:'xtream',serviceCheck:requestConnectionClient(req).serviceCheck===true,write:async body=>{const response=await privateCall('/client-support-observe',body);await response.body?.cancel();}});
+    const supportJSON=(data,status=200)=>{support.reply(data,status);return deps.json(data,status);};
     const client = req.headers.get('CF-Connecting-IP') || 'unknown';
     const authenticate = async (username, password, request, action) => timed(trace,'auth',async()=>{
       const settings = await (await privateCall('/xtream-config')).json();
@@ -48,6 +51,7 @@ export function createXtreamBridge(deps) {
       const session = {kind:'session',managed:true,sid,exp:(await ensured.json()).exp,permissions:user.permissions,...identity};
       const url=new URL(req.url),needsCount=url.pathname==='/player_api.php'&&!(action??url.searchParams.get('action'));
       const count = needsCount?await (await privateCall('/xtream-count',{uid:user.id})).json():{connections:0};
+      supportUser=user;
       return {user,session,username:user.username,connections:count.connections};
     });
     const catalogCost=new URL(req.url).searchParams.get('action')==='get_vod_info'?trace?.movieCatalog('vod_info'):null;
@@ -187,8 +191,8 @@ export function createXtreamBridge(deps) {
       if(!prepared)return null;
       try{return await deps.exclusives.media(new Request(prepared.url,request),env,ctx);}catch(error){await privateCall('/release',{sid:auth.session.sid,lease_id:prepared.lease_id,request_id:prepared.request_id});throw error;}
     };
-    try { const special=deps.exclusives?await deps.exclusives.xtream(req,env,ctx,authenticate):null;return special||await handleXtream(req,{onResolvedMedia:(type,id)=>{setResolvedMedia(trace,type,id);flowPublicId=id;},authenticate,catalog,register,resolve,play,profile,supplementPlay,supplementInfo:deps.exclusives?.supplementInfo?(data,context,permissions)=>deps.exclusives.supplementInfo(env,data,context,permissions):undefined,localLive:deps.exclusives?.liveXtream?.(env,ctx),localSeries:deps.exclusives?.seriesXtream?.(env,ctx),adultPolicy,json:deps.json}); }
-    catch(error) { if(req.signal.aborted||['playback_superseded','playback_expired'].includes(error.message))return deps.json({error:'playback_superseded'},410);if(error.status)return deps.json({error:error.message},error.status);return deps.json({error:['media_origin_unapproved','provider_unavailable','provider_inactive','panel_unavailable'].includes(error.message)?error.message:'xtream_unavailable'},502); }
+    try { const special=deps.exclusives?await deps.exclusives.xtream(req,env,ctx,authenticate):null;return support.finish(special||await handleXtream(req,{onSupportRequest:record=>support.start(supportUser,{...record,...(supportUser?.permissions?.[{live:'tv',movie:'movies',series:'series'}[record.type]]===false?{code:'content_disabled'}:{})}),onResolvedMedia:(type,id)=>{setResolvedMedia(trace,type,id);flowPublicId=id;},authenticate,catalog,register,resolve,play,profile,supplementPlay,supplementInfo:deps.exclusives?.supplementInfo?(data,context,permissions)=>deps.exclusives.supplementInfo(env,data,context,permissions):undefined,localLive:deps.exclusives?.liveXtream?.(env,ctx),localSeries:deps.exclusives?.seriesXtream?.(env,ctx),adultPolicy,json:supportJSON})); }
+    catch(error) { if(req.signal.aborted||['playback_superseded','playback_expired'].includes(error.message))return support.finish(supportJSON({error:'playback_superseded'},410));if(error.status)return support.finish(supportJSON({error:error.message},error.status));return support.finish(supportJSON({error:['media_origin_unapproved','provider_unavailable','provider_inactive','panel_unavailable'].includes(error.message)?error.message:'xtream_unavailable'},502)); }
   };
 }
 

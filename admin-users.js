@@ -1,4 +1,4 @@
-export function renderUserCards({document:doc,container,users,query='',edit,toggle,remove,permissions,notice}){
+export function renderUserCards({document:doc,container,users,query='',edit,toggle,remove,permissions,notice,support}){
  const node=(tag,text,className)=>{const element=doc.createElement(tag);if(text!==undefined)element.textContent=text;if(className)element.className=className;return element};
  const q=query.trim().toLocaleLowerCase(),selected=users.filter(user=>(user.username+' '+(user.name||'')).toLocaleLowerCase().includes(q));
  container.replaceChildren();
@@ -22,6 +22,8 @@ export function renderUserCards({document:doc,container,users,query='',edit,togg
    const button=node('button',label,danger?'danger':'secondary');button.type='button';button.setAttribute('aria-label',label+' '+user.username);
    button.onclick=async()=>{busy(true);try{await action(user)}catch(error){notice(error.message)}finally{busy(false)}};actions.append(button);
   }
-  card.append(actions);container.append(card);
+  card.append(actions);
+  if(typeof support==='function'){const wrap=node('div',undefined,'admin-user-support'),button=node('button','Soporte','secondary');button.type='button';button.setAttribute('aria-label','Soporte de '+user.username);button.onclick=async()=>{try{await support(user)}catch(error){notice(error.message)}};wrap.append(button);card.append(wrap);}
+  container.append(card);
  }
 }
