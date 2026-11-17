@@ -35,6 +35,7 @@ import {createResellerBridge} from './reseller-bridge.mjs';
 import {probeResellerMedia} from './reseller-media-probe.mjs';
 import {accountProfile,profileRoute} from './profiles.mjs';
 import {operationsRoute} from './operations.mjs';
+import {passwordProtectionReadiness} from './password-verifier.mjs';
 import {MONITOR_CRON,monitorCall} from './monitor.mjs';
 import {probeProviders} from './provider-monitor.mjs';
 export {OperationsMonitor} from './monitor.mjs';
@@ -687,7 +688,9 @@ export default {scheduled(event,env,ctx){
  ownedMediaBootstrap(env,ctx);
  localAuditBootstrap(env,ctx);
  if(event.cron===MONITOR_CRON&&diagnosticEnabled(env))ctx.waitUntil(env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_empress_diagnostic_20261104')).fetch('https://private/empress-origin-diagnostic-run',{method:'POST',body:'{}'}).then(r=>r.body?.cancel()).catch(()=>console.error({event:'empress_origin_diagnostic',reason:'diagnostic_unavailable'})));
- if(event.cron===MONITOR_CRON){schedulePrivateDiagnosticReport(env,ctx);ctx.waitUntil(directory(env,'/service-monitor-sample').then(r=>r.body?.cancel()).catch(()=>console.error({event:'service_monitor_sample_failed'})));ctx.waitUntil(isolatedPoolRefresh(env).catch(()=>console.error({event:'provider_inventory_refresh_failed'})));ctx.waitUntil(telegramTick(env).then(async ({diagnostic})=>{
+ if(event.cron===MONITOR_CRON){
+  ctx.waitUntil(passwordProtectionReadiness(env).then(readiness=>console.log(readiness)));
+  schedulePrivateDiagnosticReport(env,ctx);ctx.waitUntil(directory(env,'/service-monitor-sample').then(r=>r.body?.cancel()).catch(()=>console.error({event:'service_monitor_sample_failed'})));ctx.waitUntil(isolatedPoolRefresh(env).catch(()=>console.error({event:'provider_inventory_refresh_failed'})));ctx.waitUntil(telegramTick(env).then(async ({diagnostic})=>{
   if(!diagnostic)return;
   const response=await monitorCall(env,'/owner-diagnostic',diagnostic).catch(()=>null);
   if(!response?.ok)console.error({event:'owner_diagnostic_record_failed'});
