@@ -13,6 +13,7 @@
     "cpu_ms": 120000
   },
   "vars": {
+    "PASSWORD_UPGRADE_ENABLED": "true",
     "FAST_MEDIA_FAILURE_LOGS_ENABLED": "true",
     "CATALOG_MAINTENANCE_ENABLED": "true",
     "WILLAX_IMPORT_ENABLED": "true",

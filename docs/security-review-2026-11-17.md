@@ -2,6 +2,8 @@
 
 Fecha de revisión: 17 de noviembre de 2026, America/Chicago.
 
+Seguimiento posterior de los seis controles y límites vigentes en [security-controls-followup-2026-11-17.md](security-controls-followup-2026-11-17.md).
+
 ## Alcance y significado
 
 Se revisaron el código del gateway/API Cloudflare y la web pública en `c6793d6e9cde4c8cf4f79030040c7df9da44743a`, y el panel de resellers en su fuente `73a38cb76d5816b535fb15dce853ea1ca89de103`, antes de los cambios de esta entrega. Se contrastaron la versión activa y la configuración de secretos de Cloudflare, sin leer sus valores. No se accedió a sesiones de administrador ni a registros con URLs o credenciales, ni se realizaron pruebas contra proveedores o reproducciones de clientes.
