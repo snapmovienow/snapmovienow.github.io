@@ -1,3 +1,4 @@
+import {WILLAX_CHANNEL,isWillaxPage,isWillaxMediaURL,WILLAX_MEDIA_ROOT} from './willax-live.mjs';
 import {publicLiveDescriptor,forgetPublicLiveDescriptor,readPublicLiveDescriptor} from './public-live-descriptor.mjs';
 import {PUBLIC_TV_CHANNELS,UNIVISION_NY_CHANNEL,BRANDING_TEST_CHANNEL,publicTvMediaAllowed} from './public-tv-channels.mjs';
 import {REGIONAL_CHANNELS,regionalMediaAllowed,resolveRegionalLive,forgetRegionalLive} from './regional-live.mjs';
@@ -19,14 +20,14 @@ export const EXTRA_OFFICIAL_CHANNELS=[
 // Append only: array positions are stable Xtream identities, including the original four.
 export const KANSAS_CHANNELS=[...OFFICIAL_CHANNELS,...EXTRA_OFFICIAL_CHANNELS];
 export const LOCAL_TV_CHANNELS=[...KANSAS_CHANNELS,...REGIONAL_CHANNELS];
-export const ALL_TV_CHANNELS=[...LOCAL_TV_CHANNELS,...PUBLIC_TV_CHANNELS,UNIVISION_NY_CHANNEL,BRANDING_TEST_CHANNEL];
+export const ALL_TV_CHANNELS=[...LOCAL_TV_CHANNELS,...PUBLIC_TV_CHANNELS,UNIVISION_NY_CHANNEL,BRANDING_TEST_CHANNEL,WILLAX_CHANNEL];
 const channelFor=value=>{try{const u=new URL(value);if(u.protocol!=='https:'||u.username||u.password||u.port||u.hash)return null;return ALL_TV_CHANNELS.find(c=>c.page===u.href)||null;}catch{return null}};
 export const isOfficialLivePage=value=>!!channelFor(value instanceof URL?value.href:value);
 const fail=status=>{throw Object.assign(Error('official_live_unavailable'),Number.isInteger(status)?{upstreamStatus:status}:{})};
 const safe=value=>{let u;try{u=new URL(value)}catch{fail()}if(u.protocol!=='https:'||u.port||u.username||u.password||u.hash||/[\\\u0000-\u0020]/.test(value))fail();return u;};
 export function officialMediaAllowed(page,value){
  try{
-  const channel=channelFor(page),u=safe(value instanceof URL?value.href:value);if(!channel)return false;
+  const channel=channelFor(page);if(!channel)return false;if(isWillaxPage(page))return isWillaxMediaURL(value);const u=safe(value instanceof URL?value.href:value);
   if(channel.adapter==='public-hls')return publicTvMediaAllowed(channel,u);
   if(REGIONAL_CHANNELS.includes(channel))return regionalMediaAllowed(channel,u);
   if(channel.adapter==='amagi')return u.hostname==='amg01499-amg01499c3-morganmurphy-us-4207.playouts.now.amagi.tv'&&(/^\/(?:ts-us-e2-n2\/)?(?:playlist|beacon)\/amg01499-morganmurphyfast-koam-morganmurphyus\//.test(u.pathname)||/^\/playlist\d{3,4}p_\d+\.ts$/.test(u.pathname));
@@ -80,6 +81,7 @@ function releaseGrayDevice(handle,ok){
 }
 export async function resolveOfficialLive(page,options={}){
  const channel=channelFor(page);if(!channel)fail();
+ if(isWillaxPage(page))return {url:WILLAX_MEDIA_ROOT,officialPage:channel.page};
  if(channel.adapter==='public-hls')return {url:channel.page,officialPage:channel.page};
  if(REGIONAL_CHANNELS.includes(channel))return resolveRegionalLive(channel,options);
  if(channel.adapter==='amagi'||!channel.station){
@@ -124,4 +126,4 @@ export async function officialHeartbeat(state,options={}){
  try{await entry.promise}catch{entry.at=now-45000;fail();}
 }
 
-export async function forgetOfficialLivePage(page,options={}){const channel=channelFor(page);if(!channel||channel.adapter==='public-hls')return;if(REGIONAL_CHANNELS.includes(channel))await forgetRegionalLive(channel,options);else await forgetPublicLiveDescriptor(channel.station?'gray-page:'+channel.contentId:'official-source:'+channel.page,options);}
+export async function forgetOfficialLivePage(page,options={}){const channel=channelFor(page);if(!channel||channel.adapter==='public-hls'||isWillaxPage(page))return;if(REGIONAL_CHANNELS.includes(channel))await forgetRegionalLive(channel,options);else await forgetPublicLiveDescriptor(channel.station?'gray-page:'+channel.contentId:'official-source:'+channel.page,options);}

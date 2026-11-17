@@ -1,4 +1,5 @@
 import {LIVE_STARTUP_MS,VOD_STARTUP_MS,startupTimeout} from './live-startup.mjs';
+import {isWillaxMediaURL} from './willax-live.mjs';
 export const CCF_MEDIA_ORIGIN='http://ccf.center:8444';
 // The configured CCF entry is a single explicit hostname/port, not a grant to
 // connect to arbitrary DNS names or to caller-supplied destinations.
@@ -26,6 +27,17 @@ export function isApprovedMediaIP(u,sourceOrigin){
 }
 export async function fetchApprovedMediaIP(value,headers,connectSocket,nativeStreamFactory,sourceOrigin,deadline=null,startupBudget=LIVE_STARTUP_MS,signal,observer){
  const url=new URL(value);if(!isApprovedMediaIP(url,sourceOrigin)&&!isCcfMediaEntry(url,sourceOrigin))throw Error('invalid_media_origin');
+ return fetchMediaSocket(url,headers,connectSocket,nativeStreamFactory,deadline,startupBudget,signal,observer);
+}
+// This station has its own finite destination policy. It is deliberately not a
+// CCF origin and does not expand the provider IP allowlist or its provenance.
+export async function fetchWillaxMediaIP(value,headers,connectSocket,nativeStreamFactory,deadline=null,startupBudget=LIVE_STARTUP_MS,signal,observer){
+ if(!isWillaxMediaURL(value))throw Error('invalid_media_origin');
+ return fetchMediaSocket(new URL(value),headers,connectSocket,nativeStreamFactory,deadline,startupBudget,signal,observer);
+}
+// Both callers validate their destination before reaching this private parser.
+// Body streaming, native backpressure, deadlines and cancellation stay shared.
+async function fetchMediaSocket(url,headers,connectSocket,nativeStreamFactory,deadline,startupBudget,signal,observer){
  const cancelledReason=()=>signal?.reason ?? new DOMException('Aborted','AbortError');
  if(signal?.aborted)throw cancelledReason();
  const connect=connectSocket||(await import('cloudflare:sockets')).connect;
