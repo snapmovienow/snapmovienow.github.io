@@ -11,7 +11,7 @@ const {Miniflare,convertV4MiniflareOptions}=await dependency('miniflare');
 const here=dirname(fileURLToPath(import.meta.url)),baseline=process.env.SMN_BASELINE_ACCOUNTS;
 let source=await readFile(resolve(here,'lease-runtime-worker.mjs'),'utf8');
 if(baseline)source=source.replace("'../src/accounts.mjs'",JSON.stringify(baseline));
-const built=await esbuild.build({stdin:{contents:source,resolveDir:here,sourcefile:'lease-runtime-worker.mjs'},bundle:true,format:'esm',platform:'browser',write:false});
+const built=await esbuild.build({stdin:{contents:source,resolveDir:here,sourcefile:'lease-runtime-worker.mjs'},bundle:true,format:'esm',platform:'browser',external:['cloudflare:sockets'],write:false});
 const options={name:'lease-runtime',modules:true,script:built.outputFiles[0].text,compatibilityDate:'2026-10-03',bindings:{PLAYBACK_CANARY_USERNAME:'customer4'},durableObjects:{TEST_DIRECTORY:{className:'LeaseTestDirectory',useSQLite:true}},durableObjectsPersist:false};
 const mf=new Miniflare(convertV4MiniflareOptions?convertV4MiniflareOptions(options):options);
 let sequence=0;

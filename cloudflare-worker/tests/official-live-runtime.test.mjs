@@ -9,7 +9,7 @@ import {inspectCatalogSource} from '../src/catalog-source-check.mjs';
 import {resolveOfficialLive} from '../src/official-live.mjs';
 import {publicLiveDescriptor} from '../src/public-live-descriptor.mjs';
 export default {async fetch(){const result=[];for(const c of OFFICIAL_CHANNELS)result.push({id:c.id,...await inspectCatalogSource({mode:'gnula',page:c.page})});const opts={cachePublicPages:true,viewerKey:'real-workerd-fixture',viewerExpiresAt:Date.now()+3600000},a=await resolveOfficialLive(OFFICIAL_CHANNELS[0].page,opts),b=await resolveOfficialLive(OFFICIAL_CHANNELS[0].page,opts);const original=fetch;globalThis.fetch=(...args)=>original(...args);let edge;try{edge=await publicLiveDescriptor('gray-page:'+OFFICIAL_CHANNELS[0].contentId,()=>{throw Error('public edge metadata missing')},{cachePublicPages:true});}finally{globalThis.fetch=original;}return Response.json({result,reused:a.officialHeartbeat.deviceId===b.officialHeartbeat.deviceId,separate:a.officialHeartbeat.beatId!==b.officialHeartbeat.beatId,edge})}};`;
-const compiled=await build({stdin:{contents:source,resolveDir:fileURLToPath(new URL('.',import.meta.url))},bundle:true,format:'esm',platform:'browser',write:false});
+const compiled=await build({stdin:{contents:source,resolveDir:fileURLToPath(new URL('.',import.meta.url))},bundle:true,format:'esm',platform:'browser',external:['cloudflare:sockets'],write:false});
 let reads=0;const reply=data=>Response.json({header:{code:0},data});
 const options={name:'official-live-runtime',modules:true,script:compiled.outputFiles[0].text,compatibilityDate:'2026-10-03',outboundService:async req=>{
  reads++;const u=new URL(req.url);

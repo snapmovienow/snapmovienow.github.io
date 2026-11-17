@@ -1,3 +1,5 @@
+import {isWillaxPage,isWillaxMediaURL,willaxMediaReferenceURL} from './willax-live.mjs';
+import {willaxMediaFetcher} from './willax-transport.mjs';
 import {isOfficialLivePage,resolveOfficialLive,officialMediaAllowed} from './official-live.mjs';
 import {exclusiveURL} from './exclusive-catalog.mjs';
 import {resolveGnula} from './gnula-source.mjs';
@@ -5,13 +7,15 @@ import {isEmpressPage,resolveEmpressSource,empressMediaAllowed,empressMediaHeade
 
 // Check the same-origin HLS resources the player actually needs, without
 // downloading a complete film or reserving a customer's playback connection.
+const scopedMediaURL=(value,page)=>{if(!isWillaxPage(page))return exclusiveURL(value);if(!isWillaxMediaURL(value))throw Error('media_origin_changed');return new URL(value).href;};
+const scopedMediaReference=(value,base,page)=>{if(!isWillaxPage(page))return exclusiveURL(new URL(value,base).href);const result=willaxMediaReferenceURL(value,base);if(!result)throw Error('media_origin_changed');return result;};
 async function request(url,origin,options,range){
- let target=new URL(exclusiveURL(url));
+ let target=new URL(scopedMediaURL(url,options.officialPage));
  for(let hop=0;hop<4;hop++){
   if(options.allowed?!options.allowed(target):target.origin!==origin)throw Error('media_origin_changed');
   const fetcher=options.fetcher,response=await fetcher(target.href,{redirect:'manual',headers:{'User-Agent':'Mozilla/5.0',...options.headers||{},...(range?{Range:range}:{})},signal:options.signal});
   if(response.status<300||response.status>=400){if(!response.ok){await response.body?.cancel();throw Error('media_unavailable');}return {response,url:target.href};}
-  const location=response.headers.get('location');await response.body?.cancel();if(!location)throw Error('media_redirect');target=new URL(exclusiveURL(new URL(location,target).href));
+  const location=response.headers.get('location');await response.body?.cancel();if(!location)throw Error('media_redirect');target=new URL(scopedMediaReference(location,target,options.officialPage));
  }throw Error('media_redirect');
 }
 async function readSmall(response,max){
@@ -19,11 +23,11 @@ async function readSmall(response,max){
  try{while(length<max){const {value,done}=await reader.read();if(done)break;const part=value.subarray(0,max-length);chunks.push(part);length+=part.length;}}finally{await reader.cancel().catch(()=>{});reader.releaseLock();}
  const result=new Uint8Array(length);let at=0;for(const chunk of chunks){result.set(chunk,at);at+=chunk.length;}return result;
 }
-export async function inspectCatalogSource(media,{fetcher=fetch,resolver=resolveGnula,signal=AbortSignal.timeout(40000)}={}){
+export async function inspectCatalogSource(media,{fetcher=fetch,resolver=resolveGnula,signal=AbortSignal.timeout(40000),willaxTransportOptions}={}){
  try{
   const official=isOfficialLivePage(media.page),empress=isEmpressPage(media.page)?await resolveEmpressSource(media.page,{fetcher,signal}):null;
   let source=empress?empress.url:official?(await resolveOfficialLive(media.page,{fetcher,signal})).url:media.mode==='gnula'?await resolver(media.page,media.preferredEmbed||null,{fetcher,signal:AbortSignal.any([signal,AbortSignal.timeout(35000)])}):exclusiveURL(media.page);
-  const origin=new URL(source).origin,options={fetcher,signal,...(empress?{allowed:url=>empressMediaAllowed(media.page,url,empress.empressContext),headers:empressMediaHeaders(media.page,empress.empressContext)}:official?{allowed:url=>officialMediaAllowed(media.page,url)}:{})};
+  const origin=new URL(source).origin,options={fetcher:isWillaxPage(media.page)?willaxMediaFetcher(fetcher,willaxTransportOptions):fetcher,signal,officialPage:official?media.page:undefined,...(empress?{allowed:url=>empressMediaAllowed(media.page,url,empress.empressContext),headers:empressMediaHeaders(media.page,empress.empressContext)}:official?{allowed:url=>officialMediaAllowed(media.page,url)}:{})};
   // These public HLS players use normal GETs; some reject synthetic byte ranges.
   // readSmall still bounds and cancels every manifest, key and media response.
   for(let depth=0;depth<4;depth++){
@@ -39,7 +43,7 @@ export async function inspectCatalogSource(media,{fetcher=fetch,resolver=resolve
    // position instead of an old segment whose stitched advertisement expired.
    // Selection is positional: advertisements receive no special treatment.
    const selected=entries[master||lines.includes('#EXT-X-ENDLIST')?0:Math.max(0,entries.length-3)];if(!selected)throw Error('media_empty');
-   const destination=new URL(exclusiveURL(new URL(selected.line,source).href));if(options.allowed?!options.allowed(destination):destination.origin!==origin)throw Error('media_origin_changed');
+   const destination=new URL(scopedMediaReference(selected.line,source,options.officialPage));if(options.allowed?!options.allowed(destination):destination.origin!==origin)throw Error('media_origin_changed');
    if(master){source=destination.href;continue;}
    const active=new Map();
    for(const line of lines.slice(0,selected.index)){
@@ -49,7 +53,7 @@ export async function inspectCatalogSource(media,{fetcher=fetch,resolver=resolve
    }
    for(const line of active.values()){
     const uri=line.slice(line.indexOf(':')+1).match(/(?:^|,)\s*URI="([^"]+)"/);if(!uri)throw Error('invalid_playlist');
-    const resource=new URL(exclusiveURL(new URL(uri[1],source).href));const {response:extra}=await request(resource.href,origin,options,empress?undefined:'bytes=0-2047');
+    const resource=new URL(scopedMediaReference(uri[1],source,options.officialPage));const {response:extra}=await request(resource.href,origin,options,empress?undefined:'bytes=0-2047');
     if(/text\/html/i.test(extra.headers.get('content-type')||'')){await extra.body?.cancel();throw Error('media_not_video');}
     if((await readSmall(extra,2048)).length<16)throw Error('media_empty');
    }

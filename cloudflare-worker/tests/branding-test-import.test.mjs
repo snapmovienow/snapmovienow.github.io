@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import worker,{PlaybackSession} from '../src/index.js';
-import {BRANDING_TEST_CHANNEL as channel,PUBLIC_TV_CHANNELS,PUBLIC_TV_FOLDERS} from '../src/public-tv-channels.mjs';
-import {ALL_TV_CHANNELS} from '../src/official-live.mjs';
+import {BRANDING_TEST_CHANNEL as channel,PUBLIC_TV_CHANNELS,PUBLIC_TV_FOLDERS,UNIVISION_NY_CHANNEL} from '../src/public-tv-channels.mjs';
+import {ALL_TV_CHANNELS,LOCAL_TV_CHANNELS} from '../src/official-live.mjs';
+import {WILLAX_CHANNEL} from '../src/willax-live.mjs';
 import {runBrandingTestImport,brandingTestImportStatus,BRANDING_TEST_REQUEST} from '../src/branding-test-import.mjs';
 import {exclusiveSnapshot} from '../src/exclusive-catalog.mjs';
 import {inspectCatalogSource} from '../src/catalog-source-check.mjs';
@@ -29,7 +30,9 @@ const fixture=(value,options={})=>{
  if(url===appleBase+'v3/fileSequence0.ts'||url===appleBase+'a1/fileSequence0.aac')return new Response(new Uint8Array(2048).fill(0x47),{headers:{'Content-Type':url.endsWith('.aac')?'audio/aac':'video/mp2t'}});
  throw Error('Unexpected fixture media');
 };
-assert.equal(PUBLIC_TV_CHANNELS.length,20,'original fixed import stays unchanged');assert.equal(ALL_TV_CHANNELS.at(-1),channel);
+assert.equal(PUBLIC_TV_CHANNELS.length,20,'original fixed import stays unchanged');
+assert.deepEqual(ALL_TV_CHANNELS.slice(0,LOCAL_TV_CHANNELS.length+PUBLIC_TV_CHANNELS.length+2),[...LOCAL_TV_CHANNELS,...PUBLIC_TV_CHANNELS,UNIVISION_NY_CHANNEL,channel],'all original channel positions and identities stay unchanged');
+assert.equal(ALL_TV_CHANNELS[LOCAL_TV_CHANNELS.length+PUBLIC_TV_CHANNELS.length+2],WILLAX_CHANNEL,'Willax follows the original branding identity');
 assert.deepEqual(PUBLIC_TV_FOLDERS.find(f=>f.key==='branding-test'),{key:'branding-test',upstreamId:'111',name:'PRUEBAS SNAPTVNOW'});
 assert.equal(isOfficialLivePage(channel.page),true);assert.equal((await resolveOfficialLive(channel.page)).url,channel.page);
 for(const url of [channel.page,assetBase+'subtitles.m3u8',assetBase+'brand.vtt','https://snapmovienow.github.io/branding-test/master.m3u8',appleBase+'v3/fileSequence0.ts',appleBase+'a1/fileSequence0.aac'])assert.equal(officialMediaAllowed(channel.page,url),true,url);

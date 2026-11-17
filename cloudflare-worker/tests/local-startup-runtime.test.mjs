@@ -17,7 +17,7 @@ export class StartupDirectory{
  }
 }
 export default {fetch(req,env){return env.TEST.get(env.TEST.idFromName('startup')).fetch(req)}};`;
-const built=await build({stdin:{contents:source,resolveDir:fileURLToPath(new URL('.',import.meta.url))},bundle:true,platform:'browser',format:'esm',write:false});
+const built=await build({stdin:{contents:source,resolveDir:fileURLToPath(new URL('.',import.meta.url))},bundle:true,platform:'browser',format:'esm',external:['cloudflare:sockets'],write:false});
 const options={name:'local-startup-sqlite',modules:true,script:built.outputFiles[0].text,compatibilityDate:'2026-10-03',durableObjects:{TEST:{className:'StartupDirectory',useSQLite:true}},durableObjectsPersist:false},mf=new Miniflare(convertV4MiniflareOptions(options));
 try{
  await mf.ready;const call=async(path,body={})=>{const response=await mf.dispatchFetch('https://local.test'+path,{method:'POST',body:JSON.stringify(body)});return {status:response.status,data:await response.json()};},scope=(await call('/seed')).data;

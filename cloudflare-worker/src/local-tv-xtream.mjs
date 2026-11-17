@@ -2,6 +2,7 @@ import {ALL_TV_CHANNELS as OFFICIAL_CHANNELS} from './official-live.mjs';
 import {isAdult} from './content-permissions.mjs';
 import {localStartupSummary} from './local-startup-observations.mjs';
 import {PUBLIC_TV_FOLDERS} from './public-tv-channels.mjs';
+import {WILLAX_CHANNEL,WILLAX_FOLDER} from './willax-live.mjs';
 
 // A separate registry namespace keeps existing provider IDs and bookmarks intact.
 export const LOCAL_TV_SERVER='smn-official-local-tv';
@@ -12,7 +13,7 @@ export const LOCAL_TV_CATEGORIES=[
  {key:'new-york',upstreamId:'2',name:'LOCAL NEW YORK'},
  {key:'new-jersey',upstreamId:'3',name:'LOCAL NEW JERSEY'},
  {key:'california',upstreamId:'4',name:'LOCAL CALIFORNIA'},
- ...PUBLIC_TV_FOLDERS
+ ...PUBLIC_TV_FOLDERS,WILLAX_FOLDER
 ];
 // Original numeric identities stay fixed. Shared regional feeds get a stable
 // additional folder entry, while retaining one saved source and visibility flag.
@@ -61,7 +62,17 @@ export function createLocalTvXtream({read,prepare,media},env,ctx){
    const selected=present.filter(entry=>!categoryId||categoryIds.get(entry.category)===String(categoryId));
    if(!selected.length)return rows;
    const streamIds=await register(selected.map(entry=>({kind:'live',server:LOCAL_TV_SERVER,upstreamId:entry.upstreamId,ext:'m3u8',activity:{title:savedChannel(channels,entry.channel).name}})));
-   return rows.concat(selected.map((entry,index)=>{const row=savedChannel(channels,entry.channel);return {num:rows.length+index+1,name:row.name,stream_type:'live',stream_id:streamIds[index],stream_icon:row.poster?.startsWith('/')?base+row.poster:row.poster||'',epg_channel_id:'',added:String(Math.floor((row.createdAt||0)/1000)),category_id:categoryIds.get(entry.category),custom_sid:'',tv_archive:0,tv_archive_duration:0,container_extension:'m3u8',direct_source:base+'/live/'+encodeURIComponent(auth.username)+'/'+encodeURIComponent(auth.password)+'/'+streamIds[index]+'.m3u8'};}));
+   const combined=rows.slice();
+   selected.forEach((entry,index)=>{
+    const row=savedChannel(channels,entry.channel),item={num:rows.length+index+1,name:row.name,stream_type:'live',stream_id:streamIds[index],stream_icon:row.poster?.startsWith('/')?base+row.poster:row.poster||'',epg_channel_id:'',added:String(Math.floor((row.createdAt||0)/1000)),category_id:categoryIds.get(entry.category),custom_sid:'',tv_archive:0,tv_archive_duration:0,container_extension:'m3u8',direct_source:base+'/live/'+encodeURIComponent(auth.username)+'/'+encodeURIComponent(auth.password)+'/'+streamIds[index]+'.m3u8'};
+    // Place the requested alternative immediately after the final existing
+    // Willax in Peru. Provider objects, ordinals and numeric identities remain
+    // unchanged; array position controls this addition's presentation order.
+    let after=-1;
+    if(entry.channel.id===WILLAX_CHANNEL.id&&entry.category===WILLAX_FOLDER.key)for(let n=0;n<combined.length;n++)if(String(combined[n].category_id)===String(item.category_id)&&/willax/i.test(combined[n].name||''))after=n;
+    if(after<0)combined.push(item);else combined.splice(after+1,0,item);
+   });
+   return combined;
   },
   async play(request,auth,record){
    const channel=channelFor(record);if(!channel)return Response.json({error:'not_found'},{status:404});

@@ -1,9 +1,10 @@
 import {ALL_TV_CHANNELS as LOCAL_TV_CHANNELS,isOfficialLivePage} from './official-live.mjs';
 import {PUBLIC_TV_FOLDERS} from './public-tv-channels.mjs';
+import {WILLAX_FOLDER} from './willax-live.mjs';
 const DAY=86400000,RETENTION=30*DAY,MAX_ROWS=10000,PREFIX='client-history:';
 const identifier=v=>typeof v==='string'&&/^[A-Za-z0-9_.:-]{1,151}$/.test(v);
 const text=(v,n)=>typeof v==='string'&&!/https?:\/\/|password=|authorization|bearer /i.test(v)?v.replace(/[\u0000-\u001f\u007f]/g,' ').trim().slice(0,n):'';
-const FOLDERS={'kansas':'LOCAL KANSAS','new-york':'LOCAL NEW YORK','new-jersey':'LOCAL NEW JERSEY',california:'LOCAL CALIFORNIA',...Object.fromEntries(PUBLIC_TV_FOLDERS.map(c=>[c.key,c.name]))};
+const FOLDERS={'kansas':'LOCAL KANSAS','new-york':'LOCAL NEW YORK','new-jersey':'LOCAL NEW JERSEY',california:'LOCAL CALIFORNIA',...Object.fromEntries([...PUBLIC_TV_FOLDERS,WILLAX_FOLDER].map(c=>[c.key,c.name]))};
 export function cleanUsageChannel(value){
  if(!value||!identifier(value.id)||!text(value.name,180))return null;
  return {id:value.id,name:text(value.name,180),folders:[...new Set((Array.isArray(value.folders)?value.folders:[]).map(v=>text(v,80)).filter(Boolean))].slice(0,4)};
