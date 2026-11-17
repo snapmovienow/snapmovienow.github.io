@@ -13,7 +13,6 @@
     "cpu_ms": 120000
   },
   "vars": {
-    "PASSWORD_UPGRADE_ENABLED": "true",
     "FAST_MEDIA_FAILURE_LOGS_ENABLED": "true",
     "CATALOG_MAINTENANCE_ENABLED": "true",
     "WILLAX_IMPORT_ENABLED": "true",
@@ -24,7 +23,8 @@
     "PLAYBACK_CONTROL_CCF_SOCKET": "true",
     "CCF_ENTRY_TRANSPORT": "tcp",
     "ENVIRONMENT": "production",
-    "WEB_ORIGINS": "https://snapmovienow.github.io,https://app.snaptvnow.com,https://panel.snaptvnow.com"
+    "WEB_ORIGINS": "https://snapmovienow.github.io,https://app.snaptvnow.com,https://panel.snaptvnow.com",
+    "PASSWORD_UPGRADE_ENABLED": "true"
   },
   "env": {
     "staging": {
@@ -66,6 +66,14 @@
     }
   },
   "routes": [
+    {
+      "pattern": "app.snaptvnow.com/admin*",
+      "zone_id": "17501b8eeff61147b9fd949f1885d74a"
+    },
+    {
+      "pattern": "app.snaptvnow.com/owner-security*",
+      "zone_id": "17501b8eeff61147b9fd949f1885d74a"
+    },
     {
       "pattern": "api.snaptvnow.com",
       "custom_domain": true
