@@ -1,3 +1,4 @@
+import {signedStreamPath} from './signed-hls-path.mjs';
 import {setResolvedMedia,resetMediaPhase,recordInitialMediaResponse} from './failure-correlation.mjs';
 import {createClientSupportObservation} from './client-support-observation.mjs';
 import {playbackStartup,LiveStartup,LIVE_STARTUP_MS,reportLiveResult,deferPlaybackReport} from './live-startup.mjs';
@@ -139,8 +140,15 @@ export function createXtreamBridge(deps) {
         // playlist directly. Refreshing /live on every segment used to repeat
         // account allocation and retry logic, interrupting a healthy session.
         if(item.type==='live'&&item.ext==='m3u8'){
+          const headers={'content-type':'application/vnd.apple.mpegurl','cache-control':'no-store'};
+          if(response.headers.get('X-SMN-Prepared-Master')==='1'){
+            // Its variants and renditions already point at signed relay URLs.
+            // Wrapping this master again would send a master in place of media.
+            return monitored(new Response(response.body,{headers}));
+          }
           await response.body?.cancel();
-          return monitored(new Response('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=8000000\n'+target.href+'\n',{headers:{'content-type':'application/vnd.apple.mpegurl','cache-control':'no-store'}}));
+          target.pathname=signedStreamPath({xtream:true,type:item.type,ext:item.ext});
+          return monitored(new Response('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=8000000\n'+target.href+'\n',{headers}));
         }
         if(range_id&&!response.body)await privateCall('/release',{sid:session.sid,lease_id,request_id,native_range_id:range_id});
         return monitored(response);
@@ -156,6 +164,18 @@ export function createXtreamBridge(deps) {
       return deps.json({error:lastServiceError||'live_signal_unavailable'},lastFailure||504);
     };
     const play=async(request,session,item)=>{
+      // A native player's metadata probe must not replace the signed URLs or
+      // reservation of a GET already watching this channel. Authentication,
+      // the public registry and content permissions were checked by handleXtream.
+      if(item.type==='live'&&request.method==='HEAD'){
+        const headers=new Headers(deps.cors);
+        headers.set('Cache-Control','no-store');
+        headers.set('X-Content-Type-Options','nosniff');
+        headers.set('X-SMN-Probe','metadata-only');
+        if(item.ext==='m3u8')headers.set('Content-Type','application/vnd.apple.mpegurl');
+        if(item.ext==='ts')headers.set('Content-Type','video/mp2t');
+        return new Response(null,{status:200,headers});
+      }
       // Our Android client controls its own visible 5/5 and countdown. For
       // other Xtream clients, recover inside the relay; their UI is not ours.
       if(item.type!=='live'||request.method!=='GET')return playSource(request,session,item);

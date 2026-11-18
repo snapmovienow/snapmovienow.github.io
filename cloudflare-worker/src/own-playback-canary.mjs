@@ -1,3 +1,4 @@
+import {isSignedStreamPath} from './signed-hls-path.mjs';
 import {isAdult} from './content-permissions.mjs';
 import {playbackRequestDiagnostic,safeValidationFailure} from './playback-diagnostics.mjs';
 import {targetedCase,targetedSession,targetedWindow,targetedExpiresAt} from './targeted-case-policy.mjs';
@@ -82,7 +83,7 @@ export function ownPlaybackCanaryAdapter({env,storage,directory,ownSession,ticke
    return request(new Request(url,{headers:{'User-Agent':'SNAPTVNOW-Own-Canary/1',...(target.type==='live'?{}:{Range:'bytes=0-65535'})},signal}));
   },
   async openResource(session,resource,{signal,target}){
-   const url=new URL(resource,target.url);if(url.origin!==ORIGIN||url.pathname!=='/stream'||!url.searchParams.get('t'))throw failure(403);
+   const url=new URL(resource,target.url);if(url.origin!==ORIGIN||!isSignedStreamPath(url.pathname)||!url.searchParams.get('t'))throw failure(403);
    return request(new Request(url,{headers:{'User-Agent':'SNAPTVNOW-Own-Canary/1',Range:'bytes=0-65535'},signal}));
   },
   async release(session){await Promise.allSettled([directory(env,'/release-session',{sid:session.sid}),sessionCall(env,session.sid,'/logout')]);}

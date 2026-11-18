@@ -10,7 +10,7 @@ class Store{
 }
 const objects=new Map(),env={TICKET_SECRET:'variant-runtime-secret',ADMIN_SETUP_SECRET:'variant-runtime-setup-secret-long'},pending=[];
 env.PLAYBACK_SESSIONS={idFromName:x=>x,get(id){if(!objects.has(id))objects.set(id,new PlaybackSession({storage:new Store()},env));return {fetch:(url,opts)=>objects.get(id).fetch(new Request(url,opts))}}};
-const originalFetch=globalThis.fetch,calls=[];let catalogReads=0,allMissing=false;
+const originalFetch=globalThis.fetch,calls=[];let catalogReads=0,allMissing=false,multivariant=false,refreshes=0;
 globalThis.fetch=async(value,opts={})=>{
  const u=new URL(value);assert.equal(u.origin,'http://ccf.center:8444');
  if(u.pathname==='/player_api.php'){
@@ -21,9 +21,21 @@ globalThis.fetch=async(value,opts={})=>{
  }
  const matched=u.pathname.match(/^\/live\/([^/]+)\/([^/]+)\/(\d+)\.(ts|m3u8)$/);
  if(matched){const [,account,,id,ext]=matched;calls.push({account,id,ext});if(id!=='56'||allMissing)return new Response('missing',{status:404});
+  if(ext==='m3u8'&&multivariant)return new Response([
+   '#EXTM3U',
+   '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",NAME="Castellano",URI="hls/audio.m3u8"',
+   '#EXT-X-STREAM-INF:BANDWIDTH=1200000,AUDIO="audio"',
+   'hls/video.m3u8'
+  ].join('\n'),{headers:{'content-type':'application/vnd.apple.mpegurl'}});
   if(ext==='m3u8')return new Response('#EXTM3U\n#EXTINF:4,\n/segment.ts\n',{headers:{'content-type':'application/vnd.apple.mpegurl'}});
   return new Response(new ReadableStream({start(c){c.enqueue(new Uint8Array([71,1,2,3]))}}),{headers:{'content-type':'video/mp2t'}});
  }
+ const sourceFolder=`/live/${calls.at(-1)?.account}/source-password-synthetic/hls/`;
+ if(u.pathname===sourceFolder+'video.m3u8'||u.pathname===sourceFolder+'audio.m3u8'){
+  if(u.pathname.endsWith('/video.m3u8'))refreshes++;
+  return new Response('#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:'+refreshes+'\n#EXTINF:4,\nparts/'+refreshes+'.ts\n',{headers:{'content-type':'application/vnd.apple.mpegurl'}});
+ }
+ if(u.pathname===sourceFolder+'parts/'+refreshes+'.ts')return new Response(new Uint8Array([71,42]),{headers:{'content-type':'video/mp2t'}});
  if(u.pathname==='/segment.ts')return new Response(new Uint8Array([71,1,2,3]),{headers:{'content-type':'video/mp2t'}});
  throw Error('unexpected source request');
 };
@@ -46,12 +58,65 @@ try{
   else{
    const master=await r.text();assert.match(master,/#EXTM3U/);assert.ok(!master.includes('source-password-synthetic'));
    const target=master.split('\n').find(x=>x.startsWith('https://')),playlist=await worker.fetch(new Request(target),env,ctx),text=await playlist.text();
+   assert.equal(new URL(target).pathname,'/stream/resource.m3u8','simple live playlists also have a recognizable signed refresh URL');
    const segment=text.split('\n').find(x=>x.startsWith('https://'));assert.ok(segment);const bytes=await worker.fetch(new Request(segment),env,ctx);assert.equal(new Uint8Array(await bytes.arrayBuffer())[0],71);
   }
  }
+ multivariant=true;calls.length=0;
+ const multivariantResponse=await worker.fetch(new Request(chosen.direct_source),env,ctx);
+ assert.equal(multivariantResponse.status,200);
+ assert.equal(multivariantResponse.headers.get('cache-control'),'no-store');
+ assert.equal(multivariantResponse.headers.has('X-SMN-Prepared-Master'),false);
+ const multivariantText=await multivariantResponse.text();
+ assert.match(multivariantText,/#EXT-X-STREAM-INF:BANDWIDTH=1200000,AUDIO="audio"/,'preserve the real master, including its rendition group');
+ assert.doesNotMatch(multivariantText,/source-password-synthetic|hls\/|viewer-password-synthetic/);
+ const signedUrl=(line,ext='m3u8')=>{
+  const url=new URL(line);
+  assert.equal(url.origin,origin);
+  assert.equal(url.pathname,'/stream/resource.'+ext);
+  assert.ok(url.searchParams.get('t'));
+  return url;
+ };
+ const video=signedUrl(multivariantText.split('\n').find(line=>line.startsWith('https://')));
+ const audio=signedUrl(multivariantText.match(/URI="([^"]+)"/)[1]);
+ const get=url=>worker.fetch(new Request(url),env,ctx);
+ const signedPlaylist=async url=>{
+  const response=await get(url);
+  assert.equal(response.status,200);
+  const text=await response.text();
+  assert.match(text,/#EXTINF/);
+  assert.doesNotMatch(text,/#EXT-X-STREAM-INF|source-password-synthetic/);
+  return text;
+ };
+ await signedPlaylist(audio);
+ for(let sequence=1;sequence<=2;sequence++){
+  const media=await signedPlaylist(video);
+  assert.ok(media.includes('#EXT-X-MEDIA-SEQUENCE:'+sequence+'\n'),'refresh advances under the same signed variant URL');
+  const url=signedUrl(media.split('\n').find(line=>line.startsWith('https://')),'ts');
+  const bytes=await get(url);
+  assert.equal(bytes.status,200);
+  assert.deepEqual(new Uint8Array(await bytes.arrayBuffer()),new Uint8Array([71,42]));
+ }
+ assert.deepEqual(calls.map(call=>call.id),['55','56'],'child retries and refreshes do not reopen the Xtream root');
+ const activeLeases=await openLeaseStore(objects.get('__smn_accounts_v1').state.storage);
+ assert.equal(await activeLeases.count(),1,'all variants and segment fetches share the current lease');
+ const changedSuffix=new URL(video);
+ changedSuffix.pathname='/stream/resource.ts';
+ assert.equal((await get(changedSuffix)).status,410,'a signed playlist cannot be relabeled as binary media');
+ const unknownSuffix=new URL(video);
+ unknownSuffix.pathname='/stream/resource.html';
+ assert.notEqual((await get(unknownSuffix)).status,200,'unrecognized filenames are never admitted as signed relay routes');
+ const oldPath=new URL(video);
+ oldPath.pathname='/stream';
+ await signedPlaylist(oldPath);
+ const untrusted=new URL(video);
+ untrusted.searchParams.set('t','invalid');
+ assert.equal((await get(untrusted)).status,410);
+ multivariant=false;
  assert.equal(catalogReads,before,'fallback uses existing snapshots without fetching provider catalogs');
  allMissing=true;calls.length=0;const failed=await worker.fetch(new Request(origin+'/live/'+customer.username+'/'+customer.password+'/'+chosen.stream_id+'.ts'),env,ctx);
  assert.equal(failed.status,404);assert.deepEqual(calls.map(x=>x.id),['55','56','56','57'],'after exhausted source attempts the relay checks the next channel once');
+ assert.equal((await get(video)).status,410,'the signed variant stops working after playback is superseded');
  const leases=await openLeaseStore(objects.get('__smn_accounts_v1').state.storage);assert.equal(await leases.count(),0,'all failed allocations are released');
  await Promise.all(pending);
  console.log('PASS: real Xtream TS/HLS requests recover the same channel using a verified alternative, signed segments work, no catalog traffic is added, and failed retries leave no leases.');

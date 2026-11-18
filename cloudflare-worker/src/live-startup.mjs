@@ -1,4 +1,5 @@
 import {PROVIDER_VALIDATION_MS,VALIDATION_TOTAL_MS} from './provider-validation.mjs';
+import {checkLiveTsDocument} from './live-ts-document.mjs';
 import {mediaFailureCause} from './media-failure-cause.mjs';
 import {rangeFailureDetail} from './initial-range-evidence.mjs';
 // Account validation and signal retries share a startup deadline.
@@ -28,7 +29,7 @@ export function startupDeadline(request,now=Date.now(),maximum=LIVE_STARTUP_MS){
 export const playbackStartup=(type,signal)=>new LiveStartup(signal,Date.now,type==='live'?LIVE_STARTUP_MS:VOD_STARTUP_MS);
 // A 200 header with a silent body is not a working source. Keep the same
 // startup deadline until its first payload, then relay without that deadline.
-export async function readInitialMedia(response,deadline){
+export async function readInitialMedia(response,deadline,documentType=null){
  if(!response.body)throw Error('media_empty');
  // A default native reader may fragment large available packets into small
  // chunks. BYOB sets a larger maximum, never a minimum that delays first byte
@@ -39,12 +40,16 @@ export async function readInitialMedia(response,deadline){
  let released=false;
  const release=()=>{if(!released){reader.releaseLock();released=true}};
  const cancel=reason=>{if(released)return Promise.resolve();try{return reader.cancel(reason)}finally{release()}};
- let timer,first;
- try{const timeout=startupTimeout(deadline,VOD_STARTUP_MS);first=await Promise.race([read(),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('live_startup_timeout')),timeout)})]);if(first.done||!first.value?.byteLength)throw Error('media_empty')}
+ let timer,prefixes;
+ async function preparePrefix(){
+  const first=await read();
+  if(first.done||!first.value?.byteLength)throw Error('media_empty');
+  return documentType?checkLiveTsDocument(first.value,read,documentType):[first.value];
+ }
+ try{const timeout=startupTimeout(deadline,VOD_STARTUP_MS);prefixes=await Promise.race([preparePrefix(),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('live_startup_timeout')),timeout)})]);}
  catch(error){void cancel(error).catch(()=>{});throw error}
  finally{clearTimeout(timer)}
- let prefix=first.value;
- const body=new ReadableStream({async pull(controller){try{if(prefix){controller.enqueue(prefix);prefix=null;return}const next=await read();if(next.done){release();controller.close();}else controller.enqueue(next.value)}catch(error){void cancel(error).catch(()=>{});controller.error(error)}},cancel});
+ const body=new ReadableStream({async pull(controller){try{if(prefixes.length){controller.enqueue(prefixes.shift());return}const next=await read();if(next.done){release();controller.close();}else controller.enqueue(next.value)}catch(error){void cancel(error).catch(()=>{});controller.error(error)}},cancel});
  return new Response(body,{status:response.status,statusText:response.statusText,headers:response.headers});
 }
 export function startupTimeout(deadline,cap,now=Date.now()){

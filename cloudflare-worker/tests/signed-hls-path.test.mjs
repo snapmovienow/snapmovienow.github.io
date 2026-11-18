@@ -1,0 +1,24 @@
+import assert from 'node:assert/strict';
+import { isSignedStreamPath, liveHlsResourceExtension, signedStreamPath } from '../src/signed-hls-path.mjs';
+
+const base = { xtream: true, type: 'live', ext: 'm3u8' };
+const target = new URL('https://example.invalid/private/secret-123.M4S?token=secret.ts');
+const suffix = liveHlsResourceExtension(target, false, false);
+assert.equal(suffix, 'm4s');
+assert.equal(signedStreamPath({ ...base, resource: target.href, hlsExtension: suffix }), '/stream/resource.m4s');
+assert.equal(signedStreamPath(base), '/stream/resource.m3u8');
+assert.equal(signedStreamPath({ ...base, ext: 'ts' }), '/stream');
+assert.equal(signedStreamPath({ ...base, xtream: false }), '/stream');
+assert.equal(signedStreamPath({ ...base, type: 'movie' }), '/stream');
+assert.equal(signedStreamPath({ ...base, resource: target.href, hlsExtension: 'html' }), '/stream');
+assert.equal(isSignedStreamPath('/stream/resource.ts'), true);
+assert.equal(isSignedStreamPath('/stream/resource.m4s'), true);
+assert.equal(isSignedStreamPath('/stream/resource.html'), false);
+assert.equal(isSignedStreamPath('/stream/private.ts'), false);
+assert.equal(isSignedStreamPath('/stream/resource.ts/other'), false);
+assert.equal(isSignedStreamPath('/stream'), true);
+const opaque = new URL('https://example.invalid/private/opaque?name=movie.ts');
+assert.equal(liveHlsResourceExtension(opaque, false, false), null, 'never infer the media type from a query or an unknown binary format');
+assert.equal(liveHlsResourceExtension(opaque, true, false), 'm3u8', 'a declared rendition identifies a playlist even without a filename suffix');
+assert.equal(liveHlsResourceExtension(opaque, false, true), 'key');
+console.log('PASS: signed HLS public filenames are fixed, bounded, and preserve legacy and unknown resources.');

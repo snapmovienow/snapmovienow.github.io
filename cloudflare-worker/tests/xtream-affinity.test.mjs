@@ -24,7 +24,7 @@ globalThis.fetch=async(url,opts={})=>{const u=new URL(url);
  if(u.pathname.endsWith('/login'))return new Response(opts.method==='POST'?'<a href="dashboard">Welcome</a>':'<input name="password">',{headers:{'set-cookie':'PHPSESSID=fixture; path=/'}});
  if(u.pathname.endsWith('/table'))return Response.json({recordsFiltered:3,data:[1,2,3].map(row)});
  if(u.pathname==='/player_api.php'){
-  const action=u.searchParams.get('action');if(action==='get_vod_streams')return Response.json([44,45].map(stream_id=>({stream_id,name:'Fixture movie '+stream_id,container_extension:'mp4'})));if(action==='get_live_streams')return Response.json([10,11,12,13].map(stream_id=>({stream_id,name:'Channel '+stream_id})));
+  const action=u.searchParams.get('action');if(action==='get_vod_streams')return Response.json([44,45].map(stream_id=>({stream_id,name:'Fixture movie '+stream_id,container_extension:'mp4'})));if(action==='get_live_streams')return Response.json([10,11,12,13].map(stream_id=>({stream_id,name:'Channel '+stream_id,is_adult:stream_id===13})));
   if(action)return Response.json([]);validations.push(u.searchParams.get('username'));return Response.json({user_info:{auth:1,status:'Active',max_connections:'3',active_cons:'0'}});
  }
  if(u.pathname.startsWith('/movie/')){
@@ -55,12 +55,52 @@ const channels=await api('smarters');await api('legacy');validations.length=0;
 const storage=objects.get('__smn_accounts_v1').state.storage,leases=await openLeaseStore(storage);
 const play=async(client,index,ext)=>{const r=await worker.fetch(new Request(origin+'/live/fixture-user/viewer-password-test/'+channels[index].stream_id+'.'+ext,{headers:headers(client)}),env,ctx);assert.equal(r.status,200);return r};
 const only=async()=>[...(await leases.active()).values()][0];
+// Smarters may probe an endpoint before playback or while the signed playlist
+// is still being polled. A probe may verify access but cannot prove signal.
+const viewer={username:'fixture-user',password:'viewer-password-test'};
+const headLive=(id,ext,account=viewer)=>worker.fetch(new Request(
+  origin+'/live/'+account.username+'/'+account.password+'/'+id+'.'+ext,
+  {method:'HEAD',headers:headers('smarters')}),env,ctx);
+for(const [ext,mime] of [['ts','video/mp2t'],['m3u8','application/vnd.apple.mpegurl']]){
+  const result=await headLive(channels[0].stream_id,ext);
+  assert.equal(result.status,200);assert.equal(result.body,null);
+  assert.equal(result.headers.get('content-type'),mime);
+  assert.equal(result.headers.get('cache-control'),'no-store');
+  assert.equal(result.headers.get('x-smn-probe'),'metadata-only');
+  assert.equal(result.headers.get('access-control-allow-origin'),'https://snapmovienow.github.io');
+  assert.equal(result.headers.has('x-smn-initial-evidence'),false);
+}
+assert.equal((await headLive('99999999','ts')).status,404);
+assert.equal(await leases.count(),0);
+assert.equal(signals.length,0);
+assert.equal(validations.length,0);
 let r=await play('smarters',0,'ts');const initial=await only();assert.deepEqual(validations,['source1']);
 await r.body.cancel();assert.equal(await leases.count(),0);
 // Both legacy app shapes use ordinary Xtream endpoints, with no native UUID,
 // native release endpoint or APK-specific headers required for sticky routing.
 await storage.put('provider-health',{'account|2':{at:Date.now(),ok:true,ms:1}});
-r=await play('smarters',1,'m3u8');await r.text();assert.equal((await only()).provider_id,initial.provider_id);assert.equal(validations.length,1,'a quick channel change does not repeat source account validation');
+r=await play('smarters',1,'m3u8');
+const signedPlaylist=(await r.text()).split('\n').find(line=>line.startsWith('https://'));
+const activeHls=await only(),signalsBeforeProbes=signals.length;
+const secondViewer={username:'head-viewer',password:'test-probe-password'};
+await admin('save',{...secondViewer,create:true,status:'active',permissions:{tv:false}});
+assert.equal((await headLive(channels[1].stream_id,'ts',secondViewer)).status,403);
+await admin('save',{...secondViewer,create:false,status:'active',permissions:{tv:true,adults:false}});
+assert.equal((await headLive(channels[1].stream_id,'ts',secondViewer)).status,200);
+assert.equal((await headLive(channels[3].stream_id,'ts',secondViewer)).status,403);
+await admin('save',{...secondViewer,create:false,status:'suspended'});
+assert.equal((await headLive(channels[1].stream_id,'ts',secondViewer)).status,401);
+for(const index of [1,2])assert.equal((await headLive(channels[index].stream_id,'m3u8')).status,200);
+assert.equal(await leases.count(),1);
+assert.equal((await only()).request_id,activeHls.request_id);
+assert.equal(signals.length,signalsBeforeProbes);
+const polled=await worker.fetch(new Request(signedPlaylist),env,ctx);
+assert.equal(polled.status,200);
+const mediaPlaylist=await polled.text();assert.match(mediaPlaylist,/#EXTINF/);
+const signedSegment=mediaPlaylist.split('\n').find(line=>line.startsWith('https://'));
+const segment=await worker.fetch(new Request(signedSegment),env,ctx);
+assert.equal(segment.status,200);assert.deepEqual([...new Uint8Array(await segment.arrayBuffer())],[0x47,1,2,3]);
+assert.equal((await only()).provider_id,initial.provider_id);assert.equal(validations.length,1,'a quick channel change does not repeat source account validation');
 r=await play('smarters',2,'ts');const late=r;assert.equal((await only()).provider_id,initial.provider_id);
 r=await play('smarters',3,'ts');await late.body.cancel();assert.equal(await leases.count(),1,'late TS close preserves the newer channel');await r.body.cancel();
 await storage.put('provider-health',{'account|2':{at:Date.now(),ok:true,ms:1}});
@@ -79,6 +119,7 @@ assert.equal((await storage.get('playback:'+initial.sid)).affinities.ccf,undefin
 // The same affinity/recent validation applies to movie and episode byte ranges.
 const moviesResponse=await worker.fetch(new Request(origin+'/player_api.php?username=fixture-user&password=viewer-password-test&action=get_vod_streams',{headers:headers('smarters')}),env,ctx),movies=await moviesResponse.json();
 const vodUrl=origin+'/movie/fixture-user/viewer-password-test/'+movies[0].stream_id+'.mp4',beforeValidation=validations.length;
+assert.equal((await headLive(movies[0].stream_id,'ts')).status,404);
 for(let i=0;i<3;i++){const vod=await worker.fetch(new Request(vodUrl,{headers:{...headers('smarters'),Range:'bytes=0-12'}}),env,ctx);assert.equal(vod.status,206);assert.equal(await vod.text(),'fixture video');assert.equal(validations.length,beforeValidation,'fresh media proof avoids another metadata validation when opening VOD');}
 const affinityBeforeRange=(await storage.get('playback:'+initial.sid)).affinities.ccf;
 assert.ok(affinityBeforeRange);
