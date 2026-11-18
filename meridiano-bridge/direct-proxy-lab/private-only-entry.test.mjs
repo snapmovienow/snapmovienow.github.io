@@ -1,0 +1,15 @@
+import assert from 'node:assert/strict';
+import {build} from 'esbuild';
+import {createHash} from 'node:crypto';
+const result=await build({entryPoints:[new URL('./pilot-private-only-entry.mjs',import.meta.url).pathname],bundle:true,platform:'node',format:'esm',write:false,plugins:[{name:'reject-sockets',setup(b){b.onResolve({filter:/^cloudflare:sockets$/},()=>({path:'sockets',namespace:'fixture'}));b.onLoad({filter:/.*/,namespace:'fixture'},()=>({contents:"export function connect(){throw Error('Socket must not be reached')}"}));}}]});
+const {default:worker}=await import('data:text/javascript;base64,'+Buffer.from(result.outputFiles[0].text).toString('base64'));
+const key='synthetic-owner-key-for-private-only-test';
+const env={MERIDIANO_PROBE_TOKEN_HASH:createHash('sha256').update('Bearer '+key).digest('hex'),MERIDIANO_PROBE_EXPIRES_AT:String(Date.now()+60000)};
+const call=(path,method='POST',auth='',body={})=>worker.fetch(new Request('https://private.test'+path,{method,headers:{'Content-Type':'application/json',...(auth?{Authorization:'Bearer '+auth}:{})},...(method==='POST'?{body:JSON.stringify(body)}:{})}),env);
+for(const path of ['/','/stream','/probe','/health/other'])assert.equal((await call(path,'POST',key)).status,404);
+assert.equal((await call('/health','GET')).status,404);
+assert.equal((await call('/health')).status,403);
+assert.equal((await call('/health','POST',key+'wrong')).status,403);
+assert.equal((await call('/health','POST',key,{profileId:'wrong'})).status,400);
+assert.equal((await worker.fetch(new Request('https://private.test/health',{method:'POST',headers:{Authorization:'Bearer '+key,'Content-Type':'application/json'},body:'{}'}),{...env,MERIDIANO_PROBE_EXPIRES_AT:'0'})).status,403);
+console.log('PASS: private-only entry rejects every public relay route, unauthenticated/forged/expired owner requests and invalid profiles before sockets.');

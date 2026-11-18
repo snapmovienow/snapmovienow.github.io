@@ -6,6 +6,7 @@ import {fileURLToPath} from 'node:url';
 import {buildSync} from 'esbuild';
 
 const base=dirname(fileURLToPath(import.meta.url));
+execFileSync(process.execPath,['--test',join(base,'metadata-diagnostics.test.mjs')],{stdio:'inherit'});
 const temp=mkdtempSync(join(tmpdir(),'meridiano-proxy-check-'));
 const openssl=args=>execFileSync('openssl',args,{cwd:temp,stdio:'ignore'});
 try {
@@ -13,7 +14,7 @@ try {
     '-subj','/CN=Meridiano-Local-Test-CA','-addext','basicConstraints=critical,CA:TRUE',
     '-addext','keyUsage=critical,digitalSignature,keyCertSign,cRLSign']);
   openssl(['req','-newkey','rsa:2048','-nodes','-keyout','server.key','-out','server.csr','-subj','/CN=origin.test']);
-  writeFileSync(join(temp,'extensions.cnf'),'basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\nsubjectAltName=DNS:origin.test,DNS:proxy.test\n');
+  writeFileSync(join(temp,'extensions.cnf'),'basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\nsubjectAltName=DNS:origin.test,DNS:proxy.test,DNS:www.cloudflare.com,DNS:www.dailymotion.com\n');
   openssl(['x509','-req','-in','server.csr','-CA','root.pem','-CAkey','root.key','-CAcreateserial','-out','server.pem','-days','2','-sha256','-extfile','extensions.cnf']);
   const output=join(temp,'protocol-check.bundle.mjs');
   buildSync({entryPoints:[join(base,'protocol-check.mjs')],bundle:true,platform:'node',format:'esm',target:'node24',
