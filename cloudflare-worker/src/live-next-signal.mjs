@@ -1,3 +1,4 @@
+import {isSignedStreamPath} from './signed-hls-path.mjs';
 import {readLivePlaylist} from './live-startup.mjs';
 
 // Inspect a small prefix without losing or reordering the viewer's bytes.
@@ -21,7 +22,7 @@ export async function confirmNextLiveBytes(response,deadline){
 export async function confirmNextLiveSignal(response,{request,origin,deadline,open}){
  const controller=new AbortController(),signal=AbortSignal.any([request.signal,controller.signal]);
  const timer=setTimeout(()=>controller.abort(),Math.max(1,deadline-Date.now()));
- const target=value=>{const url=new URL(value,origin);if(url.origin!==origin||url.pathname!=='/stream'||!url.searchParams.has('t'))throw Error('invalid_playlist');return url;};
+ const target=value=>{const url=new URL(value,origin);if(url.origin!==origin||!isSignedStreamPath(url.pathname)||!url.searchParams.has('t'))throw Error('invalid_playlist');return url;};
  const readBytes=async(url,kind='media')=>{
   if(signal.aborted)throw Error('playback_superseded');
   const probe=await open(new Request(request,{method:'GET',headers:{Range:'bytes=0-2047'},signal}),url);

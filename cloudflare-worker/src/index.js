@@ -1,3 +1,5 @@
+import {isSignedStreamPath,liveHlsResourceExtension,signedStreamPath} from './signed-hls-path.mjs';
+import {liveTsDocumentType} from './live-ts-document.mjs';
 import {matchesStaticAdminURL,staticAdminResponse} from './static-admin-response.mjs';
 import {requireControlHTTPS} from './public-transport.mjs';
 import {boundedTsRoute} from './bounded-ts-route.mjs';
@@ -428,7 +430,9 @@ async function serverStream(req,env,u,ctx,trace){
  // Keep video parsing, byte-range recovery and stream callbacks out of the
  // front-door request's small CPU budget. One relay per session avoids a shared
  // bottleneck; control-plane revocation and provider capacity remain separate.
- if(!d.resource)trace?.identify(d.type);const response=await env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_media_v1:'+d.sid)).fetch(new Request(u.href,req));if(trace)trace.merge(response);return consumeInitialEvidence(response);
+ if(u.pathname!=='/stream' && u.pathname!==signedStreamPath(d))return new Response('Expired',{status:410,headers:cors});
+ const canonical=new URL(u);canonical.pathname='/stream';
+ if(!d.resource)trace?.identify(d.type);const response=await env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_media_v1:'+d.sid)).fetch(new Request(canonical.href,req));if(trace)trace.merge(response);return consumeInitialEvidence(response);
 }
 async function ownPlaybackControl(env,session,target,{signal,deadline}){
  const url=new URL(target.url),d=await unticket(env,url.searchParams.get('t')||'');
@@ -477,8 +481,13 @@ async function serverStreamDirect(req,env,u,ctx,trace){
  if(checkedLease&&!checkedLease.ok){if(flow)flow.finish(await leaseReason(checkedLease),{status:410});await response.body?.cancel().catch(()=>{});return json({error:"playback_expired"},410)}
  flowPhase='origin';
  if(diagnostic)response=await attachCaseObservation(response,{caseKey:diagnostic.key,method:req.method,incomingRange:req.headers.get('range'),outgoingRange:headers.get('range'),ifRangePresent:headers.has('if-range'),transport:isApprovedMediaIP(new URL(next),sourceOrigin)||env.CCF_ENTRY_TRANSPORT==='tcp'?'tcp':'hostname',sourceURL:next,secret:env.TICKET_SECRET});
- const playlist=response.ok&&(/mpegurl/i.test(response.headers.get('content-type')||'')||new URL(next).pathname.endsWith('.m3u8'));
- if(response.ok&&!playlist&&deadline!==null)response=await timed(trace,'first_byte',()=>readInitialMedia(response,deadline));
+ const playlist=response.ok&&(d.hlsExtension==='m3u8'||/mpegurl/i.test(response.headers.get('content-type')||'')||new URL(next).pathname.toLowerCase().endsWith('.m3u8'));
+ if(response.ok&&!playlist&&deadline!==null){
+  const documentType=d.xtream&&d.type==='live'&&d.ext==='ts'&&!d.resource&&req.method==='GET'
+   &&(!headers.has('range')||/^bytes=0-\d*$/i.test(headers.get('range')))
+   ?liveTsDocumentType(response.headers.get('content-type')):null;
+  response=await timed(trace,'first_byte',()=>readInitialMedia(response,deadline,documentType));
+ }
  if(response.ok&&d.type==='live'&&d.ext==='m3u8'&&!d.resource&&!playlist){await response.body?.cancel();throw Error('invalid_playlist')}
  // Signed HLS endpoints often have no filename extension. Recover every finite
  // binary playlist resource by its declared byte range, including redirects.
@@ -498,8 +507,29 @@ async function serverStreamDirect(req,env,u,ctx,trace){
   }else{const total=response.headers.get('content-range')?.match(/\/(\d+)$/)?.[1];if(total)out.set('content-length',total);out.delete('content-range')}
   await response.body?.cancel();return new Response(null,{status:response.status===206?200:response.status,headers:out})
  }
- if(playlist){const text=await timed(trace,'first_byte',()=>readLivePlaylist(response,deadline));if(!text.startsWith('#EXTM3U'))throw Error('invalid_playlist');const proxy=async value=>{const target=validatedMediaTarget(new URL(value,next),sourceOrigin);return u.origin+'/stream?t='+await ticket(env,{...d,resource:target.href})};
- const lines=await Promise.all(text.split(/\r?\n/).map(async line=>{if(!line.trim())return line;if(!line.startsWith('#'))return proxy(line.trim());const matches=[...line.matchAll(/URI="([^"]+)"/g)];for(const m of matches)line=line.replace(m[0],'URI="'+await proxy(m[1])+'"');return line}));const body=lines.join('\n');if(req.headers.get('X-SMN-Prepare')==='1'&&!d.resource)rememberLiveStart(u.href,body);out.delete('content-length');out.set('content-type','application/vnd.apple.mpegurl');if(!d.resource)out.set(INITIAL_EVIDENCE_HEADER,'manifest');flow?.finish('playlist_response');return new Response(body,{headers:out})}
+ if(playlist){const text=await timed(trace,'first_byte',()=>readLivePlaylist(response,deadline));if(!text.startsWith('#EXTM3U'))throw Error('invalid_playlist');const master=/^#EXT-X-(?:STREAM-INF|I-FRAME-STREAM-INF|MEDIA):/m.test(text);
+ const proxy=async(value,playlistReference=false,keyReference=false)=>{
+  const target=validatedMediaTarget(new URL(value,next),sourceOrigin);
+  const claim={...d,resource:target.href};
+  if(d.xtream&&d.type==='live'&&d.ext==='m3u8')claim.hlsExtension=liveHlsResourceExtension(target,playlistReference,keyReference);
+  return u.origin+signedStreamPath(claim)+'?t='+await ticket(env,claim);
+ };
+ const lines=await Promise.all(text.split(/\r?\n/).map(async line=>{
+  if(!line.trim())return line;
+  if(!line.startsWith('#'))return proxy(line.trim(),master);
+  const playlistReference=/^#EXT-X-(?:MEDIA|I-FRAME-STREAM-INF|RENDITION-REPORT):/.test(line);
+  const keyReference=/^#EXT-X-(?:SESSION-KEY|KEY):/.test(line);
+  for(const match of line.matchAll(/\bURI="([^"]+)"/g))line=line.replace(match[0],'URI="'+await proxy(match[1],playlistReference,keyReference)+'"');
+  return line;
+ }));const body=lines.join('\n');
+ if(req.headers.get('X-SMN-Prepare')==='1'&&!d.resource){
+  // Xtream can return this already-rewritten master directly. An initial media
+  // playlist still needs its signed refresh URL and warm first response.
+  if(d.xtream&&d.type==='live'&&d.ext==='m3u8'&&master){
+   out.set('X-SMN-Prepared-Master','1');
+  }else rememberLiveStart(u.href,body);
+ }
+ out.delete('content-length');out.set('content-type','application/vnd.apple.mpegurl');if(!d.resource)out.set(INITIAL_EVIDENCE_HEADER,'manifest');flow?.finish('playlist_response');return new Response(body,{headers:out})}
  const result=new Response(response.body,{status:response.status,headers:out});
  if(flow&&!response.ok)flow.finish('startup_failed',{status:response.status});
  if(d.xtream&&!d.resource&&d.ext!=='m3u8')return guardXtreamResponse(result,async()=>{
@@ -521,7 +551,7 @@ function localAuditBootstrap(env,ctx){
  ctx.waitUntil(env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_local_tv_audit_20261104_v1')).fetch('https://private/local-tv-audit-start',{method:'POST',body:'{}'}).then(response=>response.body?.cancel()).catch(()=>console.error({event:'local_tv_audit_start',reason:'unavailable'})));
 }
 const exclusives=createExclusiveService({directory,sessionCall,ticket,unticket,resolveGnula,requestConnectionClient,guardXtreamResponse});
-const catalogDeps={exclusives,directory,registry,sessionCall,ticket,managedPlayback,serverStream,json,catalogCredentials:async(env,server,ctx)=>(await catalogCredentials(env,server,ctx,3)).map(p=>({...p,origin:p.origin||ORIGIN}))};
+const catalogDeps={cors,exclusives,directory,registry,sessionCall,ticket,managedPlayback,serverStream,json,catalogCredentials:async(env,server,ctx)=>(await catalogCredentials(env,server,ctx,3)).map(p=>({...p,origin:p.origin||ORIGIN}))};
 const lqsaBootstrap=createLqsaBootstrap({directory,catalogFactory:(env,ctx)=>createProviderCatalog(catalogDeps,env,ctx)});
 const xtreamRequest=createXtreamBridge(catalogDeps);
 const liveProcessingAdmin=createLiveProcessingAdmin({directory,catalog:(env,ctx)=>createProviderCatalog(catalogDeps,env,ctx,{timeoutMs:5000})});
@@ -572,7 +602,7 @@ if(/^\/exclusive-cover\/[a-f0-9]{64}$/.test(u.pathname)&&['GET','HEAD'].includes
 if(matchesXtream(u.pathname))return xtreamRequest(req,env,ctx,trace);
 if(u.pathname==="/admin"&&req.method==="POST"){try{return await adminRequest(req,env,ctx)}catch(e){return json({error:["body_too_large","invalid_json"].includes(e.message)?e.message:"admin_unavailable"},e.message==="body_too_large"?413:e.message==="invalid_json"?400:502)}}
 if(u.pathname==="/gnula-media"&&["GET","HEAD"].includes(req.method)){try{return await gnulaMedia(req,env,u,ctx)}catch{return json({error:"media_unavailable"},502)}}
-if(u.pathname==='/stream'&&['GET','HEAD'].includes(req.method)){const headers=new Headers(req.headers);headers.delete('X-SMN-Prepare');headers.delete('X-SMN-Startup-Deadline');const mediaRequest=new Request(req,{headers});try{return await serverStream(mediaRequest,env,u,ctx,trace)}catch(e){return json({error:e.message==='media_origin_unapproved'?'media_origin_unapproved':'stream_unavailable'},502)}}
+if(isSignedStreamPath(u.pathname)&&['GET','HEAD'].includes(req.method)){const headers=new Headers(req.headers);headers.delete('X-SMN-Prepare');headers.delete('X-SMN-Startup-Deadline');const mediaRequest=new Request(req,{headers});try{return await serverStream(mediaRequest,env,u,ctx,trace)}catch(e){return json({error:e.message==='media_origin_unapproved'?'media_origin_unapproved':'stream_unavailable'},502)}}
 if(req.method!=="POST")return json({error:"method_not_allowed"},405);
 const support=createClientSupportObservation({ctx,method:req.method,access:'api',serviceCheck:requestConnectionClient(req).serviceCheck===true,write:async body=>{const response=await directory(env,'/client-support-observe',body);await response.body?.cancel();}});
 try{const b=await readLimitedJSON(req),op=String(b.op||"");if(!["auth","logout","gnula_catalog","gnula_series_info","gnula_token","stream_token","session_info","playback_heartbeat","playback_release","playback_cancel","profile_get","profile_patch","playback_metric"].includes(op)&&!Object.hasOwn(actions,op))return json({error:"operation_not_allowed"},403);
@@ -701,7 +731,7 @@ export default {scheduled(event,env,ctx){
  ctx.waitUntil(directory(env,'/backup-automatic').then(async response=>{const result=await response.json();if(result.error)console.error({event:'backup_failed',reason:result.error});if(result.recovery?.error)console.error({event:'backup_drill_failed',reason:result.recovery.error})}).catch(()=>console.error({event:'backup_failed',reason:'backup_service_unavailable'})).finally(async()=>{const response=await monitorCall(env,'/tick');await response.body?.cancel()}));
 },async fetch(req, env, ctx) {
  if(matchesStaticAdminURL(new URL(req.url)))return staticAdminResponse(req);
- lqsaBootstrap(env,ctx);ownedMediaBootstrap(env,ctx);localAuditBootstrap(env,ctx);await markServiceVerification(req);const response=await traceRequest(req, trace => handleRequest(req, env, ctx,trace), {allowedOrigin: SITE,fastMediaFailureBudget:env.ENVIRONMENT==='production'&&env.FAST_MEDIA_FAILURE_LOGS_ENABLED==='true'?fastMediaFailureBudget:undefined,onTiming:timing=>{if(new URL(req.url).pathname!=='/stream'&&ctx?.waitUntil&&env.PLAYBACK_SESSIONS)ctx.waitUntil(env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_operations_v1')).fetch('https://private/operations/timing-ingest',{method:'POST',body:JSON.stringify({timing})}).then(r=>r.body?.cancel()).catch(()=>{}))}});return browserResponse(response,req,env);}};
+ lqsaBootstrap(env,ctx);ownedMediaBootstrap(env,ctx);localAuditBootstrap(env,ctx);await markServiceVerification(req);const response=await traceRequest(req, trace => handleRequest(req, env, ctx,trace), {allowedOrigin: SITE,fastMediaFailureBudget:env.ENVIRONMENT==='production'&&env.FAST_MEDIA_FAILURE_LOGS_ENABLED==='true'?fastMediaFailureBudget:undefined,onTiming:timing=>{if(!isSignedStreamPath(new URL(req.url).pathname)&&ctx?.waitUntil&&env.PLAYBACK_SESSIONS)ctx.waitUntil(env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_operations_v1')).fetch('https://private/operations/timing-ingest',{method:'POST',body:JSON.stringify({timing})}).then(r=>r.body?.cancel()).catch(()=>{}))}});return browserResponse(response,req,env);}};
 
 
 

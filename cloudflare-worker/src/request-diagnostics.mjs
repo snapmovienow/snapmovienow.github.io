@@ -1,3 +1,4 @@
+import {isSignedStreamPath} from './signed-hls-path.mjs';
 import {takeFailureCorrelation} from './failure-correlation.mjs';
 import {cleanInitialRangeEvidence,initialRangeOutOfBounds} from './initial-range-evidence.mjs';
 import {setGatewayReference,takeGatewayFailure} from './portal-gateway-diagnostics.mjs';
@@ -7,7 +8,8 @@ export const SERVICE_VERSION = '43';
 
 const rayId = value => /^[a-f0-9]{8,32}-[a-z]{3}$/i.test(value || '') ? value : null;
 function routeGroup(path) {
-  if (['/', '/health', '/admin', '/player_api.php', '/stream', '/gnula-media'].includes(path)) return path;
+  if (isSignedStreamPath(path)) return '/stream';
+  if (['/', '/health', '/admin', '/player_api.php', '/gnula-media'].includes(path)) return path;
   if (/^\/(live|movie|series)\//.test(path)) return '/' + path.split('/')[1] + '/*';
   return 'other';
 }

@@ -17,7 +17,8 @@ const env={TICKET_SECRET:'flow-fixture-ticket-secret-only',ADMIN_SETUP_SECRET:'f
  LIVE_FLOW_DIAGNOSTIC_USERNAME:'fixture-target',LIVE_FLOW_DIAGNOSTIC_CASE:'62ff7c38-2ab2-48cd-a3ca-46d13b55a28b',LIVE_FLOW_DIAGNOSTIC_FROM:String(at-1000),LIVE_FLOW_DIAGNOSTIC_UNTIL:String(at+3600000)};
 env.PLAYBACK_SESSIONS={idFromName:id=>id,get(id){if(!objects.has(id))objects.set(id,new PlaybackSession({storage:new Store()},env));return{fetch:(url,options)=>objects.get(id).fetch(new Request(url,options))}}};
 const upstream='https://flow-origin.example.test',origin='https://api.example.test',ctx={waitUntil:p=>tasks.push(Promise.resolve(p).catch(()=>{}))};
-let mediaStatus=200;
+let mediaStatus=200,tsDocumentMode=null;
+const tsDocumentCalls=[];
 globalThis.fetch=async(input,options={})=>{
  const url=new URL(input instanceof Request?input.url:input);assert.equal(url.origin,upstream,'no external network calls');
  if(url.pathname==='/player_api.php'){
@@ -26,9 +27,14 @@ globalThis.fetch=async(input,options={})=>{
   if(action==='get_live_streams')return Response.json([{stream_id:100,name:'Synthetic live',category_id:'1'}]);
   return Response.json([]);
  }
- assert.match(url.pathname,/^\/live\/fixture-source\/fixture-source-password\/100\.(ts|m3u8)$/);
+ assert.match(url.pathname,/^\/live\/fixture-(?:source|alternate)\/fixture-source-password\/100\.(ts|m3u8)$/);
  const headers=new Headers(options.headers||(input instanceof Request?input.headers:undefined));requests.push({range:headers.get('range')});
  if(url.pathname.endsWith('.m3u8'))return new Response('#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXTINF:4,\n/fragment.ts\n',{headers:{'content-type':'application/vnd.apple.mpegurl'}});
+ if(tsDocumentMode){
+  tsDocumentCalls.push(url.pathname.split('/')[2]);
+  if(tsDocumentMode==='recover'&&tsDocumentCalls.length===1)return new Response('<html>unavailable</html>',{headers:{'content-type':'text/html'}});
+  if(tsDocumentMode==='exhaust')return Response.json({error:'synthetic-origin-marker'});
+ }
  const range=headers.get('range'),status=mediaStatus===200&&range?206:mediaStatus;
  return new Response(new Uint8Array([0x47,1,2,3]),{status,headers:{'content-type':'video/mp2t','content-length':'4',...(range?{'content-range':'bytes 0-3/100','accept-ranges':'bytes'}:{})}});
 };
@@ -72,6 +78,21 @@ try{
  assert.equal(ends.length,starts.length,'each completed/failed fixture flow ends once');
  const logged=JSON.stringify(records);for(const value of ['fixture-target','fixture-other','fixture-viewer-password','fixture-source','fixture-source-password',upstream,'198.51.100.20','forged-case','fixture-validator'])assert.equal(logged.includes(value),false,'private identity or request metadata leaked: '+value);
  assert.equal(/https?:\/\//.test(logged),false);
+ // The same channel can be retried on a second authorized source. A 200
+ // document cannot be counted as media or returned to the viewer.
+ await admin('provider-save',{mode:'single',url:upstream,username:'fixture-alternate',password:'fixture-source-password'});
+ mediaStatus=200;tsDocumentMode='recover';
+ response=await media('fixture-other','ts');
+ assert.equal(response.status,200);
+ assert.deepEqual([...new Uint8Array(await response.arrayBuffer())],[0x47,1,2,3]);
+ assert.equal(new Set(tsDocumentCalls).size,2);
+ tsDocumentMode='exhaust';tsDocumentCalls.length=0;
+ response=await media('fixture-other','ts');
+ assert.equal(response.status,502);
+ assert.ok(!(await response.text()).includes('synthetic-origin-marker'));
+ assert.ok(tsDocumentCalls.length>=1);
+ const connections=await request('/player_api.php?'+new URLSearchParams({username:'fixture-other',password:'fixture-viewer-password'}));
+ assert.equal((await connections.json()).user_info.active_cons,'0','no failed live source keeps a customer connection');
  await Promise.all(tasks);
 }finally{globalThis.fetch=realFetch;console.log=realLog;console.error=realError}
 console.log('PASS: authenticated exact-target TS flows cross the real Worker/DO boundary; EOF, Range, privacy, retries, disabled/expired scope, forged headers and other clients remain isolated.');
