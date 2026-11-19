@@ -101,4 +101,5 @@ jobs:
           path: |
             artifacts/
             cloudflare-worker/.wrangler/quality-release/index.js
+            cloudflare-worker/.wrangler/quality-release/*.wasm
           if-no-files-found: ignore

@@ -1,3 +1,4 @@
+import {workerBundleOptions,bundledWorkerModules} from './workerd-bundle.mjs';
 // Actual production Worker/DO routes with synthetic accounts, SQLite and saved
 // catalogues. Test-only fixture endpoints never enter the deployed Worker.
 import assert from 'node:assert/strict';
@@ -59,9 +60,9 @@ export default {async fetch(request,env,ctx){
  await Promise.all(tasks);return response;
 }};
 `;
-const built=await build({stdin:{contents:fixture,sourcefile:'client-support-runtime-fixture.mjs',resolveDir:fileURLToPath(new URL('.',import.meta.url))},bundle:true,format:'esm',platform:'browser',external:['cloudflare:sockets'],write:false});
+const built=await build({stdin:{contents:fixture,sourcefile:'client-support-runtime-fixture.mjs',resolveDir:fileURLToPath(new URL('.',import.meta.url))},...workerBundleOptions});
 let outbound=0,portalAuthorizations=0,portalActive=false;
-const runtime=new Miniflare(convertV4MiniflareOptions({name:'support-runtime',modules:true,script:built.outputFiles[0].text,compatibilityDate:'2026-10-03',compatibilityFlags:['enable_request_signal'],bindings:{ENVIRONMENT:'production',TICKET_SECRET:'support-runtime-ticket-secret-never-published',ADMIN_SETUP_SECRET:'support-runtime-setup-secret-never-published'},durableObjects:{PLAYBACK_SESSIONS:{className:'SupportFixture',useSQLite:true},OPERATION_ALERTS:{className:'OperationsMonitor',useSQLite:true},BACKUP_RECOVERY:{className:'BackupRecovery',useSQLite:true}},durableObjectsPersist:false,outboundService:async request=>{
+const runtime=new Miniflare(convertV4MiniflareOptions({name:'support-runtime',modules:bundledWorkerModules(built),compatibilityDate:'2026-10-03',compatibilityFlags:['enable_request_signal'],bindings:{ENVIRONMENT:'production',TICKET_SECRET:'support-runtime-ticket-secret-never-published',ADMIN_SETUP_SECRET:'support-runtime-setup-secret-never-published'},durableObjects:{PLAYBACK_SESSIONS:{className:'SupportFixture',useSQLite:true},OPERATION_ALERTS:{className:'OperationsMonitor',useSQLite:true},BACKUP_RECOVERY:{className:'BackupRecovery',useSQLite:true}},durableObjectsPersist:false,outboundService:async request=>{
  if(request.url===PORTAL_SOURCE+'/api/owner-portal'){
   portalAuthorizations++;assert.equal(request.method,'POST');assert.equal(request.headers.get('OAI-Sites-Authorization'),'Bearer fixture-site-only-token');const body=await request.json();assert.deepEqual(body,{action:'support-authorize',token:'s'.repeat(64),input:{accountId:'portal-fixture-account',lineId:'portal-fixture-line'},accountId:PORTAL_ACCOUNT});
   return portalActive?Response.json({ok:true,actor:{id:'owner',role:'owner'},customer:{accountId:'portal-fixture-account',lineId:'portal-fixture-line',username:'Customer'}}):Response.json({error:'owner_entry_required'},{status:401});

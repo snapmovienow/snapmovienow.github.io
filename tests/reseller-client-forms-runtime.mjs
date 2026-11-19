@@ -1,3 +1,4 @@
+import {releaseWorkerModules} from '../cloudflare-worker/tests/workerd-bundle.mjs';
 // Browser coverage uses the actual production artifact and synthetic panel data only.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -15,7 +16,7 @@ const owner=createOwnerPortal({getConfig:async()=>({accountId:PORTAL_ACCOUNT,sou
 try{
  const artifact='cloudflare-worker/.wrangler/quality-release/index.js';
  assert.ok(fs.existsSync(artifact),'Build the production release before checking portal forms.');
- const options={workers:[{name:'client-forms-release',modules:true,script:fs.readFileSync(artifact,'utf8'),compatibilityDate:'2026-10-03',compatibilityFlags:['enable_request_signal'],outboundService:()=>{throw Error('No external services are used by client form tests.');}}]};
+ const options={workers:[{name:'client-forms-release',modules:releaseWorkerModules(artifact),compatibilityDate:'2026-10-03',compatibilityFlags:['enable_request_signal'],outboundService:()=>{throw Error('No external services are used by client form tests.');}}]};
  runtime=new Miniflare(convertV4MiniflareOptions?convertV4MiniflareOptions(options):options);await runtime.ready;const worker=await runtime.getWorker('client-forms-release');
  browser=await chromium.launch({headless:true,args:['--no-sandbox','--disable-dev-shm-usage']});
  const context=await browser.newContext({viewport:{width:390,height:1000}});

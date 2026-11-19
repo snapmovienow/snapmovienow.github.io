@@ -1,3 +1,4 @@
+import {workerBundleOptions,bundledWorkerModules} from '../cloudflare-worker/tests/workerd-bundle.mjs';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {spawnSync} from 'node:child_process';
@@ -10,9 +11,9 @@ assert.equal(config.main,'src/index.js');assert.equal(config.assets,undefined);
 assert.equal(config.env.staging.main,'src/staging.mjs');
 assert.deepEqual(config.env.staging.routes,[]);assert.deepEqual(config.env.staging.triggers.crons,[]);
 assert.ok(config.env.staging.durable_objects.bindings.every(binding=>!binding.script_name),'no staging binding references another script');
-const bundle=await build({entryPoints:['cloudflare-worker/src/staging.mjs'],bundle:true,format:'esm',platform:'browser',external:['cloudflare:sockets'],write:false});
+const bundle=await build({entryPoints:['cloudflare-worker/src/staging.mjs'],...workerBundleOptions});
 let outbound=0;
-const options={modules:true,script:bundle.outputFiles[0].text,compatibilityDate:config.compatibility_date,compatibilityFlags:config.compatibility_flags,
+const options={modules:bundledWorkerModules(bundle),compatibilityDate:config.compatibility_date,compatibilityFlags:config.compatibility_flags,
  bindings:{ENVIRONMENT:'staging',TICKET_SECRET:'synthetic-staging-ticket-secret-not-deployed',ADMIN_SETUP_SECRET:'synthetic-staging-setup-secret-not-deployed'},
  durableObjects:{PLAYBACK_SESSIONS:{className:'PlaybackSession',useSQLite:true},BACKUP_RECOVERY:{className:'BackupRecovery',useSQLite:true},OPERATION_ALERTS:{className:'OperationsMonitor',useSQLite:true}},durableObjectsPersist:false,
  assets:{directory:'artifacts/staging-web',binding:'STAGING_ASSETS',run_worker_first:true,routerConfig:{has_user_worker:true},assetConfig:{html_handling:'none',not_found_handling:'none'}},

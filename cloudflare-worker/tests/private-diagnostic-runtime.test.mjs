@@ -1,3 +1,4 @@
+import {workerBundleOptions,bundledWorkerModules} from './workerd-bundle.mjs';
 // Exercise the complete production Worker/DO wiring in real workerd and SQLite.
 // Fixture seeding is bundled only into this test; production has no seed route.
 import assert from 'node:assert/strict';
@@ -35,9 +36,9 @@ export default {async fetch(request,env,ctx){
  return worker.fetch(request,env,ctx);
 }};
 `;
-const built=await build({stdin:{contents:fixture,resolveDir:fileURLToPath(new URL('.',import.meta.url)),sourcefile:'private-diagnostic-runtime-fixture.mjs'},bundle:true,format:'esm',platform:'browser',external:['cloudflare:sockets'],write:false});
+const built=await build({stdin:{contents:fixture,resolveDir:fileURLToPath(new URL('.',import.meta.url)),sourcefile:'private-diagnostic-runtime-fixture.mjs'},...workerBundleOptions});
 let outbound=0;
-const options=environment=>({name:'private-diagnostic-'+environment,modules:true,script:built.outputFiles[0].text,compatibilityDate:'2026-10-03',compatibilityFlags:['enable_request_signal'],bindings:{ENVIRONMENT:environment,PRIVATE_DIAGNOSTIC_REPORTS_ENABLED:'true',TICKET_SECRET:'diagnostic-runtime-ticket-secret',ADMIN_SETUP_SECRET:'diagnostic-runtime-setup-secret-long'},durableObjects:{PLAYBACK_SESSIONS:{className:'DiagnosticFixture',useSQLite:true},OPERATION_ALERTS:{className:'OperationsMonitor',useSQLite:true}},durableObjectsPersist:false,outboundService:()=>{outbound++;throw Error('Private diagnostic runtime must not request providers or external services');}});
+const options=environment=>({name:'private-diagnostic-'+environment,modules:bundledWorkerModules(built),compatibilityDate:'2026-10-03',compatibilityFlags:['enable_request_signal'],bindings:{ENVIRONMENT:environment,PRIVATE_DIAGNOSTIC_REPORTS_ENABLED:'true',TICKET_SECRET:'diagnostic-runtime-ticket-secret',ADMIN_SETUP_SECRET:'diagnostic-runtime-setup-secret-long'},durableObjects:{PLAYBACK_SESSIONS:{className:'DiagnosticFixture',useSQLite:true},OPERATION_ALERTS:{className:'OperationsMonitor',useSQLite:true}},durableObjectsPersist:false,outboundService:()=>{outbound++;throw Error('Private diagnostic runtime must not request providers or external services');}});
 const runtime=new Miniflare(convertV4MiniflareOptions(options('production')));
 const call=async(path,body={},target='__smn_private_diagnostic_v1',method='POST')=>{
  const response=await runtime.dispatchFetch('https://diagnostic.invalid/__fixture/call?target='+encodeURIComponent(target)+'&path='+encodeURIComponent(path),{method,...(method==='GET'?{}:{body:JSON.stringify(body)})});

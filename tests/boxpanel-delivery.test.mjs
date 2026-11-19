@@ -1,3 +1,4 @@
+import {workerBundleOptions,bundledWorkerModules} from '../cloudflare-worker/tests/workerd-bundle.mjs';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 import {createBoxBuildVerifier,BOX_BUILD_AUDIENCE} from '../cloudflare-worker/src/boxpanel-build-auth.mjs';
@@ -5,8 +6,8 @@ import {createBoxClient} from '../cloudflare-worker/src/boxpanel-client.mjs';
 import {boxPackage,boxReleaseUrl} from '../cloudflare-worker/src/boxpanel-delivery.mjs';
 const require=createRequire(new URL('../cloudflare-worker/package.json',import.meta.url));
 const {build}=require('esbuild'),{Miniflare,convertV4MiniflareOptions}=require('miniflare');
-const code=await build({entryPoints:['cloudflare-worker/src/index.js'],bundle:true,format:'esm',platform:'browser',external:['cloudflare:sockets'],write:false});
-const options={name:'box-delivery-test',modules:true,script:code.outputFiles[0].text,compatibilityDate:'2026-10-03',compatibilityFlags:['enable_request_signal'],durableObjects:{PLAYBACK_SESSIONS:{className:'PlaybackSession',useSQLite:true},BACKUP_RECOVERY:{className:'BackupRecovery',useSQLite:true},OPERATION_ALERTS:{className:'OperationsMonitor',useSQLite:true}},durableObjectsPersist:false,outboundService:()=>{throw Error('Unexpected network');}};
+const code=await build({entryPoints:['cloudflare-worker/src/index.js'],...workerBundleOptions});
+const options={name:'box-delivery-test',modules:bundledWorkerModules(code),compatibilityDate:'2026-10-03',compatibilityFlags:['enable_request_signal'],durableObjects:{PLAYBACK_SESSIONS:{className:'PlaybackSession',useSQLite:true},BACKUP_RECOVERY:{className:'BackupRecovery',useSQLite:true},OPERATION_ALERTS:{className:'OperationsMonitor',useSQLite:true}},durableObjectsPersist:false,outboundService:()=>{throw Error('Unexpected network');}};
 const mf=new Miniflare(convertV4MiniflareOptions?convertV4MiniflareOptions(options):options);
 const pair=await crypto.subtle.generateKey({name:'RSASSA-PKCS1-v1_5',modulusLength:2048,publicExponent:new Uint8Array([1,0,1]),hash:'SHA-256'},true,['sign','verify']);
 const jwk={...await crypto.subtle.exportKey('jwk',pair.publicKey),kid:'local-fixture',alg:'RS256',use:'sig'};
