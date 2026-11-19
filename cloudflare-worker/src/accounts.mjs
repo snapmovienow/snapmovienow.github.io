@@ -243,7 +243,7 @@ export async function accountsFetch(state,env,req){
  }
  if(p==='/delete')return store.transaction(async tx=>{const key='user:'+normal(b.username),u=await tx.get(key);if(!u)return answer({error:'not_found'},404);if(u.resellerBridge){const receipt=await tx.get('reseller-line:'+u.resellerBridge.accountId+':'+u.resellerBridge.lineId);if(receipt?.revoked!==true)return answer({error:'reseller_archive_required'},409);}await tx.delete(key);await tx.delete(assignmentKey(u.id));await leases.in(tx).removeFor({uid:u.id});return answer({ok:true})});
  if(p==='/provider-save')return store.transaction(async tx=>{await tx.put('provider',{encrypted:b.encrypted,username:b.username,mode:b.mode||"single",maxConnections:Math.min(3,Math.max(1,Number(b.maxConnections)||3))});await leases.in(tx).clear();await tx.delete('pool');return answer({ok:true})});
- if(p==='/providers'){const list=await store.get('providers');const old=await store.get('provider');return answer(list|| (old?[{...old,source:old.mode==='panel'?'panel:'+normal(old.username):'single:'+normal(old.username)}]:[]))}
+ if(p==='/providers'){const list=await store.get('providers');if(list)return answer(list);const old=await store.get('provider');return answer(old?[{...old,source:old.mode==='panel'?'panel:'+normal(old.username):'single:'+normal(old.username)}]:[])}
  if(p==='/provider-add')return store.transaction(async tx=>{
   const old=await tx.get('provider');let providers=await tx.get('providers');
   if(!providers){providers=old?[{...old,source:old.mode==='panel'?'panel:'+normal(old.username):'single:'+normal(old.username)}]:[];const pool=await tx.get('pool');if(old)await tx.put('source-pools',{[providers[0].source]:pool||{lines:[{id:'single:'+normal(old.username),external:0,maxConnections:old.maxConnections,encrypted:old.encrypted}],syncedAt:0}})}
@@ -253,7 +253,10 @@ export async function accountsFetch(state,env,req){
  if(p==='/provider-remove')return store.transaction(async tx=>{const providers=await tx.get('providers')||[],next=providers.filter(x=>x.source!==b.source);if(next.length===providers.length)return answer({error:'not_found'},404);const pools=await tx.get('source-pools')||{};delete pools[b.source];await tx.put('providers',next);await tx.put('source-pools',pools);if(next.length)await tx.put('provider',{...next[0],mode:'panel'});else await tx.delete('provider');await mergePools(tx,pools,leases.in(tx));return answer({ok:true})});
  if(p==='/permissions'){const user=await store.get('user:'+normal(b.username));return answer(contentPermissions(user?.permissions))}
  if(p==='/provider')return answer(await store.get('provider')||{});
- if(p==='/pool')return answer(await readInventoryPool(store)||{lines:[],syncedAt:0,attemptedAt:0});
+ if(p==='/pool'){
+  const pool=await readInventoryPool(store)||{lines:[],syncedAt:0,attemptedAt:0};
+  return answer(b.summary===true?{count:pool.lines.length,attemptedAt:pool.attemptedAt}:pool);
+ }
  if(p==='/provider-dashboard')return store.transaction(async tx=>answer(await providerDashboard(tx,Date.now(),leases.in(tx),rotationEnabled(env))));
  if(p==='/pool-sync')return store.transaction(async tx=>{
   const {lines}=b,now=Date.now();

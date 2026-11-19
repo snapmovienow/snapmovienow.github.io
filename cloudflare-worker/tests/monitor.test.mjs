@@ -114,6 +114,60 @@ try{
  const legacyDelivery=mailCalls.pop().options;
  assert.equal(legacyDelivery.headers['Idempotency-Key'],'snap-alert/pending-before-update');
  assert.deepEqual(JSON.parse(legacyDelivery.body),{from:'alerts@example.com',to:['owner@example.com'],subject:'SNAPTVNOW · Aviso del sistema',text:'SNAPTVNOW\n'+new Date(now).toISOString()+'\n\nINCIDENCIA: Falla anterior\nDetalle\n\nRevisa el panel: https://app.snaptvnow.com/admin.html'});
+ // A grouped startup alarm and a backup failure can occur in the same tick.
+ // Both stay in history; only the backup warrants an email.
+ const mixedState={createdAt:now,config:{channel:'email',version:1},checks:{},incidents:{},history:[],outbox:[]};
+ const slowStart={type:'live',platform:'other',requests:10,failures:0,stages:{total:{p95UpperMs:12000}}};
+ applyObservations(mixedState,{playback:{groups:[],timings:[slowStart]},backups:{...goodBackup(),status:'failed'}},now);
+ assert.equal(mixedState.history[0].changes.length,2);
+ assert.deepEqual(mixedState.outbox[0].changes.map(change=>change.id),[mixedState.incidents['backup:creation'].id]);
+ // An old startup-only retry must not delay a pending critical email. Mixed
+ // events not yet sent can be filtered while preserving the full history.
+ const legacyStartup={kind:'resolved',id:'retired-startup-id',title:'Inicio de contenido',detail:'Reproductor sin identificar'};
+ const backupChange={kind:'opened',id:'active-backup',title:'Falló la copia automática',detail:'Detalle'};
+ const legacyNotice=(id,changes)=>({id,changes,attempts:0,createdAt:now,nextAt:now,version:legacyState.config.version});
+ const queuedAlerts=[legacyNotice('startup-only',[legacyStartup]),legacyNotice('mixed',[legacyStartup,backupChange])];
+ queuedAlerts[0].nextAt=now+300000;
+ legacyState.history=structuredClone(queuedAlerts);legacyState.outbox=queuedAlerts;
+ await legacyStore.put('monitor',legacyState);
+ await new OperationsMonitor({storage:legacyStore},env).flush();
+ const filteredText=JSON.parse(mailCalls.pop().options.body).text;
+ assert.match(filteredText,/Falló la copia automática/);assert.doesNotMatch(filteredText,/Inicio de contenido/);
+ const delivered=await legacyStore.get('monitor');
+ assert.equal(delivered.outbox.length,0);assert.equal(delivered.history[0].delivery,'panel');
+ assert.equal(delivered.history[1].delivery,'accepted');assert.equal(delivered.history[1].changes.length,2);
+ // A failed inventory probe can recover during the three-sample closure
+ // window. No email is necessary unless a fresh, ongoing failure persists.
+ const quietRun=async function(){
+  const started=now,isolated=new Store(),quiet=new OperationsMonitor({storage:isolated},env);
+  await isolated.put('monitor',{createdAt:now,config:legacyState.config,checks:{},incidents:{},history:[],outbox:[]});
+  const probe=async(reason,flush=true)=>{
+   const row=await isolated.get('monitor');
+   const snapshot=reason===null?{}:{providers:providerEnvelope(reason,now)};
+   applyObservations(row,snapshot,now);await isolated.put('monitor',row);
+   if(flush)await quiet.flush();
+   now+=300000;
+  };
+  try{
+   await probe('timeout');await probe('timeout');
+   for(let n=0;n<3;n++)await probe('ok');
+   let row=await isolated.get('monitor');assert.equal(row.incidents[providerKey].status,'resolved');assert.equal(row.history[0].delivery,'panel');assert.equal(mailCalls.length,0);
+   for(let n=0;n<5;n++)await probe('timeout');
+   await probe(null);assert.equal(mailCalls.length,0,'time without observations cannot trigger a notice');
+   for(let n=0;n<5;n++)await probe('timeout',false);
+   row=await isolated.get('monitor');assert.equal(row.outbox.length,1);
+   await probe('ok');assert.equal(mailCalls.length,0,'a queued first notice is dropped when a new good sample arrives');
+   for(let n=0;n<6;n++)await probe('timeout');
+   assert.equal(mailCalls.length,1);assert.match(JSON.parse(mailCalls[0].options.body).text,/PERSISTENTE/);
+   for(let n=0;n<3;n++)await probe('ok');
+   assert.equal(mailCalls.length,2);assert.match(JSON.parse(mailCalls[1].options.body).text,/RECUPERADO/);
+   mailCalls.length=0;
+   await probe('timeout');await probe('timeout');await probe('credentials_unreadable');
+   assert.equal(mailCalls.length,1,'an actionable credential failure is escalated immediately');
+   assert.match(JSON.parse(mailCalls[0].options.body).text,/credenciales guardadas/);
+  }finally{now=started;mailCalls.length=0}
+ };
+ await quietRun();
  const mailGroup={...group,reports:20};playback.groups=[mailGroup];await next();
  const incidentId=(await open()).find(i=>i.kind==='playback').id;
  assert.match(JSON.parse(mailCalls[0].options.body).text,new RegExp('Incidente: '+incidentId));
@@ -175,7 +229,7 @@ try{
  }
  assert.deepEqual(await directoryResponse('[]'),{status:200,body:{configuredIds:[],providers:[]}});
  const paths=[],pending=[];const scheduledEnv={ENVIRONMENT:'production',OPERATION_ALERTS:{idFromName:x=>x,get:()=>({fetch:async url=>{paths.push(new URL(url).pathname);return Response.json({ok:true})}})},PLAYBACK_SESSIONS:{idFromName:x=>x,get:()=>({fetch:async url=>{paths.push(new URL(url).pathname);return Response.json({ok:true})}})}};
- worker.scheduled({cron:MONITOR_CRON},scheduledEnv,{waitUntil:p=>pending.push(p)});await Promise.all(pending);assert.deepEqual([...paths].sort(),['/accounts/pool','/accounts/reseller-portal-config','/accounts/service-monitor-sample','/refresh-pool','/tick'],'monitor and Telegram delivery timer must not create daily backups');
+ worker.scheduled({cron:MONITOR_CRON},scheduledEnv,{waitUntil:p=>pending.push(p)});await Promise.all(pending);assert.deepEqual([...paths].sort(),['/accounts/reseller-portal-config','/accounts/service-monitor-sample','/refresh-pool','/tick'],'scheduled inventory refresh must not fetch a second full pool or trigger daily backups');
  paths.length=0;pending.length=0;worker.scheduled({cron:'17 5 * * *'},scheduledEnv,{waitUntil:p=>pending.push(p)});await Promise.all(pending);assert.deepEqual(paths,['/accounts/backup-automatic','/tick']);
  paths.length=0;worker.scheduled({cron:MONITOR_CRON},{...scheduledEnv,ENVIRONMENT:'staging'},{waitUntil:p=>pending.push(p)});assert.equal(paths.length,0);
  const unauthorised=await worker.fetch(new Request('https://example.test/admin',{method:'POST',body:JSON.stringify({action:'alerts-status'})}),{TICKET_SECRET:env.TICKET_SECRET});assert.equal(unauthorised.status,401);

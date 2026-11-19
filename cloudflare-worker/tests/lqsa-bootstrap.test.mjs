@@ -56,3 +56,27 @@ test('forced cron retries are debounced, do not overlap, and remain capped at th
  for(let i=0;i<4;i++){time+=300001;h.boot(env,h.ctx,{force:true});h.boot(env,h.ctx,{force:true});await h.drain();}
  assert.equal(h.tasks.length,3);assert.equal(h.calls.filter(x=>x.path==='/lqsa-import-run').length,3);
 });
+
+test('a public request to a cold production Worker does not wake the catalog import', async () => {
+ const {default: worker} = await import('../src/index.js');
+ const calls = [];
+ const background = [];
+ const production = {
+  ...env,
+  PLAYBACK_SESSIONS: {
+   idFromName: name => name,
+   get: () => ({fetch: async url => {
+    calls.push(new URL(url).pathname);
+    return Response.json({state: 'completed'});
+   }})
+  }
+ };
+ const response = await worker.fetch(
+  new Request('https://api.snaptvnow.com/', {method: 'OPTIONS'}),
+  production,
+  {waitUntil: task => background.push(task)}
+ );
+ await Promise.all(background);
+ assert.equal(response.status, 204);
+ assert.ok(!calls.includes('/accounts/lqsa-import-status'));
+});

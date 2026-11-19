@@ -64,6 +64,6 @@ let now=Date.now();applyObservations(state,snapshot([bad]),now);const opening=st
 applyObservations(state,snapshot([]),now+=300000);assert.equal(state.incidents['startup:live:other'].status,'open');
 for(let observation=0;observation<3;observation++)applyObservations(state,snapshot([{...bad,failures:0}]),now+=300000);
 const recovery=state.history[0].changes.find(c=>c.kind==='resolved');assert.equal(recovery.title,'Inicio de contenido');assert.match(recovery.detail,/0 respuestas con error/);assert.ok(!recovery.detail.includes('5 respuestas'));
-assert.deepEqual(state.history[1],opening);assert.match(state.incidents['startup:live:other'].detail,/5 respuestas con error/);assert.match(state.outbox.at(-1).changes[0].detail,/0 respuestas con error/);
-console.log('PASS: exact outcome classification, real Xtream cancellation/retry boundary, upstream failures retained, legacy evidence preserved, redacted status codes and evidence-based recovery emails.');
+assert.deepEqual(state.history[1],opening);assert.match(state.incidents['startup:live:other'].detail,/5 respuestas con error/);assert.equal(opening.delivery,'panel');assert.equal(state.history[0].delivery,'panel');assert.equal(state.outbox.length,0);
+console.log('PASS: exact outcome classification, real Xtream cancellation/retry boundary, upstream failures retained, legacy evidence preserved, redacted status codes and evidence-based recovery recorded in the panel.');
 
