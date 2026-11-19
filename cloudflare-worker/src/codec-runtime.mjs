@@ -25,7 +25,8 @@ export function convertWithModule(module, tsBytes, {sequence=0,epochMs=0}={}) {
   new Uint8Array(e.memory.buffer,ptr,tsBytes.length).set(tsBytes);
   const status=e.convert(ptr,tsBytes.length,sequence%2147483646,epochMs);
   const diagnostics={packets:e.diagnostic(0), invalid:e.diagnostic(1), firstInvalid:e.diagnostic(2),
-                     lastInvalid:e.diagnostic(3), concealedSamples:e.diagnostic(4)};
+                     lastInvalid:e.diagnostic(3), concealedSamples:e.diagnostic(4),
+                     insertedSamples:e.diagnostic(5), overlapSamples:e.diagnostic(6), repairGap:e.diagnostic(7)};
   if(status) {
     const error=new Error('apple_segment_codec_'+status+'_'+e.error_detail());
     error.diagnostics=diagnostics;

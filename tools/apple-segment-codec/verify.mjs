@@ -20,7 +20,7 @@ function videoHashes(input) {
   return lines.filter(line=>/^\d+,/.test(line)).map(line=>line.slice(line.lastIndexOf(',')+1).trim());
 }
 
-function damageAudioPacket(bytes, select) {
+function editAudioPackets(bytes, select, shiftTicks=()=>0) {
   const copy=Buffer.from(bytes);
   let seen=0, changed=0;
   for(let at=0;at+188<=copy.length;at+=188){
@@ -31,9 +31,42 @@ function damageAudioPacket(bytes, select) {
     if(pes+10>=end || copy.readUIntBE(pes,3)!==1 || (copy[pes+3]&0xe0)!==0xc0) continue;
     const frame=pes+9+copy[pes+8];
     if(frame+4>end || copy[frame]!==0xff || (copy[frame+1]&0xe0)!==0xe0) continue;
-    if(select(++seen)) { copy.fill(0,frame,frame+4); changed++; }
+    seen++;
+    const shift=shiftTicks(seen);
+    if(shift && (copy[pes+7]&0x80)) {
+      // PTS in a PES header carries five marker-separated fields on a 33-bit clock.
+      const at=pes+9;
+      const original=(copy[at]>>1&7)*2**30+copy[at+1]*2**22+(copy[at+2]>>1)*2**15+
+                     copy[at+3]*2**7+(copy[at+4]>>1);
+      const pts=(original+shift+2**33)%2**33;
+      copy[at]=(copy[at]&0xf1)|((Math.floor(pts/2**30)&7)<<1);
+      copy[at+1]=Math.floor(pts/2**22)&255;
+      copy[at+2]=((Math.floor(pts/2**15)&127)<<1)|1;
+      copy[at+3]=Math.floor(pts/2**7)&255;
+      copy[at+4]=((pts&127)<<1)|1;
+    }
+    if(select(seen)) { copy.fill(0,frame,frame+4); changed++; }
   }
   return {bytes:copy,changed};
+}
+
+function dropAudioFrames(bytes, drop) {
+  const kept=[];
+  let audioPid, index=0, dropping=false, removed=0;
+  for(let at=0;at+188<=bytes.length;at+=188) {
+    const packet=bytes.subarray(at,at+188);
+    const pid=((packet[1]&31)<<8)|packet[2], flags=packet[3]>>4;
+    if((packet[1]&0x40) && (flags&1)){
+      const pes=4+((flags&2)?packet[4]+1:0);
+      if(pes+9<188 && packet.readUIntBE(pes,3)===1 && (packet[pes+3]&0xe0)===0xc0) {
+        audioPid=pid;
+        dropping=drop(++index);
+        if(dropping) removed++;
+      }
+    }
+    if(pid!==audioPid || !dropping) kept.push(packet);
+  }
+  return {bytes:Buffer.concat(kept),removed};
 }
 
 try {
@@ -61,12 +94,62 @@ try {
     input.push(ts);
   }
   const firstInput=readFileSync(path.join(root,files[0]));
-  const damaged=damageAudioPacket(firstInput,index=>index===3);
+  const damaged=editAudioPackets(firstInput,index=>index===3);
   assert.equal(damaged.changed,1);
   const recovered=convertWithModule(module,damaged.bytes,{epochMs:1795090000000});
   assert.equal(recovered.diagnostics.invalid,1);
   assert.ok(recovered.diagnostics.concealedSamples<=1152);
-  const excessive=damageAudioPacket(firstInput,index=>index>=3);
+  for(const shift of [13500,-13500]){
+    // Shift the source clock by 150 ms well before a single bad MP2 header.
+    // Recovery must use local timing, and the last AAC PTS must follow the source.
+    const changed=editAudioPackets(firstInput,index=>index===7,index=>index>=3?shift:0);
+    assert.equal(changed.changed,1);
+    const result=convertWithModule(module,changed.bytes,{epochMs:1795090000000});
+    assert.equal(result.diagnostics.invalid,1);
+    assert.ok(result.diagnostics.concealedSamples<=1152);
+    if(shift>0) assert.ok(result.diagnostics.insertedSamples>=7200);
+    else assert.ok(result.diagnostics.overlapSamples>=7199);
+    writeFileSync(path.join(root,'shifted.ts'),changed.bytes);
+    writeFileSync(path.join(root,'shifted.mp4'),Buffer.concat([result.init,result.media]));
+    function packetSpan(file){
+      const packets=ffprobe(['-select_streams','a','-show_entries','packet=pts_time,duration_time'], file).packets;
+      return +packets.at(-1).pts_time + +packets.at(-1).duration_time - +packets[0].pts_time;
+    }
+    assert.ok(Math.abs(packetSpan('shifted.ts')-packetSpan('shifted.mp4'))<1025/48000,
+              'AAC must cover the same source clock interval even when a PES timestamp jumps and a header is invalid');
+  }
+  // Two measured patterns from complete live segments: 2.880 s missing before
+  // one corrupt Layer II header, or 3.000 s missing immediately after one.
+  ffmpeg(['-f','lavfi','-i','testsrc2=size=192x108:rate=24','-f','lavfi','-i','sine=frequency=400:sample_rate=48000',
+    '-t','12','-c:v','libx264','-g','48','-preset','ultrafast','-c:a','mp2','-b:a','192k','-ac','2',
+    '-pes_payload_size','1','-f','mpegts','complete.ts']);
+  const complete=readFileSync(path.join(root,'complete.ts'));
+  for(const [first,count,corrupt] of [[149,120,269],[176,125,175]]){
+    const invalid=editAudioPackets(complete,index=>index===corrupt);
+    assert.equal(invalid.changed,1);
+    const gap=dropAudioFrames(invalid.bytes,index=>index>=first && index<first+count);
+    assert.equal(gap.removed,count);
+    const repaired=convertWithModule(module,gap.bytes,{epochMs:1795090000000});
+    assert.equal(repaired.diagnostics.invalid,1);
+    // The TS demuxer can also discard one neighboring partial frame when the
+    // transport continuity counter jumps. All missing samples stay on the source clock.
+    assert.ok(repaired.diagnostics.insertedSamples>=(count+1)*1152-1);
+    assert.ok(repaired.diagnostics.insertedSamples<=(count+2)*1152+1);
+    writeFileSync(path.join(root,'repaired.mp4'),Buffer.concat([repaired.init,repaired.media]));
+    const decoded=ffmpeg(['-i','repaired.mp4','-map','0:a:0','-ac','1','-c:a','pcm_s16le','-f','s16le','pipe:1']);
+    const rms=second=>{
+      let squares=0;
+      const at=Math.round(second*48000);
+      for(let n=0;n<2400;n++) squares+=decoded.readInt16LE((at+n)*2)**2;
+      return Math.sqrt(squares/2400);
+    };
+    assert.ok(rms(2)>100,'sound before hole');
+    assert.ok(rms(5)<10,'silent source interval');
+    assert.ok(rms(8)>100,'sound returns at original timeline position');
+    assert.ok(Math.abs(decoded.length/2/48000-12)<0.035);
+    assert.deepEqual(videoHashes('repaired.mp4'),videoHashes('complete.ts'),'all video frames retain their content');
+  }
+  const excessive=editAudioPackets(firstInput,index=>index>=3);
   assert.ok(excessive.changed>4);
   assert.throws(()=>convertWithModule(module,excessive.bytes,{epochMs:1795090000000}),/apple_segment_codec_/);
   assert.ok(times.some(t=>t<0) && times.some(t=>t>=0),'fixture must cross MPEG-TS wrap');

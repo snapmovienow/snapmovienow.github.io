@@ -19,7 +19,8 @@ static int media_offset;
 static int err_detail;
 static int input_width, input_height;
 static unsigned audio_packets, invalid_packets, first_invalid, last_invalid, concealed_samples;
-static int64_t first_sample;
+static unsigned clock_padding, clock_overlap;
+static int repair_gap;
 
 static int read_buffer(void *ctx, uint8_t *dest, int count) {
     Reader *r = ctx;
@@ -142,7 +143,11 @@ EXPORT int convert(uint8_t *data, unsigned size, unsigned sequence, double epoch
     float *floats[2]={0};
     for(int c=0;c<channels;c++) floats[c]=av_malloc_array(max_samples,sizeof(float));
     if(!pkt||!packed||!pcm||!aac_frame||!floats[0]||!floats[channels-1]) return 2;
-    int64_t start=AV_NOPTS_VALUE;
+    int64_t start=AV_NOPTS_VALUE, previous_end=AV_NOPTS_VALUE;
+    int64_t trailing_end=AV_NOPTS_VALUE;
+    int64_t video_first=INT64_MAX, video_end=INT64_MIN;
+    int64_t long_gap_first=INT64_MAX, long_gap_end=INT64_MIN;
+    unsigned missing_frames=0;
     int read_ret;
     while((read_ret=av_read_frame(input,pkt))>=0) {
         if(pkt->stream_index==in_v->index) {
@@ -150,6 +155,8 @@ EXPORT int convert(uint8_t *data, unsigned size, unsigned sequence, double epoch
             av_packet_rescale_ts(pkt,in_v->time_base,video->time_base);
             pkt->dts = unwrap90(pkt->dts,epoch90);
             pkt->pts = unwrap90(pkt->pts,pkt->dts);
+            video_first=FFMIN(video_first,pkt->pts);
+            video_end=FFMAX(video_end,pkt->pts+FFMAX(pkt->duration,0));
             pkt->stream_index=video->index;
             TRY(17,av_write_frame(output,pkt));
             if(++video_count>MAX_SECONDS*120) return 18;
@@ -161,11 +168,11 @@ EXPORT int convert(uint8_t *data, unsigned size, unsigned sequence, double epoch
                 int64_t raw90=av_rescale_q(pkt->pts,in_a->time_base,(AVRational){1,90000});
                 packet_sample=av_rescale_q(unwrap90(raw90,epoch90),(AVRational){1,90000},encoder->time_base);
             }
-            // The first or last audio PES can straddle a TS segment boundary. libavcodec
-            // may reject that partial frame before it yields anything. Native ffmpeg
-            // normally continues at the next complete frame.
+            // A damaged Layer II header can occur within a complete segment. Demuxing
+            // continues at the next frame. Use the source sample clock for every valid
+            // packet, including those before damage, so an earlier source gap cannot
+            // make a later valid frame appear to be a failed decoder recovery.
             int ret=avcodec_send_packet(decoder,pkt);
-            int repair = last_invalid && last_invalid == audio_packets-1;
             if(ret>=0) {
                 while((ret=avcodec_receive_frame(decoder,pcm))>=0) {
                     if(pcm->format!=AV_SAMPLE_FMT_FLTP || pcm->sample_rate!=rate ||
@@ -174,20 +181,38 @@ EXPORT int convert(uint8_t *data, unsigned size, unsigned sequence, double epoch
                         if(packet_sample==AV_NOPTS_VALUE) return 19;
                         start=packet_sample;
                     }
-                    if(repair && packet_sample!=AV_NOPTS_VALUE) {
-                        int64_t gap=packet_sample-start-used;
-                        if(gap > 4*1152 || gap < -1152) return 35;
-                        if(gap > 0) {
-                            if(gap > (int64_t)(max_samples-used)) return 21;
-                            for(int c=0;c<channels;c++) memset(floats[c]+used,0,gap*sizeof(float));
-                            used+=gap;
-                            concealed_samples+=gap;
-                        }
+                    int64_t position=packet_sample;
+                    if(position==AV_NOPTS_VALUE) position=start+used+(int64_t)missing_frames*1152;
+                    int64_t gap=position-(start+used);
+                    if(missing_frames && previous_end!=AV_NOPTS_VALUE)
+                        repair_gap=av_clip64(position-previous_end,INT32_MIN,INT32_MAX);
+                    // Some live encoders genuinely omit several seconds of MP2 data.
+                    // Keep its PTS gap when it falls within the same video window.
+                    if(gap>max_samples || gap < -(int64_t)max_samples) return 35;
+                    if(gap>2*rate || gap < -2*rate) {
+                        long_gap_first=FFMIN(long_gap_first,FFMIN(position,start+used));
+                        long_gap_end=FFMAX(long_gap_end,FFMAX(position,start+used));
                     }
-                    repair=0;
-                    if(pcm->nb_samples>(int)(max_samples-used)) return 21;
-                    for(int c=0;c<channels;c++) memcpy(floats[c]+used,pcm->extended_data[c],pcm->nb_samples*sizeof(float));
-                    used+=pcm->nb_samples;
+                    if(gap>1) {
+                        if(gap>(int64_t)(max_samples-used)) return 21;
+                        for(int c=0;c<channels;c++) memset(floats[c]+used,0,gap*sizeof(float));
+                        used+=gap;
+                        clock_padding+=gap;
+                        concealed_samples+=FFMIN((uint64_t)gap,(uint64_t)missing_frames*1152);
+                    }
+                    // Keep the earlier data when source timestamps overlap. A single
+                    // rounded sample is not an actual missing or duplicate audio frame.
+                    unsigned skip=gap < -1 ? FFMIN((uint64_t)(-gap), (uint64_t)pcm->nb_samples) : 0;
+                    unsigned copy=pcm->nb_samples-skip;
+                    if(copy>max_samples-used) return 21;
+                    for(int c=0;c<channels;c++)
+                        memcpy(floats[c]+used,(float*)pcm->extended_data[c]+skip,copy*sizeof(float));
+                    used+=copy;
+                    clock_overlap+=skip;
+                    previous_end=position+pcm->nb_samples;
+                    packet_sample=previous_end;
+                    missing_frames=0;
+                    trailing_end=AV_NOPTS_VALUE;
                     av_frame_unref(pcm);
                 }
                 if(ret==AVERROR(EAGAIN)||ret==AVERROR_EOF) ret=0;
@@ -195,6 +220,8 @@ EXPORT int convert(uint8_t *data, unsigned size, unsigned sequence, double epoch
             if(ret==AVERROR_INVALIDDATA) {
                 if(!invalid_packets) first_invalid=audio_packets;
                 invalid_packets++;
+                missing_frames++;
+                if(packet_sample!=AV_NOPTS_VALUE) trailing_end=packet_sample+1152;
                 last_invalid=audio_packets;
                 if(invalid_packets>4) { err_detail=ret;return 20; }
             } else if(ret<0) {err_detail=ret;return 20;}
@@ -203,13 +230,28 @@ EXPORT int convert(uint8_t *data, unsigned size, unsigned sequence, double epoch
     }
     if(invalid_packets>1 && invalid_packets*20>audio_packets) return 36;
     if(read_ret!=AVERROR_EOF || !video_count || used<1024 || start==AV_NOPTS_VALUE) return 23;
+    if(long_gap_end!=INT64_MIN) {
+        int64_t gap_start90=av_rescale_q(long_gap_first,encoder->time_base,video->time_base);
+        int64_t gap_end90=av_rescale_q(long_gap_end,encoder->time_base,video->time_base);
+        if(gap_start90<video_first-90000 || gap_end90>video_end+90000) return 35;
+    }
+    // A final corrupt packet has no following valid timestamp. Include its silence
+    // only when its own timestamp agrees with a plausible number of dropped frames.
+    if(missing_frames && trailing_end!=AV_NOPTS_VALUE) {
+        int64_t tail=trailing_end-(start+used);
+        if(tail>0 && tail<=(int64_t)missing_frames*1152+1 && tail<=(int64_t)(max_samples-used)) {
+            for(int c=0;c<channels;c++) memset(floats[c]+used,0,tail*sizeof(float));
+            used+=tail;
+            concealed_samples+=tail;
+            clock_padding+=tail;
+        }
+    }
     // Round the original absolute audio start and end to the nearest AAC frame boundary.
     // This keeps adjacent fragments contiguous without accumulating encoder delay or drift.
     // Resample the small rounding difference across this fragment, retaining its two endpoints.
     int64_t grid_start=((start+512)/1024)*1024,grid_end=((start+used+512)/1024)*1024;
     uint32_t total=grid_end-grid_start;
     if(!total || total>max_samples+1024) return 24;
-    first_sample=grid_start;
     aac_frame->format=AV_SAMPLE_FMT_FLTP;
     aac_frame->sample_rate=rate;
     aac_frame->nb_samples=1024;
@@ -249,6 +291,9 @@ EXPORT unsigned diagnostic(unsigned field) {
     case 2:return first_invalid;
     case 3:return last_invalid;
     case 4:return concealed_samples;
+    case 5:return clock_padding;
+    case 6:return clock_overlap;
+    case 7:return (uint32_t)repair_gap;
     default:return 0;
     }
 }
