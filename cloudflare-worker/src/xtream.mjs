@@ -25,6 +25,16 @@ function playbackURL(base, login, kind, id, ext) {
   return `${base}/${kind}/${encodeURIComponent(login.username)}/${encodeURIComponent(login.password)}/${id}.${ext}`;
 }
 
+function mobileAppleLivePlayer(request) {
+  const agent = request.headers.get('User-Agent') || '';
+  const mobileApple = /\b(?:iPhone|iPad|iPod)(?:\d+,\d+)?\b|\b(?:iOS|iPadOS)\b/i.test(agent);
+  if (/^AppleCoreMedia\//i.test(agent)) return mobileApple;
+  const smarters = /^(?:IPTV(?:[ -]|%20)*)?Smarters(?:[ -]|%20)*Player(?:[ -]|%20)*Lite\b/i.test(agent);
+  // App requests can identify Apple's networking stack without naming the device.
+  const appleNetwork = /\bCFNetwork\//i.test(agent) && /\bDarwin\//i.test(agent);
+  return smarters && (mobileApple || appleNetwork);
+}
+
 function loginInfo(req, auth, profile) {
   const url = new URL(req.url), user = auth.user;
   return {
@@ -149,6 +159,14 @@ export async function handleXtream(req, deps) {
     if(kind==='series'&&deps.supplementPlay){const local=await deps.supplementPlay(req,auth,{...record,ext:ext.toLowerCase()});if(local)return local;}
     if (auth.user.permissions.adults === false && !await deps.adultPolicy.allowed(record)) return deps.json({error:'adult_content_disabled'},403);
     deps.onResolvedMedia?.(kind,publicId);
+    if (kind === 'live' && ext.toLowerCase() === 'ts' &&
+        (req.method === 'GET' || req.method === 'HEAD') && mobileAppleLivePlayer(req)) {
+      // The sibling URL preserves the authenticated path without copying credentials to Location.
+      return new Response(null, {status: 307, headers: {
+        Location: publicId + '.m3u8', 'Cache-Control': 'private, no-store', Vary: 'User-Agent',
+        'Referrer-Policy': 'no-referrer'
+      }});
+    }
     return deps.play(req, auth.session, {...record, type: kind, ext: ext.toLowerCase()});
   }
   if (url.pathname !== '/player_api.php') return deps.json({error: 'not_found'}, 404);

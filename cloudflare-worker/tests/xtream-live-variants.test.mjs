@@ -11,6 +11,18 @@ class Store{
 const objects=new Map(),env={TICKET_SECRET:'variant-runtime-secret',ADMIN_SETUP_SECRET:'variant-runtime-setup-secret-long'},pending=[];
 env.PLAYBACK_SESSIONS={idFromName:x=>x,get(id){if(!objects.has(id))objects.set(id,new PlaybackSession({storage:new Store()},env));return {fetch:(url,opts)=>objects.get(id).fetch(new Request(url,opts))}}};
 const originalFetch=globalThis.fetch,calls=[];let catalogReads=0,allMissing=false,multivariant=false,refreshes=0;
+let truncateManifest=false;
+const requestedRanges=[];
+function originPlaylist(body,options){
+ const range=new Headers(options.headers).get('range');
+ requestedRanges.push([range,new Headers(options.headers).get('if-range')]);
+ const bytes=new TextEncoder().encode(body);
+ const end=truncateManifest?8:range==='bytes=0-1'?1:range==='bytes=0-0'?0:bytes.length-1;
+ return new Response(bytes.slice(0,end+1),{status:206,headers:{
+  'content-type':'application/vnd.apple.mpegurl','content-length':String(end+1),
+  'content-range':'bytes 0-'+end+'/'+bytes.length,'accept-ranges':'bytes',etag:'"origin-only"'
+ }});
+}
 globalThis.fetch=async(value,opts={})=>{
  const u=new URL(value);assert.equal(u.origin,'http://ccf.center:8444');
  if(u.pathname==='/player_api.php'){
@@ -21,21 +33,24 @@ globalThis.fetch=async(value,opts={})=>{
  }
  const matched=u.pathname.match(/^\/live\/([^/]+)\/([^/]+)\/(\d+)\.(ts|m3u8)$/);
  if(matched){const [,account,,id,ext]=matched;calls.push({account,id,ext});if(id!=='56'||allMissing)return new Response('missing',{status:404});
-  if(ext==='m3u8'&&multivariant)return new Response([
+  if(ext==='m3u8'&&multivariant)return originPlaylist([
    '#EXTM3U',
    '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",NAME="Castellano",URI="hls/audio.m3u8"',
    '#EXT-X-STREAM-INF:BANDWIDTH=1200000,AUDIO="audio"',
    'hls/video.m3u8'
-  ].join('\n'),{headers:{'content-type':'application/vnd.apple.mpegurl'}});
+  ].join('\n'),opts);
   if(ext==='m3u8')return new Response('#EXTM3U\n#EXTINF:4,\n/segment.ts\n',{headers:{'content-type':'application/vnd.apple.mpegurl'}});
   return new Response(new ReadableStream({start(c){c.enqueue(new Uint8Array([71,1,2,3]))}}),{headers:{'content-type':'video/mp2t'}});
  }
  const sourceFolder=`/live/${calls.at(-1)?.account}/source-password-synthetic/hls/`;
  if(u.pathname===sourceFolder+'video.m3u8'||u.pathname===sourceFolder+'audio.m3u8'){
   if(u.pathname.endsWith('/video.m3u8'))refreshes++;
-  return new Response('#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:'+refreshes+'\n#EXTINF:4,\nparts/'+refreshes+'.ts\n',{headers:{'content-type':'application/vnd.apple.mpegurl'}});
+  return originPlaylist('#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:'+refreshes+'\n#EXTINF:4,\nparts/'+refreshes+'.ts\n',opts);
  }
- if(u.pathname===sourceFolder+'parts/'+refreshes+'.ts')return new Response(new Uint8Array([71,42]),{headers:{'content-type':'video/mp2t'}});
+ if(u.pathname===sourceFolder+'parts/'+refreshes+'.ts'){
+  if(new Headers(opts.headers).get('range')==='bytes=1-1')return new Response(new Uint8Array([42]),{status:206,headers:{'content-type':'video/mp2t','content-range':'bytes 1-1/2','content-length':'1'}});
+  return new Response(new Uint8Array([71,42]),{headers:{'content-type':'video/mp2t'}});
+ }
  if(u.pathname==='/segment.ts')return new Response(new Uint8Array([71,1,2,3]),{headers:{'content-type':'video/mp2t'}});
  throw Error('unexpected source request');
 };
@@ -57,13 +72,19 @@ try{
   if(ext==='ts'){const reader=r.body.getReader();assert.equal((await reader.read()).value[0],71);await reader.cancel();}
   else{
    const master=await r.text();assert.match(master,/#EXTM3U/);assert.ok(!master.includes('source-password-synthetic'));
-   const target=master.split('\n').find(x=>x.startsWith('https://')),playlist=await worker.fetch(new Request(target),env,ctx),text=await playlist.text();
+   const target=master.split('\n').find(x=>x.startsWith('https://'));
+   const beforeRefresh=calls.length;
+   const head=await worker.fetch(new Request(target,{method:'HEAD'}),env,ctx);
+   assert.equal(head.status,200);
+   const playlist=await worker.fetch(new Request(target),env,ctx),text=await playlist.text();
+   assert.equal(calls.length,beforeRefresh,'a HEAD and the first GET reuse the prepared HLS response across the two signed path forms');
    assert.equal(new URL(target).pathname,'/stream/resource.m3u8','simple live playlists also have a recognizable signed refresh URL');
    const segment=text.split('\n').find(x=>x.startsWith('https://'));assert.ok(segment);const bytes=await worker.fetch(new Request(segment),env,ctx);assert.equal(new Uint8Array(await bytes.arrayBuffer())[0],71);
   }
  }
  multivariant=true;calls.length=0;
- const multivariantResponse=await worker.fetch(new Request(chosen.direct_source),env,ctx);
+ const rangeProbe={headers:{range:'bytes=0-1','if-range':'"signed-resource"'}};
+ const multivariantResponse=await worker.fetch(new Request(chosen.direct_source,rangeProbe),env,ctx);
  assert.equal(multivariantResponse.status,200);
  assert.equal(multivariantResponse.headers.get('cache-control'),'no-store');
  assert.equal(multivariantResponse.headers.has('X-SMN-Prepared-Master'),false);
@@ -81,13 +102,19 @@ try{
  const audio=signedUrl(multivariantText.match(/URI="([^"]+)"/)[1]);
  const get=url=>worker.fetch(new Request(url),env,ctx);
  const signedPlaylist=async url=>{
-  const response=await get(url);
+  const response=await worker.fetch(new Request(url,rangeProbe),env,ctx);
   assert.equal(response.status,200);
+  for(const name of ['content-range','content-length','accept-ranges','etag','last-modified'])assert.equal(response.headers.has(name),false);
   const text=await response.text();
   assert.match(text,/#EXTINF/);
   assert.doesNotMatch(text,/#EXT-X-STREAM-INF|source-password-synthetic/);
   return text;
  };
+ const playlistHead=await worker.fetch(new Request(audio,{method:'HEAD',...rangeProbe}),env,ctx);
+ assert.equal(playlistHead.status,200);
+ assert.equal(playlistHead.headers.get('content-length'),null);
+ assert.equal(playlistHead.headers.get('etag'),null);
+ assert.equal(await playlistHead.text(),'');
  await signedPlaylist(audio);
  for(let sequence=1;sequence<=2;sequence++){
   const media=await signedPlaylist(video);
@@ -96,8 +123,18 @@ try{
   const bytes=await get(url);
   assert.equal(bytes.status,200);
   assert.deepEqual(new Uint8Array(await bytes.arrayBuffer()),new Uint8Array([71,42]));
+  const partial=await worker.fetch(new Request(url,{headers:{range:'bytes=1-1'}}),env,ctx);
+  assert.equal(partial.status,206);
+  assert.equal(partial.headers.get('content-range'),'bytes 1-1/2');
+  assert.deepEqual([...new Uint8Array(await partial.arrayBuffer())],[42]);
  }
  assert.deepEqual(calls.map(call=>call.id),['55','56'],'child retries and refreshes do not reopen the Xtream root');
+ assert.ok(requestedRanges.length>=5);
+ assert.ok(requestedRanges.every(([range,validator])=>range===null&&validator===null),'rewritten manifests are always requested whole from CCF');
+ truncateManifest=true;
+ const truncated=await get(audio);
+ assert.equal(truncated.status,502,'reject an unsolicited incomplete origin playlist');
+ truncateManifest=false;
  const activeLeases=await openLeaseStore(objects.get('__smn_accounts_v1').state.storage);
  assert.equal(await activeLeases.count(),1,'all variants and segment fetches share the current lease');
  const changedSuffix=new URL(video);

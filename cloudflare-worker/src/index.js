@@ -471,11 +471,27 @@ async function serverStreamDirect(req,env,u,ctx,trace){
   const [access,lease]=await timed(trace,'auth',()=>Promise.all([sessionCall(env,d.sid,'/check'),d.lease_id?directory(env,d.xtream?'/heartbeat':'/lease-check',{lease_id:d.lease_id,sid:d.sid,request_id:d.request_id,...(d.native_range_id?{native_range_id:d.native_range_id}:{})}):Promise.resolve({ok:true})]));
   if(!access.ok){flow?.finish(access.status>=500?'access_unavailable':'session_denied',{status:410});return new Response('Expired',{status:410,headers:cors})}if(!lease.ok){if(flow)flow.finish(await leaseReason(lease),{status:410});return json({error:'playback_expired'},410)}
  }
- const warm=liveStarts.get(u.href);if(warm){liveStarts.delete(u.href);if(warm.until>Date.now()&&req.method==='GET'){flow?.finish('playlist_response',{status:200});return new Response(warm.body,{headers:{...cors,'content-type':'application/vnd.apple.mpegurl',[INITIAL_EVIDENCE_HEADER]:'manifest'}})}}
+ // The preparation and the player's first refresh can use different public
+ // filenames for the same ticket. A metadata check must leave the warm body for GET.
+ const warmKey=u.origin+'|'+u.searchParams.get('t'),warm=liveStarts.get(warmKey);
+ if(warm){
+  if(warm.until<=Date.now())liveStarts.delete(warmKey);
+  else{
+   if(req.method==='GET')liveStarts.delete(warmKey);
+   flow?.finish('playlist_response',{status:200});
+   return new Response(req.method==='HEAD'?null:warm.body,{headers:{...cors,'content-type':'application/vnd.apple.mpegurl',[INITIAL_EVIDENCE_HEADER]:'manifest'}});
+  }
+ }
  const folder=d.type==='series'?'series':d.type==='live'?'live':'movie',start=d.resource||(d.origin||ORIGIN)+'/'+folder+'/'+encodeURIComponent(d.username)+'/'+encodeURIComponent(d.password)+'/'+d.id+'.'+cleanExt(d.ext);
  const sourceOrigin=d.origin||ORIGIN;
  flowPhase='origin';
- const headers=new Headers({'User-Agent':'SnapMovieNow/1.0','Accept-Encoding':'identity'});for(const n of ['range','if-range'])if(req.headers.has(n))headers.set(n,req.headers.get(n));if(req.method==='HEAD')headers.set('range','bytes=0-0');const maximum=diagnostic?8000:d.type==='live'?8000:VOD_STARTUP_MS,deadline=diagnostic?Math.min(d.caseDeadline||d.exp,Date.now()+maximum):!d.resource?(startupDeadline(req,Date.now(),maximum)??Date.now()+maximum):null;const fetched=await timed(trace,'origin',()=>fetchValidatedMedia(start,headers,d.type,sourceOrigin,{deadline,directCcfEntry:env.CCF_ENTRY_TRANSPORT==='tcp',signal:req.signal,...(flow?{flowMonitor:flow}:{})}));let response=fetched.response;const next=fetched.url;
+ const headers=new Headers({'User-Agent':'SnapMovieNow/1.0','Accept-Encoding':'identity'});
+ const manifestRequest=d.hlsExtension==='m3u8'||new URL(start).pathname.toLowerCase().endsWith('.m3u8');
+ if(!manifestRequest){
+  for(const n of ['range','if-range'])if(req.headers.has(n))headers.set(n,req.headers.get(n));
+  if(req.method==='HEAD')headers.set('range','bytes=0-0');
+ }
+ const maximum=diagnostic?8000:d.type==='live'?8000:VOD_STARTUP_MS,deadline=diagnostic?Math.min(d.caseDeadline||d.exp,Date.now()+maximum):!d.resource?(startupDeadline(req,Date.now(),maximum)??Date.now()+maximum):null;const fetched=await timed(trace,'origin',()=>fetchValidatedMedia(start,headers,d.type,sourceOrigin,{deadline,directCcfEntry:env.CCF_ENTRY_TRANSPORT==='tcp',signal:req.signal,...(flow?{flowMonitor:flow}:{})}));let response=fetched.response;const next=fetched.url;
  flow?.setStatus(response.status);
  flowPhase='lease';const checkedLease=d.lease_id?await directory(env,"/lease-check",{sid:d.sid,lease_id:d.lease_id,request_id:d.request_id,...(d.native_range_id?{native_range_id:d.native_range_id}:{})}):null;
  if(checkedLease&&!checkedLease.ok){if(flow)flow.finish(await leaseReason(checkedLease),{status:410});await response.body?.cancel().catch(()=>{});return json({error:"playback_expired"},410)}
@@ -498,6 +514,18 @@ async function serverStreamDirect(req,env,u,ctx,trace){
  if(response.status===504)out.set('X-SMN-Error-Code','upstream_unavailable');
  if(diagnostic)for(const name of [CASE_OBSERVATION_HEADER,'X-SMN-Case-Source','X-SMN-Case-Validator'])if(response.headers.has(name))out.set(name,response.headers.get(name));
  if(response.ok&&!d.resource&&!playlist&&deadline!==null&&req.method==='GET')out.set(INITIAL_EVIDENCE_HEADER,'bytes');
+ if(playlist){
+  if(response.status===206){
+   const range=/^bytes 0-(\d+)\/(\d+)$/.exec(response.headers.get('content-range')||'');
+   const total=Number(range?.[2]);
+   if(!Number.isSafeInteger(total)||total<1||Number(range[1])!==total-1){await response.body?.cancel();throw Error('invalid_playlist')}
+  }
+  // Byte offsets, lengths and validators of the origin playlist no longer
+  // describe the generated signed URLs. Binary segment ranges stay untouched.
+  for(const name of ['content-length','content-range','accept-ranges','etag','last-modified'])out.delete(name);
+  out.set('content-type','application/vnd.apple.mpegurl');
+  if(req.method==='HEAD'){await response.body?.cancel();return new Response(null,{headers:out})}
+ }
  if(req.method==='HEAD'){
   if(response.status===416){
    // The representation size in bytes */N is not the error body's length.
@@ -527,9 +555,9 @@ async function serverStreamDirect(req,env,u,ctx,trace){
   // playlist still needs its signed refresh URL and warm first response.
   if(d.xtream&&d.type==='live'&&d.ext==='m3u8'&&master){
    out.set('X-SMN-Prepared-Master','1');
-  }else rememberLiveStart(u.href,body);
+  }else rememberLiveStart(warmKey,body);
  }
- out.delete('content-length');out.set('content-type','application/vnd.apple.mpegurl');if(!d.resource)out.set(INITIAL_EVIDENCE_HEADER,'manifest');flow?.finish('playlist_response');return new Response(body,{headers:out})}
+ if(!d.resource)out.set(INITIAL_EVIDENCE_HEADER,'manifest');flow?.finish('playlist_response');return new Response(body,{headers:out})}
  const result=new Response(response.body,{status:response.status,headers:out});
  if(flow&&!response.ok)flow.finish('startup_failed',{status:response.status});
  if(d.xtream&&!d.resource&&d.ext!=='m3u8')return guardXtreamResponse(result,async()=>{
