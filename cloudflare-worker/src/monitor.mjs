@@ -14,6 +14,16 @@ const trackedReferenceLimit=12;
 const persistentNoticeMs=20*60000;
 const transientProbeReasons=['timeout','http_error','inventory_incomplete','unavailable','invalid_reply'];
 const transientProbeTitles=new Set(transientProbeReasons.map(reason=>providerTitle({reason})));
+function familyFromKey(key){
+ if(key?.startsWith('startup:'))return 'startup';
+ if(key?.startsWith('provider:'))return 'probe';
+ return null;
+}
+function emailEnabled(env,family){
+ if(family==='startup')return env.STARTUP_INCIDENT_EMAIL_ENABLED==='true';
+ if(family==='probe')return env.PROVIDER_PROBE_EMAIL_ENABLED==='true';
+ return true;
+}
 function deferredNotice(item){
  return item.kind==='startup'||item.kind==='provider'&&transientProbeReasons.includes(item.provider.reason);
 }
@@ -131,7 +141,7 @@ export function observations(snapshot,now,createdAt,providerSnapshot=providerMon
  return out;
 }
 
-export function applyObservations(state,snapshot,now,startedAt=now){
+export function applyObservations(state,snapshot,now,startedAt=now,env={}){
  const changed=[],bucket=Math.floor(startedAt/interval),seen=new Set(),providerSnapshot=providerMonitorSnapshot(snapshot.providers);
  recordMonitorReads(state,snapshot,now,providerSnapshot);
  if(snapshot.catalogReferences)state.catalogReferences={...snapshot.catalogReferences,collectedAt:now,readStatus:'ok'};
@@ -174,12 +184,12 @@ export function applyObservations(state,snapshot,now,startedAt=now){
     if(impact!==null&&(incident.impact===undefined||worsened))incident.impact=impact;
     if(item.references)incident.references=incident.references?[...incident.references,...newReferences]:evidence.references;
     Object.assign(incident,{title:item.title,detail:item.detail||'',lastObservedAt:now,waitingForSamples:false,...(item.diagnosticContext?{diagnosticContext:item.diagnosticContext}:{})});
-    if(incident.notice==='waiting'&&!deferredNotice(item)){
+    if(incident.notice&&!deferredNotice(item)){
      // A successful probe that finds a disabled account (or a definite
      // configuration failure) is actionable immediately.
      delete incident.notice;
      changed.push({...incident,kind:'opened'});
-    }else if(incident.notice==='waiting'&&state.config.channel==='email'&&state.outbox.length<20&&previous.bad>=5&&now-incident.openedAt>=persistentNoticeMs){
+    }else if(incident.notice==='waiting'&&emailEnabled(env,familyFromKey(item.key))&&state.config.channel==='email'&&state.outbox.length<20&&previous.bad>=5&&now-incident.openedAt>=persistentNoticeMs){
      incident.notice='queued';
      changed.push({...incident,kind:'persistent'});
     }else if(worsened||newReferences.length)changed.push({...incident,kind:worsened?'worsened':'evidence'});
@@ -207,8 +217,11 @@ export function applyObservations(state,snapshot,now,startedAt=now){
   });
   const emailChanges=changes.flatMap((change,index)=>{
    const item=changed[index];
-   if(item.kind==='persistent')return [{...change,confirmKey:item.key}];
-   if(!item.notice||item.notice==='sent'&&['resolved','removed'].includes(item.kind))return [change];
+   if(!item.notice)return [change];
+   const family=familyFromKey(item.key);
+   if(!emailEnabled(env,family))return [];
+   if(item.kind==='persistent')return [{...change,family,confirmKey:item.key}];
+   if(item.notice==='sent'&&['resolved','removed'].includes(item.kind))return [{...change,family}];
    return [];
   });
   const sendEmail=state.config.channel==='email'&&emailChanges.length>0;
@@ -216,7 +229,7 @@ export function applyObservations(state,snapshot,now,startedAt=now){
   state.history.unshift(event);state.history=state.history.slice(0,50);
   if(sendEmail&&state.outbox.length<20){
    const mailChanges=emailChanges.map(change=>({...change,detail:'Incidente: '+change.id+(change.detail?'\n'+change.detail:'')}));
-   state.outbox.push({...event,changes:mailChanges,attempts:0,nextAt:now,version:state.config.version,routed:true});
+   state.outbox.push({...event,changes:mailChanges,attempts:0,nextAt:now,version:state.config.version,routed:true,typedFamilies:true});
   }
   else if(sendEmail)event.delivery='queue_full';
  }
@@ -241,8 +254,34 @@ function legacyDeferredChange(change,incident){
  if(incident)return incident.kind==='startup'||incident.kind==='provider'&&transientProbeTitles.has(incident.title);
  if(change.kind==='resolved')return ['Inicio de contenido','Comprobación de la fuente'].includes(change.title);
  if(change.kind!=='opened')return false;
- const title=String(change.title||'').replace(/^(EMPEORAMIENTO|EVIDENCIA NUEVA) · /,'');
+ const title=String(change.title||'').replace(/^(EMPEORAMIENTO|EVIDENCIA NUEVA|PERSISTENTE) · /,'');
  return transientProbeTitles.has(title)||['Demoras al iniciar contenido','Fallos repetidos al iniciar contenido','Demoras y fallos repetidos al iniciar contenido'].includes(title);
+}
+
+// Previous deployments stored incident IDs and human-readable titles on
+// queued recoveries, without a notification family. A definite account or
+// configuration failure must retain its own recovery notification.
+function queuedFamily(change,event,state){
+ if(event.typedFamilies)return change.family;
+ if(change.confirmKey)return familyFromKey(change.confirmKey);
+ const incident=Object.values(state.incidents).find(item=>item.id===change.id);
+ if(incident){
+  if(incident.kind==='startup')return 'startup';
+  if(incident.kind!=='provider')return null;
+  if(change.kind==='opened'){
+   const title=String(change.title||'').replace(/^(EMPEORAMIENTO|EVIDENCIA NUEVA|PERSISTENTE) · /,'');
+   return transientProbeTitles.has(title)?'probe':null;
+  }
+  if(incident.notice||transientProbeTitles.has(incident.title))return 'probe';
+  return null;
+ }
+ if(change.kind==='resolved'&&change.title==='Comprobación de la fuente'){
+  const opening=state.history.flatMap(item=>item.changes).find(item=>item.id===change.id&&item.kind==='opened');
+  return opening&&!legacyDeferredChange(opening)?null:'probe';
+ }
+ if(!legacyDeferredChange(change))return null;
+ const title=String(change.title).replace(/^(EMPEORAMIENTO|EVIDENCIA NUEVA|PERSISTENTE) · /,'');
+ return transientProbeTitles.has(title)?'probe':'startup';
 }
 
 function queuedChangeEligible(change,event,state,now){
@@ -368,7 +407,7 @@ export class OperationsMonitor{
     const state=await tx.get('monitor');if(state.run?.id!==runId)return null;
     delete state.run;
     const checkedAt=Date.now(),applied=state.config.version===claim.version&&state.config.enabled;
-    if(applied)applyObservations(state,snapshot,checkedAt,claim.at);
+    if(applied)applyObservations(state,snapshot,checkedAt,claim.at,this.env);
     await putState(tx,state);
     if(!applied)return null;
     const providerSnapshot=providerMonitorSnapshot(snapshot.providers);
@@ -393,10 +432,20 @@ export class OperationsMonitor{
    const state=await tx.get('monitor');if(!state||!state.config.enabled||state.config.channel!=='email')return null;
    let event=state.outbox[0],removed=false;
    while(event&&!(event.claimedAt>now-60000)){
-    const eligible=event.changes.filter(change=>queuedChangeEligible(change,event,state,now));
+    const allowed=event.changes.filter(change=>{
+     if(emailEnabled(this.env,queuedFamily(change,event,state)))return true;
+     const incident=Object.values(state.incidents).find(row=>row.id===change.id);
+     if(incident?.notice==='queued')incident.notice='waiting';
+     return false;
+    });
+    if(allowed.length!==event.changes.length){
+     // Keep the same idempotency key even if a previous request timed out.
+     // A filtered retry cannot resend a muted notice or duplicate a critical one.
+     event.changes=allowed;
+    }
+    const eligible=allowed.filter(change=>queuedChangeEligible(change,event,state,now));
     if(eligible.length){
-     // Resend requires identical payloads on a retry with the same key. An
-     // old mixed email already attempted may have been accepted before a timeout.
+     // Preserve timing-based retry payloads after the policy filter above.
      if(!event.attempts&&!event.claimedAt)event.changes=eligible;
      break;
     }

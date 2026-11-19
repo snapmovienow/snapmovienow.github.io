@@ -15,7 +15,7 @@ const providerSample=(reason='ok',at=now)=>({id:sourceId,ok:reason==='ok',stage:
 const providerEnvelope=(reason='ok',at=now)=>({configuredIds:[sourceId],providers:[providerSample(reason,at)]});
 let providers=providerEnvelope(),playback={groups:[],timings:[]},backups=goodBackup(),catalog={references:[],servers:[]},reads=0;
 const firstProviderRead=Promise.withResolvers();let blockFirstProviderRead=true;
-const env={ENVIRONMENT:'production',TICKET_SECRET:'synthetic-monitor-secret-never-deployed',PLAYBACK_SESSIONS:{idFromName:name=>name,get:name=>({fetch:async url=>{reads++;if(blockFirstProviderRead&&name==='__smn_provider_refresh_v1')await firstProviderRead.promise;return Response.json(name==='__smn_provider_refresh_v1'?providers:name==='__smn_operations_v1'?playback:url.endsWith('/catalog-references-status')?catalog:backups)}})}};
+const env={ENVIRONMENT:'production',PROVIDER_PROBE_EMAIL_ENABLED:'true',TICKET_SECRET:'synthetic-monitor-secret-never-deployed',PLAYBACK_SESSIONS:{idFromName:name=>name,get:name=>({fetch:async url=>{reads++;if(blockFirstProviderRead&&name==='__smn_provider_refresh_v1')await firstProviderRead.promise;return Response.json(name==='__smn_provider_refresh_v1'?providers:name==='__smn_operations_v1'?playback:url.endsWith('/catalog-references-status')?catalog:backups)}})}};
 const monitor=new OperationsMonitor({storage:store},env),call=async(path,body={})=>{const response=await monitor.fetch(new Request('https://private'+path,{method:'POST',body:JSON.stringify(body)}));return {status:response.status,data:await response.json()}};
 let mailCalls=[];globalThis.fetch=async(url,options)=>{mailCalls.push({url,options});return Response.json({id:'synthetic-email'})};
 const next=async()=>{now+=300000;for(const row of providers?.providers||[])row.observedAt=now;return call('/tick')},open=async()=> (await call('/status')).data.incidents.filter(i=>i.status==='open');
@@ -144,7 +144,7 @@ try{
   const probe=async(reason,flush=true)=>{
    const row=await isolated.get('monitor');
    const snapshot=reason===null?{}:{providers:providerEnvelope(reason,now)};
-   applyObservations(row,snapshot,now);await isolated.put('monitor',row);
+   applyObservations(row,snapshot,now,now,env);await isolated.put('monitor',row);
    if(flush)await quiet.flush();
    now+=300000;
   };
@@ -168,6 +168,48 @@ try{
   }finally{now=started;mailCalls.length=0}
  };
  await quietRun();
+ // Muting is independently reversible. It affects only delivery, including
+ // sustained incidents, and never prevents tracking or confirmed recovery.
+ for(const [switches,expected]of [
+  [{},[]],
+  [{STARTUP_INCIDENT_EMAIL_ENABLED:'true'},['startup']],
+  [{PROVIDER_PROBE_EMAIL_ENABLED:'true'},['probe']]
+ ]){
+  const state={createdAt:now,config:legacyState.config,checks:{},incidents:{},history:[],outbox:[]};
+  const sample=(slot,bad)=>{
+   const at=now+slot*300000;
+   applyObservations(state,{providers:providerEnvelope(bad?'timeout':'ok',at),playback:{timings:[bad?slowStart:{...slowStart,stages:{total:{p95UpperMs:1000}}}]}},at,at,switches);
+  };
+  for(let slot=0;slot<7;slot++)sample(slot,true);
+  assert.deepEqual(state.outbox.flatMap(event=>event.changes.map(change=>change.family)),expected);
+  assert.equal(Object.values(state.incidents).filter(incident=>incident.status==='open').length,2);
+  // A deployment may mute alerts after the earlier opening email was accepted.
+  for(const incident of Object.values(state.incidents))incident.notice='sent';
+  state.outbox=[];
+  for(let slot=7;slot<10;slot++)sample(slot,false);
+  assert.deepEqual(state.outbox.flatMap(event=>event.changes.map(change=>change.family)),expected);
+  assert.ok(Object.values(state.incidents).every(incident=>incident.status==='resolved'));
+ }
+ // Previously claimed mixed batches use the original key and omit disabled
+ // categories from every outbound retry. Unrelated alerts are still sent.
+ const migratedState=await store.get('monitor');
+ const persistedChange={id:'old-start',kind:'opened',title:'PERSISTENTE · Demoras al iniciar contenido',confirmKey:'startup:live:other'};
+ const oldProbe={id:'old-probe',kind:'opened',title:'Falló la comprobación de una fuente · La comprobación agotó su plazo'};
+ const oldRecovery={id:'old-probe',kind:'resolved',title:'Comprobación de la fuente'};
+ const oldCritical={id:'old-password',kind:'opened',title:'Falló la comprobación de una fuente · No se pudieron leer las credenciales guardadas'};
+ const criticalRecovery={id:'old-password',kind:'resolved',title:'Comprobación de la fuente'};
+ migratedState.history=[{id:'prev',changes:[oldProbe,oldCritical],delivery:'accepted'}];
+ const pendingMuted=legacyNotice('pre-toggle-persistent',[persistedChange]),mixedRetry=legacyNotice('pre-toggle-retry',[oldRecovery,criticalRecovery,backupChange]);
+ mixedRetry.attempts=1;mixedRetry.routed=true;
+ migratedState.outbox=[pendingMuted,mixedRetry];
+ const migratedStore=new Store();await migratedStore.put('monitor',migratedState);
+ await new OperationsMonitor({storage:migratedStore},{...env,PROVIDER_PROBE_EMAIL_ENABLED:'false'}).flush();
+ const retryOptions=mailCalls.pop().options;
+ assert.equal(retryOptions.headers['Idempotency-Key'],'snap-alert/pre-toggle-retry');
+ assert.doesNotMatch(JSON.parse(retryOptions.body).text,/Demoras al iniciar contenido/);
+ assert.equal(JSON.parse(retryOptions.body).text.match(/Comprobación de la fuente/g)?.length,1);
+ assert.match(JSON.parse(retryOptions.body).text,/Falló la copia automática/);
+ assert.equal((await migratedStore.get('monitor')).outbox.length,0);
  const mailGroup={...group,reports:20};playback.groups=[mailGroup];await next();
  const incidentId=(await open()).find(i=>i.kind==='playback').id;
  assert.match(JSON.parse(mailCalls[0].options.body).text,new RegExp('Incidente: '+incidentId));
