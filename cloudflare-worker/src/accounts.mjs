@@ -553,14 +553,24 @@ async function registerXtream(store,entries){
  const kinds=new Set(['live','movie','series_list','episode','live_category','movie_category','series_category']);
  if(entries.some(e=>!kinds.has(e.kind)||typeof e.server!=='string'||e.server.length>100||!/^\d{1,16}$/.test(String(e.upstreamId))))return answer({error:'invalid_catalog'},400);
  return store.transaction(async tx=>{
-  let next=await tx.get('xtream-next-id')||1;const result=[];
+  let next;
+  const result=[];
   for(let offset=0;offset<entries.length;offset+=60){const chunk=entries.slice(offset,offset+60),keys=chunk.map(e=>'xtream-map:'+e.kind+':'+e.server+':'+e.upstreamId),existing=await tx.get(keys),writes={};
    const knownIds=[...new Set([...existing.values()])],known=knownIds.length?await tx.get(knownIds.map(id=>'xtream-id:'+id)):new Map();
-   for(let i=0;i<chunk.length;i++){const key=keys[i],e=chunk[i],activity=cleanPlaybackActivity(e.activity,e.kind==='episode'||e.kind==='series_list'?'series':e.kind);let id=existing.get(key)||writes[key];const isNew=!id;if(isNew){if(next>2147483647)throw Error('catalog_id_limit');id=next++;writes[key]=id;}
-    const previous=writes['xtream-id:'+id]||known.get('xtream-id:'+id),record={kind:e.kind,server:e.server,upstreamId:String(e.upstreamId),...(e.ext?{ext:e.ext}:{}),...(e.parentId?{parentId:String(e.parentId)}:{}),...(activity?{activity}:previous?.activity?{activity:previous.activity}:{}),id};
+   for(let i=0;i<chunk.length;i++){const key=keys[i],e=chunk[i],activity=cleanPlaybackActivity(e.activity,e.kind==='episode'||e.kind==='series_list'?'series':e.kind);let id=existing.get(key)||writes[key];const isNew=!id;
+    if(isNew){
+     if(next===undefined)next=await tx.get('xtream-next-id')||1;
+     if(next>2147483647)throw Error('catalog_id_limit');
+     id=next++;writes[key]=id;
+    }
+    const previous=writes['xtream-id:'+id]||known.get('xtream-id:'+id);
+    // A title list supplies a bare category reference. Keep metadata supplied by its category list.
+    const ext=e.ext||(e.kind.endsWith('_category')?previous?.ext:undefined);
+    const record={kind:e.kind,server:e.server,upstreamId:String(e.upstreamId),...(ext?{ext}:{}),...(e.parentId?{parentId:String(e.parentId)}:{}),...(activity?{activity}:previous?.activity?{activity:previous.activity}:{}),id};
     if(isNew||JSON.stringify(previous)!==JSON.stringify(record))writes['xtream-id:'+id]=record;result.push(id)}
    if(Object.keys(writes).length)await tx.put(writes);
   }
-  await tx.put('xtream-next-id',next);return answer(result);
+  if(next!==undefined)await tx.put('xtream-next-id',next);
+  return answer(result);
  });
 }

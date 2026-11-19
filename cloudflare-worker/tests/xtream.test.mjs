@@ -6,13 +6,24 @@ import {guardXtreamResponse, publicMetadata} from '../src/xtream-bridge.mjs';
 // End-to-end Worker tests use isolated local users and two simulated providers.
 // No requests or credentials are sent to a real service.
 class Store {
-  constructor() {this.data = new Map(); this.queue = Promise.resolve()}
+  constructor() {
+    this.data = new Map(); this.queue = Promise.resolve();
+    this.nextIdReads = 0; this.nextIdWrites = 0; this.catalogRecordWrites = 0;
+  }
   async get(key) {
+    if (key === 'xtream-next-id') this.nextIdReads++;
     if (Array.isArray(key)) return new Map(key.filter(k => this.data.has(k)).map(k => [k, structuredClone(this.data.get(k))]));
     return structuredClone(this.data.get(key));
   }
   async put(key, value) {
-    if (typeof key === 'object') {assert.ok(Object.keys(key).length <= 128); for (const [k,v] of Object.entries(key)) this.data.set(k, structuredClone(v))}
+    if (key === 'xtream-next-id') this.nextIdWrites++;
+    if (typeof key === 'object') {
+      assert.ok(Object.keys(key).length <= 128);
+      for (const [k,v] of Object.entries(key)) {
+        if (k.startsWith('xtream-id:')) this.catalogRecordWrites++;
+        this.data.set(k, structuredClone(v));
+      }
+    }
     else this.data.set(key, structuredClone(value));
   }
   async delete(key) {this.data.delete(key)}
@@ -147,7 +158,34 @@ for (let i=0;i<2;i++) {
   assert.equal(details.info.name, 'Movie '+i); assert.equal(details.movie_data.stream_id, movies[i].stream_id); noProviderSecrets(details);
 }
 noProviderSecrets(movies); noProviderSecrets(movieCategories);
+const registryStorage=objects.get('__smn_xtream_catalog_v1').state.storage;
+const counterUse=()=>[registryStorage.nextIdReads,registryStorage.nextIdWrites];
+const counterBeforeRefresh=counterUse();
+assert.ok(registryStorage.nextIdWrites>0,'first registration allocated public IDs');
 assert.deepEqual(await (await api('get_vod_streams')).json(), movies, 'catalog refresh preserves public IDs');
+assert.deepEqual(counterUse(),counterBeforeRefresh,'refresh of registered titles does not read or write the ID allocator');
+const recordWritesBeforeRefresh=registryStorage.catalogRecordWrites;
+assert.deepEqual(await (await api('get_vod_categories')).json(),movieCategories);
+assert.deepEqual(await (await api('get_vod_streams')).json(),movies);
+assert.equal(registryStorage.catalogRecordWrites,recordWritesBeforeRefresh,'switching between category and title listings does not rewrite the same categories');
+const catalogObject=env.PLAYBACK_SESSIONS.get('__smn_xtream_catalog_v1');
+const catalogCall=async(path,body)=>{
+  const response=await catalogObject.fetch('https://private/accounts/'+path,{method:'POST',body:JSON.stringify(body)});
+  assert.equal(response.status,200);
+  return response.json();
+};
+const catalogEntry={kind:'movie',server:'new-provider',upstreamId:'1',ext:'mp4'};
+const registerEntries=entries=>catalogCall('xtream-register',{entries});
+const [[firstId,secondId],[sameId,thirdId]]=await Promise.all([
+  registerEntries([catalogEntry,{...catalogEntry,upstreamId:'2'}]),
+  registerEntries([catalogEntry,{...catalogEntry,upstreamId:'3'}])
+]);
+assert.equal(firstId,sameId);
+assert.equal(new Set([firstId,secondId,thirdId]).size,3,'overlapping imports allocate unique IDs');
+const counterBeforeEdit=counterUse();
+assert.deepEqual(await registerEntries([{...catalogEntry,ext:'mkv'}]),[firstId]);
+assert.equal((await catalogCall('xtream-resolve',{id:firstId})).ext,'mkv','catalog edits still reach existing entries');
+assert.deepEqual(counterUse(),counterBeforeEdit);
 const channels = await (await api('get_live_streams')).json();
 const series = await (await api('get_series')).json();
 const seriesCategories = await (await api('get_series_categories')).json();
