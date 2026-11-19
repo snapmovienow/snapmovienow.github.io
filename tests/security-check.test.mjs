@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
-import {mkdtempSync,mkdirSync,writeFileSync,rmSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,readFileSync,writeFileSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {inspectRepository,diagnostic,sensitivePath,scanText} from '../scripts/security-check.mjs';
@@ -69,4 +69,13 @@ test('curated public images and finite compatibility demo are allowed',t=>{
  f.write('artifacts/pages/branding-test/source.json','{"kind":"public-demo"}',false);
  f.write('artifacts/pages/branding-test/master.m3u8','#EXTM3U',false);
  assert.deepEqual(f.inspect().issues,[]);
+});
+
+test('only the published installer bytes at the approved public path pass',t=>{
+ const f=fixture(t), apk=readFileSync(new URL('../instalar.apk',import.meta.url));
+ f.write('artifacts/pages/instalar.apk',apk,false);
+ assert.deepEqual(f.inspect().issues,[]);
+ f.write('artifacts/pages/otro.apk',apk,false);
+ f.write('artifacts/pages/instalar.apk',Buffer.concat([apk,Buffer.from([0])]),false);
+ assert.deepEqual(f.inspect().issues.filter(i=>i.kind==='pages_private_boundary').map(i=>i.file).sort(),['artifacts/pages/instalar.apk','artifacts/pages/otro.apk']);
 });

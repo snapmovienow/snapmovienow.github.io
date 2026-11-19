@@ -1,4 +1,5 @@
 import {execFileSync} from 'node:child_process';
+import {createHash} from 'node:crypto';
 import {lstatSync,readFileSync,readdirSync} from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -36,7 +37,9 @@ export function scanText(value,file){
  }
  return issues;
 }
-function artifactAllowed(file){
+const installerSha256 = '92baedca5fc7e56f8f7eeb1832e7f26f94a7d5389e565cd547849b78490decfa';
+function artifactAllowed(file, contents){
+ if(file==='instalar.apk')return createHash('sha256').update(contents).digest('hex')===installerSha256;
  const parts=file.split('/');
  if(parts.length===1)return /\.(?:html|js|css)$/.test(file)||['CNAME','.nojekyll'].includes(file);
  if(parts[0]==='assets')return parts.every(part=>!part.startsWith('.'))&&/\.(?:svg|png|jpe?g|webp|gif|ico|woff2?|ttf|otf)$/i.test(file);
@@ -49,8 +52,9 @@ export function inspectRepository({root,pagesDirectory=path.join(root,'artifacts
   if(sensitivePath(file))issues.push({file:name,line:1,kind:'private_filename'});
   const stat=lstatSync(absolute);
   if(!stat.isFile()){issues.push({file:name,line:1,kind:'non_regular_file'});return;}
-  if(artifact&&!artifactAllowed(file))issues.push({file:name,line:1,kind:'pages_private_boundary'});
-  issues.push(...scanText(readFileSync(absolute,'utf8'),(artifact?'artifacts/pages/':'')+file));
+  const contents=readFileSync(absolute);
+  if(artifact&&!artifactAllowed(file,contents))issues.push({file:name,line:1,kind:'pages_private_boundary'});
+  issues.push(...scanText(contents.toString('utf8'),(artifact?'artifacts/pages/':'')+file));
  };
  for(const file of tracked)inspect(file,path.join(root,file));
  const walk=(directory,prefix='')=>{
