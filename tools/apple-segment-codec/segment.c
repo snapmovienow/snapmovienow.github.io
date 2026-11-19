@@ -18,6 +18,7 @@ static int out_len;
 static int media_offset;
 static int err_detail;
 static int input_width, input_height;
+static unsigned audio_packets, invalid_packets, first_invalid, last_invalid, concealed_samples;
 static int64_t first_sample;
 
 static int read_buffer(void *ctx, uint8_t *dest, int count) {
@@ -153,25 +154,54 @@ EXPORT int convert(uint8_t *data, unsigned size, unsigned sequence, double epoch
             TRY(17,av_write_frame(output,pkt));
             if(++video_count>MAX_SECONDS*120) return 18;
         } else if(pkt->stream_index==in_a->index) {
-            if(start==AV_NOPTS_VALUE) {
-                if(pkt->pts==AV_NOPTS_VALUE) return 19;
+            audio_packets++;
+            if(audio_packets > MAX_SECONDS * 160) return 34;
+            int64_t packet_sample = AV_NOPTS_VALUE;
+            if(pkt->pts != AV_NOPTS_VALUE) {
                 int64_t raw90=av_rescale_q(pkt->pts,in_a->time_base,(AVRational){1,90000});
-                start=av_rescale_q(unwrap90(raw90,epoch90),(AVRational){1,90000},encoder->time_base);
+                packet_sample=av_rescale_q(unwrap90(raw90,epoch90),(AVRational){1,90000},encoder->time_base);
             }
-            TRY(20,avcodec_send_packet(decoder,pkt));
-            int dret;
-            while((dret=avcodec_receive_frame(decoder,pcm))>=0) {
-                if(pcm->format!=AV_SAMPLE_FMT_FLTP || pcm->sample_rate!=rate ||
-                   pcm->ch_layout.nb_channels!=channels || pcm->nb_samples<=0 ||
-                   pcm->nb_samples>(int)(max_samples-used)) return 21;
-                for(int c=0;c<channels;c++) memcpy(floats[c]+used,pcm->extended_data[c],pcm->nb_samples*sizeof(float));
-                used+=pcm->nb_samples;
-                av_frame_unref(pcm);
+            // The first or last audio PES can straddle a TS segment boundary. libavcodec
+            // may reject that partial frame before it yields anything. Native ffmpeg
+            // normally continues at the next complete frame.
+            int ret=avcodec_send_packet(decoder,pkt);
+            int repair = last_invalid && last_invalid == audio_packets-1;
+            if(ret>=0) {
+                while((ret=avcodec_receive_frame(decoder,pcm))>=0) {
+                    if(pcm->format!=AV_SAMPLE_FMT_FLTP || pcm->sample_rate!=rate ||
+                       pcm->ch_layout.nb_channels!=channels || pcm->nb_samples<=0) return 21;
+                    if(start==AV_NOPTS_VALUE) {
+                        if(packet_sample==AV_NOPTS_VALUE) return 19;
+                        start=packet_sample;
+                    }
+                    if(repair && packet_sample!=AV_NOPTS_VALUE) {
+                        int64_t gap=packet_sample-start-used;
+                        if(gap > 4*1152 || gap < -1152) return 35;
+                        if(gap > 0) {
+                            if(gap > (int64_t)(max_samples-used)) return 21;
+                            for(int c=0;c<channels;c++) memset(floats[c]+used,0,gap*sizeof(float));
+                            used+=gap;
+                            concealed_samples+=gap;
+                        }
+                    }
+                    repair=0;
+                    if(pcm->nb_samples>(int)(max_samples-used)) return 21;
+                    for(int c=0;c<channels;c++) memcpy(floats[c]+used,pcm->extended_data[c],pcm->nb_samples*sizeof(float));
+                    used+=pcm->nb_samples;
+                    av_frame_unref(pcm);
+                }
+                if(ret==AVERROR(EAGAIN)||ret==AVERROR_EOF) ret=0;
             }
-            if(dret!=AVERROR(EAGAIN) && dret!=AVERROR_EOF) return 22;
+            if(ret==AVERROR_INVALIDDATA) {
+                if(!invalid_packets) first_invalid=audio_packets;
+                invalid_packets++;
+                last_invalid=audio_packets;
+                if(invalid_packets>4) { err_detail=ret;return 20; }
+            } else if(ret<0) {err_detail=ret;return 20;}
         }
         av_packet_unref(pkt);
     }
+    if(invalid_packets>1 && invalid_packets*20>audio_packets) return 36;
     if(read_ret!=AVERROR_EOF || !video_count || used<1024 || start==AV_NOPTS_VALUE) return 23;
     // Round the original absolute audio start and end to the nearest AAC frame boundary.
     // This keeps adjacent fragments contiguous without accumulating encoder delay or drift.
@@ -211,3 +241,14 @@ EXPORT int output_pointer(void){return (int)(uintptr_t)out_data;}
 EXPORT int output_size(void){return out_len;}
 EXPORT int init_size(void){return media_offset;}
 EXPORT int error_detail(void){return err_detail;}
+
+EXPORT unsigned diagnostic(unsigned field) {
+    switch(field) {
+    case 0:return audio_packets;
+    case 1:return invalid_packets;
+    case 2:return first_invalid;
+    case 3:return last_invalid;
+    case 4:return concealed_samples;
+    default:return 0;
+    }
+}

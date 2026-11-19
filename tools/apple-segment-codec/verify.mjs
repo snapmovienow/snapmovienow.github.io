@@ -20,6 +20,22 @@ function videoHashes(input) {
   return lines.filter(line=>/^\d+,/.test(line)).map(line=>line.slice(line.lastIndexOf(',')+1).trim());
 }
 
+function damageAudioPacket(bytes, select) {
+  const copy=Buffer.from(bytes);
+  let seen=0, changed=0;
+  for(let at=0;at+188<=copy.length;at+=188){
+    if(copy[at]!==0x47 || !(copy[at+1]&0x40)) continue;
+    const flags=copy[at+3]>>4;
+    if(!(flags&1)) continue;
+    const end=at+188, pes=at+4+((flags&2)?copy[at+4]+1:0);
+    if(pes+10>=end || copy.readUIntBE(pes,3)!==1 || (copy[pes+3]&0xe0)!==0xc0) continue;
+    const frame=pes+9+copy[pes+8];
+    if(frame+4>end || copy[frame]!==0xff || (copy[frame+1]&0xe0)!==0xe0) continue;
+    if(select(++seen)) { copy.fill(0,frame,frame+4); changed++; }
+  }
+  return {bytes:copy,changed};
+}
+
 try {
   assert.throws(()=>convertWithModule(module,new Uint8Array(4096)), /apple_segment_codec_/);
   assert.throws(()=>convertWithModule(module,new Uint8Array(8*1024*1024+1)), /size/);
@@ -44,6 +60,15 @@ try {
     output.push(converted.media);
     input.push(ts);
   }
+  const firstInput=readFileSync(path.join(root,files[0]));
+  const damaged=damageAudioPacket(firstInput,index=>index===3);
+  assert.equal(damaged.changed,1);
+  const recovered=convertWithModule(module,damaged.bytes,{epochMs:1795090000000});
+  assert.equal(recovered.diagnostics.invalid,1);
+  assert.ok(recovered.diagnostics.concealedSamples<=1152);
+  const excessive=damageAudioPacket(firstInput,index=>index>=3);
+  assert.ok(excessive.changed>4);
+  assert.throws(()=>convertWithModule(module,excessive.bytes,{epochMs:1795090000000}),/apple_segment_codec_/);
   assert.ok(times.some(t=>t<0) && times.some(t=>t>=0),'fixture must cross MPEG-TS wrap');
   writeFileSync(path.join(root,'joined.mp4'),Buffer.concat(output));
   writeFileSync(path.join(root,'source.ts'),Buffer.concat(input));

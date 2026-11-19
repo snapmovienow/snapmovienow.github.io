@@ -33,7 +33,7 @@ cd "$work/ffmpeg-8.1.3"
     --extra-libs='-lwasi-emulated-signal -lwasi-emulated-process-clocks -lwasi-emulated-mman'
 make -j"${JOBS:-4}"
 "$sdk/bin/clang" -Os -mexec-model=reactor -I. "$source_dir/segment.c" \
-    -Wl,--export=reserve_input,--export=convert,--export=output_pointer,--export=output_size,--export=init_size,--export=error_detail,--strip-all,--max-memory=83886080,-z,stack-size=524288 \
+    -Wl,--export=reserve_input,--export=convert,--export=output_pointer,--export=output_size,--export=init_size,--export=error_detail,--export=diagnostic,--strip-all,--max-memory=83886080,-z,stack-size=524288 \
     libavformat/libavformat.a libavcodec/libavcodec.a libavutil/libavutil.a \
     -lwasi-emulated-signal -lwasi-emulated-process-clocks -lwasi-emulated-mman -lm \
     -o "$work/apple-segment-codec.wasm"

@@ -24,9 +24,15 @@ export function convertWithModule(module, tsBytes, {sequence=0,epochMs=0}={}) {
   if(!ptr) throw new Error('apple_segment_allocation_failed');
   new Uint8Array(e.memory.buffer,ptr,tsBytes.length).set(tsBytes);
   const status=e.convert(ptr,tsBytes.length,sequence%2147483646,epochMs);
-  if(status) throw new Error('apple_segment_codec_'+status+'_'+e.error_detail());
+  const diagnostics={packets:e.diagnostic(0), invalid:e.diagnostic(1), firstInvalid:e.diagnostic(2),
+                     lastInvalid:e.diagnostic(3), concealedSamples:e.diagnostic(4)};
+  if(status) {
+    const error=new Error('apple_segment_codec_'+status+'_'+e.error_detail());
+    error.diagnostics=diagnostics;
+    throw error;
+  }
   const at=e.output_pointer(),size=e.output_size(),split=e.init_size();
   if(at<=0||split<16||split>=size||at+size>e.memory.buffer.byteLength) throw new Error('apple_segment_invalid_output');
   const bytes = new Uint8Array(e.memory.buffer,at,size);
-  return {init:bytes.slice(0,split),media:bytes.slice(split),heapBytes:e.memory.buffer.byteLength};
+  return {init:bytes.slice(0,split),media:bytes.slice(split),heapBytes:e.memory.buffer.byteLength,diagnostics};
 }
