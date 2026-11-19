@@ -3,7 +3,7 @@ import path from 'node:path';
 const root=process.cwd(),out=path.join(root,'artifacts/pages');
 rmSync(out,{recursive:true,force:true});mkdirSync(out,{recursive:true});
 // Publish only browser assets. Server code, dependencies, reports and tests stay out.
-const files=readdirSync(root).filter(name=>/\.(html|js|css)$/.test(name)).concat('CNAME');
+const files=readdirSync(root).filter(name=>/\.(html|js|css)$/.test(name)).concat('CNAME', 'instalar.apk');
 for(const file of files){if(!lstatSync(path.join(root,file)).isFile())throw Error('Invalid frontend file: '+file);copyFileSync(path.join(root,file),path.join(out,file));}
 cpSync(path.join(root,'assets'),path.join(out,'assets'),{recursive:true});writeFileSync(path.join(out,'.nojekyll'),'');
 // A finite, public compatibility demo. Never publish server code or recordings.
