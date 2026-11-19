@@ -188,3 +188,57 @@ try{
  assert.ok(!Object.hasOwn(await storage.get('source-pools'),sources[0]),'an old refresh cannot restore a removed source');
 }finally{removalRelease.resolve();inventoryGate=null;}
 console.log('PASS: opening the dashboard only reads saved data; manual refresh, background refresh and monitor share reads with safe wait telemetry; a removed source stays removed.');
+
+const summary=await env.PLAYBACK_SESSIONS.get('__smn_accounts_v1').fetch('https://private/accounts/pool',{
+ method:'POST',body:JSON.stringify({summary:true})
+});
+const currentPool=await readPool();
+assert.deepEqual(await summary.json(),{count:currentPool.lines.length,attemptedAt:currentPool.attemptedAt});
+
+const coordinator=objects.get('__smn_provider_refresh_v1');
+const queued=Promise.withResolvers(),unblock=Promise.withResolvers();
+const provider={source:'fixture:queued-source',encrypted:'credential-v1'};
+let externalReads=0;
+const fetchInventory=async progress=>{
+ externalReads++;
+ progress({receivedRows:2,acceptedRows:2});
+ return {lines:['first','second']};
+};
+const waiting=coordinator.inventoryBatch(async share=>{
+ queued.resolve();
+ await unblock.promise;
+ let progress;
+ const value=await share(provider,'monitor',fetchInventory,stage=>{progress=stage});
+ assert.deepEqual(value.lines,['first','second']);
+ assert.deepEqual(progress,{receivedRows:2,acceptedRows:2});
+});
+await queued.promise;
+await coordinator.inventoryBatch(share=>share(provider,'refresh',fetchInventory));
+unblock.resolve();
+await waiting;
+assert.equal(externalReads,1,'a queued monitor consumes the real successful read started during its own pass');
+await coordinator.inventoryBatch(share=>share(provider,'refresh',fetchInventory));
+assert.equal(externalReads,2,'a new refresh still reads the source after the shared operations have finished');
+
+for(const scenario of ['credential-change','read-failed','started-before-monitor']){
+ const gate=Promise.withResolvers(),resume=Promise.withResolvers(),prior=Promise.withResolvers(),finish=Promise.withResolvers();
+ let attempts=0;
+ const countRead=async()=>{attempts++;return {lines:[]}};
+ const startedEarlier=scenario==='started-before-monitor'&&coordinator.inventoryBatch(share=>share(provider,'refresh',async()=>{
+  attempts++;prior.resolve();await finish.promise;return {lines:[]};
+ }));
+ if(startedEarlier)await prior.promise;
+ const next=coordinator.inventoryBatch(async share=>{
+  gate.resolve();await resume.promise;
+  return share(scenario==='credential-change'?{...provider,encrypted:'credential-v2'}:provider,'monitor',countRead);
+ });
+ await gate.promise;
+ if(startedEarlier){finish.resolve();await startedEarlier}
+ else if(scenario==='read-failed'){
+  await assert.rejects(coordinator.inventoryBatch(share=>share(provider,'refresh',async()=>{attempts++;throw Error('fixture_unavailable')})),/fixture_unavailable/);
+ }else await coordinator.inventoryBatch(share=>share(provider,'refresh',countRead));
+ resume.resolve();await next;
+ assert.equal(attempts,2,`a ${scenario} read cannot satisfy the queued monitor`);
+}
+assert.equal(coordinator.inventoryReaders.size,0);
+console.log('PASS: overlapping queued source reads are shared, failed/older/rotated reads are retried, and the refresh summary excludes account rows.');

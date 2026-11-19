@@ -98,18 +98,42 @@ async function unticket(env,t){try{if(!env.TICKET_SECRET)return null;const raw=u
 
 export class PlaybackSession {
  constructor(state,env){this.state=state;this.env=env}
- async inventoryRead(provider,operation,read,onProgress){
+ async inventoryBatch(run){
+  // Keep completed reads only for other operations already underway when
+  // the provider read starts. A later refresh or monitor always reads anew.
+  const readers=this.inventoryReaders??=new Set(),completed=new Map();
+  readers.add(completed);
+  try{return await run((provider,operation,read,onProgress)=>this.inventoryRead(provider,operation,read,onProgress,completed))}
+  finally{readers.delete(completed);completed.clear()}
+ }
+ async inventoryRead(provider,operation,read,onProgress,completed){
   const source=provider.source,startedAt=Date.now(),reads=this.inventoryReads??=new Map();
   let flight=reads.get(source);
   const shared=!!flight&&flight.credential===provider.encrypted;
   if(!shared){
+   const previous=completed.get(source);
+   if(previous&&previous.credential===provider.encrypted){
+    completed.delete(source);
+    if(previous.progress)onProgress?.(previous.progress);
+    console.log({event:'provider_inventory_read_shared',sourceId:await hashId(source),operation,completed:true,waitMs:inventoryWaitMs(startedAt)});
+    return previous.value;
+   }
+   const alreadyWaiting=[...this.inventoryReaders].filter(reader=>reader!==completed);
+   for(const reader of this.inventoryReaders)reader.delete(source);
    const active={credential:provider.encrypted,observers:new Set()};
    flight=active;
    reads.set(source,active);
    active.work=Promise.resolve().then(()=>read(progress=>{
     active.progress=progress;
     for(const observer of active.observers)observer(progress);
-   })).finally(()=>{if(reads.get(source)===active)reads.delete(source)});
+   })).then(value=>{
+    if(reads.get(source)===active){
+     for(const reader of alreadyWaiting){
+      if(this.inventoryReaders.has(reader))reader.set(source,{credential:active.credential,progress:active.progress,value});
+     }
+    }
+    return value;
+   }).finally(()=>{if(reads.get(source)===active)reads.delete(source)});
   }
   if(onProgress){
    flight.observers.add(onProgress);
@@ -129,7 +153,7 @@ export class PlaybackSession {
     else{
      const run={force};
      this.refreshing=run;
-     run.work=refreshProviderPool(this.env,()=>run.force,(p,read)=>this.inventoryRead(p,'refresh',read))
+     run.work=this.inventoryBatch(share=>refreshProviderPool(this.env,()=>run.force,(p,read)=>share(p,'refresh',read)))
       .finally(()=>{this.refreshing=null});
     }
     const result=await this.refreshing.work;
@@ -226,8 +250,10 @@ export class PlaybackSession {
  if(path==='/monitor-media-failures'){const health=await (await directory(this.env,'/provider-health')).json();const items=await cachedFailureNames(createProviderCatalog(catalogDeps,this.env,null,{timeoutMs:1500,cacheReadMs:300}),health.recentMediaFailures,(server,id)=>registry(this.env,'/xtream-episode',{server,id}));return Response.json({items})}
  if(path==='/monitor-providers'){
   try{
-   const response=await directory(this.env,'/providers');if(!response.ok)throw Error('monitor_provider_directory_unavailable');
-   return Response.json(await probeProviders(await response.json(),{decrypt:value=>unticket(this.env,value),readPanel,validateAccount:(username,password,origin)=>validateAccount(username,password,origin,6000,undefined,this.env.CCF_ENTRY_TRANSPORT==='tcp'),identifier:hashId,share:(p,read,onProgress)=>this.inventoryRead(p,'monitor',read,onProgress)}));
+   return await this.inventoryBatch(async share=>{
+    const response=await directory(this.env,'/providers');if(!response.ok)throw Error('monitor_provider_directory_unavailable');
+    return Response.json(await probeProviders(await response.json(),{decrypt:value=>unticket(this.env,value),readPanel,validateAccount:(username,password,origin)=>validateAccount(username,password,origin,6000,undefined,this.env.CCF_ENTRY_TRANSPORT==='tcp'),identifier:hashId,share:(p,read,onProgress)=>share(p,'monitor',read,onProgress)}));
+   });
   }catch{return Response.json({error:'monitor_provider_directory_unavailable'},{status:503})}
  }
  if(path.startsWith('/profile/'))return profileRoute(this.state.storage,req);
@@ -269,21 +295,32 @@ async function requestPoolRefresh(env,force=false){
  const response=await env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_provider_refresh_v1')).fetch('https://private/refresh-pool',{method:'POST',body:JSON.stringify({force})});
  const status=await response.json();if(!response.ok)throw Error(status.error||'provider_unavailable');return status;
 }
-async function isolatedPoolRefresh(env){
- const status=await requestPoolRefresh(env);return status.single?null:(await (await directory(env,'/pool')).json()).lines;
+function isolatedPoolRefresh(env){
+ const key=env.PLAYBACK_SESSIONS;
+ let flight=poolRefreshes.get(key);
+ if(!flight){
+  flight={status:requestPoolRefresh(env).finally(()=>poolRefreshes.delete(key))};
+  poolRefreshes.set(key,flight);
+ }
+ return flight;
 }
 async function providerPool(env,ctx){
  const key=env.PLAYBACK_SESSIONS;
  if(ctx?.waitUntil){const snapshot=await (await directory(env,'/pool')).json();if(snapshot.lines?.length){
-  if(snapshot.attemptedAt<=Date.now()-INVENTORY_REFRESH_MS&&!poolRefreshes.has(key)){const work=isolatedPoolRefresh(env);poolRefreshes.set(key,work);ctx.waitUntil(work.catch(()=>{}).finally(()=>poolRefreshes.delete(key)))}
+  if(snapshot.attemptedAt<=Date.now()-INVENTORY_REFRESH_MS&&!poolRefreshes.has(key))ctx.waitUntil(isolatedPoolRefresh(env).status.catch(()=>{}));
   return snapshot.lines;
  }}
- if(poolRefreshes.has(key))return poolRefreshes.get(key);const work=isolatedPoolRefresh(env);poolRefreshes.set(key,work);try{return await work}finally{poolRefreshes.delete(key)}
+ const flight=isolatedPoolRefresh(env);
+ flight.lines??=flight.status.then(async status=>status.single?null:(await (await directory(env,'/pool')).json()).lines);
+ return flight.lines;
 }
 async function refreshProviderPool(env,force,share){
  const providers=await (await directory(env,'/providers')).json();if(!providers.length)throw Error('provider_not_configured');
- const saved=await (await directory(env,'/provider')).json();if(providers.length===1&&saved.mode!=='panel')return {state:'single'};
- let pool=await (await directory(env,'/pool')).json();if(!force()&&pool.attemptedAt>Date.now()-INVENTORY_REFRESH_MS)return {state:'fresh'};
+ if(providers.length===1&&(await (await directory(env,'/provider')).json()).mode!=='panel')return {state:'single'};
+ if(!force()){
+  const pool=await (await directory(env,'/pool',{summary:true})).json();
+  if(!force()&&pool.attemptedAt>Date.now()-INVENTORY_REFRESH_MS)return {state:'fresh'};
+ }
  const results=await Promise.allSettled(providers.map(async p=>{
   let raw=[],inventory=[],retain=false,origin=p.origin||ORIGIN;
   try{
@@ -312,7 +349,8 @@ async function refreshProviderPool(env,force,share){
  // Do not release the shared refresh while another source is still writing.
  if(results.some(result=>result.status==='rejected'))throw Error('panel_unavailable');
  const transient=results.some(result=>result.value==='retained'||result.value==='superseded');
- pool=await (await directory(env,'/pool')).json();if(!pool.lines.length)throw Error(transient?'provider_unavailable':'provider_inactive');
+ const pool=await (await directory(env,'/pool',{summary:true})).json();
+ if(!(pool.count??pool.lines?.length))throw Error(transient?'provider_unavailable':'provider_inactive');
  return {state:transient?'retained':'refreshed'};
 }
 async function catalogCredentials(env,server,ctx,limit=1){const pool=await providerPool(env,ctx);if(!pool)return [{...await providerCredentials(env),server:'ccf'}];const counts=new Map(),credentials=[];for(const l of pool){const id=l.server||'ccf';if((server&&server!==id)||(counts.get(id)||0)>=limit)continue;const d=await unticket(env,l.encrypted);if(d){credentials.push({...d,server:id});counts.set(id,(counts.get(id)||0)+1)}}return credentials}
@@ -546,7 +584,13 @@ async function serverStreamDirect(req,env,u,ctx,trace,relay){
  }
  const maximum=diagnostic?8000:d.type==='live'?8000:VOD_STARTUP_MS,deadline=diagnostic?Math.min(d.caseDeadline||d.exp,Date.now()+maximum):!d.resource?(startupDeadline(req,Date.now(),maximum)??Date.now()+maximum):null;const fetched=await timed(trace,'origin',()=>fetchValidatedMedia(start,headers,d.type,sourceOrigin,{deadline,directCcfEntry:env.CCF_ENTRY_TRANSPORT==='tcp',signal:req.signal,...(flow?{flowMonitor:flow}:{})}));let response=fetched.response;const next=fetched.url;
  flow?.setStatus(response.status);
- flowPhase='lease';const checkedLease=d.lease_id?await directory(env,"/lease-check",{sid:d.sid,lease_id:d.lease_id,request_id:d.request_id,...(d.native_range_id?{native_range_id:d.native_range_id}:{})}):null;
+ flowPhase='lease';
+ const checkedLease=d.lease_id?await directory(env,"/lease-check",{sid:d.sid,lease_id:d.lease_id,request_id:d.request_id,...(d.native_range_id?{native_range_id:d.native_range_id}:{})}).catch(error=>{
+  // The origin is already open, but its body has not been handed to the player.
+  // Cancel it on a directory failure without delaying the existing error response.
+  void response.body?.cancel().catch(()=>{});
+  throw error;
+ }):null;
  if(checkedLease&&!checkedLease.ok){if(flow)flow.finish(await leaseReason(checkedLease),{status:410});await response.body?.cancel().catch(()=>{});return json({error:"playback_expired"},410)}
  flowPhase='origin';
  if(diagnostic)response=await attachCaseObservation(response,{caseKey:diagnostic.key,method:req.method,incomingRange:req.headers.get('range'),outgoingRange:headers.get('range'),ifRangePresent:headers.has('if-range'),transport:isApprovedMediaIP(new URL(next),sourceOrigin)||env.CCF_ENTRY_TRANSPORT==='tcp'?'tcp':'hostname',sourceURL:next,secret:env.TICKET_SECRET});
@@ -809,13 +853,14 @@ if(session.managed){
 const x=new URL(ORIGIN+"/player_api.php");x.searchParams.set("username",String(b.username));x.searchParams.set("password",String(b.password));if(op!=="auth")x.searchParams.set("action",actions[op]);if(op==="series_info"&&b.series_id)x.searchParams.set("series_id",String(b.series_id));if(op==="vod_info"&&b.vod_id)x.searchParams.set("vod_id",String(b.vod_id));if(op==="live_epg"){x.searchParams.set("stream_id",String(b.stream_id));x.searchParams.set("limit","24")}const up=await fetch(x,{headers:{"User-Agent":"SnapMovieNow/1.0"},redirect:"follow"});return new Response(await up.text(),{status:up.status,headers:{...cors,"content-type":up.headers.get("content-type")||"application/json"}})}catch(e){return support.finish(json({error:["body_too_large","invalid_json"].includes(e.message)?e.message:"upstream_unavailable"},e.message==="body_too_large"?413:e.message==="invalid_json"?400:502))}}
 export default {scheduled(event,env,ctx){
  if(env.ENVIRONMENT==='staging')return;
+ // Import status belongs to scheduled maintenance, independent of customer traffic.
  lqsaBootstrap(env,ctx,{force:true});
  ownedMediaBootstrap(env,ctx);
  localAuditBootstrap(env,ctx);
  if(event.cron===MONITOR_CRON&&diagnosticEnabled(env))ctx.waitUntil(env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_empress_diagnostic_20261104')).fetch('https://private/empress-origin-diagnostic-run',{method:'POST',body:'{}'}).then(r=>r.body?.cancel()).catch(()=>console.error({event:'empress_origin_diagnostic',reason:'diagnostic_unavailable'})));
  if(event.cron===MONITOR_CRON){
   ctx.waitUntil(passwordProtectionReadiness(env).then(readiness=>console.log(readiness)));
-  schedulePrivateDiagnosticReport(env,ctx);ctx.waitUntil(directory(env,'/service-monitor-sample').then(r=>r.body?.cancel()).catch(()=>console.error({event:'service_monitor_sample_failed'})));ctx.waitUntil(isolatedPoolRefresh(env).catch(()=>console.error({event:'provider_inventory_refresh_failed'})));ctx.waitUntil(telegramTick(env).then(async ({diagnostic})=>{
+  schedulePrivateDiagnosticReport(env,ctx);ctx.waitUntil(directory(env,'/service-monitor-sample').then(r=>r.body?.cancel()).catch(()=>console.error({event:'service_monitor_sample_failed'})));ctx.waitUntil(isolatedPoolRefresh(env).status.catch(()=>console.error({event:'provider_inventory_refresh_failed'})));ctx.waitUntil(telegramTick(env).then(async ({diagnostic})=>{
   if(!diagnostic)return;
   const response=await monitorCall(env,'/owner-diagnostic',diagnostic).catch(()=>null);
   if(!response?.ok)console.error({event:'owner_diagnostic_record_failed'});
@@ -825,7 +870,7 @@ export default {scheduled(event,env,ctx){
  ctx.waitUntil(directory(env,'/backup-automatic').then(async response=>{const result=await response.json();if(result.error)console.error({event:'backup_failed',reason:result.error});if(result.recovery?.error)console.error({event:'backup_drill_failed',reason:result.recovery.error})}).catch(()=>console.error({event:'backup_failed',reason:'backup_service_unavailable'})).finally(async()=>{const response=await monitorCall(env,'/tick');await response.body?.cancel()}));
 },async fetch(req, env, ctx) {
  if(matchesStaticAdminURL(new URL(req.url)))return staticAdminResponse(req);
- lqsaBootstrap(env,ctx);ownedMediaBootstrap(env,ctx);localAuditBootstrap(env,ctx);await markServiceVerification(req);const response=await traceRequest(req, trace => handleRequest(req, env, ctx,trace), {allowedOrigin: SITE,fastMediaFailureBudget:env.ENVIRONMENT==='production'&&env.FAST_MEDIA_FAILURE_LOGS_ENABLED==='true'?fastMediaFailureBudget:undefined,onTiming:timing=>{if(!isSignedStreamPath(new URL(req.url).pathname)&&ctx?.waitUntil&&env.PLAYBACK_SESSIONS)ctx.waitUntil(env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_operations_v1')).fetch('https://private/operations/timing-ingest',{method:'POST',body:JSON.stringify({timing})}).then(r=>r.body?.cancel()).catch(()=>{}))}});return browserResponse(response,req,env);}};
+ ownedMediaBootstrap(env,ctx);localAuditBootstrap(env,ctx);await markServiceVerification(req);const response=await traceRequest(req, trace => handleRequest(req, env, ctx,trace), {allowedOrigin: SITE,fastMediaFailureBudget:env.ENVIRONMENT==='production'&&env.FAST_MEDIA_FAILURE_LOGS_ENABLED==='true'?fastMediaFailureBudget:undefined,onTiming:timing=>{if(!isSignedStreamPath(new URL(req.url).pathname)&&ctx?.waitUntil&&env.PLAYBACK_SESSIONS)ctx.waitUntil(env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_operations_v1')).fetch('https://private/operations/timing-ingest',{method:'POST',body:JSON.stringify({timing})}).then(r=>r.body?.cancel()).catch(()=>{}))}});return browserResponse(response,req,env);}};
 
 
 

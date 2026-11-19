@@ -28,12 +28,17 @@ const call=(path,body={})=>monitor.fetch(new Request('https://private'+path,{met
 try{
  const publicResponse=await worker.fetch(new Request('https://example.test/monitor-media-failures',{method:'POST',body:'{}'}),env);assert.ok(publicResponse.status>=400,'private content metadata route must not be exposed over HTTP');
  await call('/settings',{enabled:true,channel:'email',from:'alerts@example.com',to:'owner@example.com',apiKey:'re_test_context_only'});
- await call('/tick');assert.equal(sent.length,1);assert.equal(metadataReads,1);
+ await call('/tick');assert.equal(sent.length,0);assert.equal(metadataReads,1);
+ for(let slot=1;slot<=4;slot++){now+=300000;await call('/tick');assert.equal(sent.length,slot===4?1:0)}
+ const readsDuringFailure=metadataReads;
+ assert.match(sent[0].text,/PERSISTENTE/);
  assert.deepEqual(sent[0].to,['owner@example.com']);assert.equal(sent[0].from,'alerts@example.com');assert.match(sent[0].text,/ID 8471.*Example sports channel.*HTTP 404/);assert.match(sent[0].text,/no atribuye toda la alerta/);
  for(const value of ['never-send','private-account','private.invalid','test_context_only'])assert.ok(!sent[0].text.includes(value));
  healthy=true;
  for(let observation=0;observation<3;observation++){now+=300000;await call('/tick');assert.equal(sent.length,observation<2?1:2)}
- assert.equal(metadataReads,1,'healthy snapshots do not need metadata reads');assert.match(sent[1].text,/RECUPERADO/);assert.match(sent[1].text,/Referencia del fallo anterior/);assert.match(sent[1].text,/no confirma la reparación de cada contenido/);assert.match(sent[1].text,/ID 8471/);
- now+=300000;healthy=false;metadataFail=true;await call('/tick');assert.equal(sent.length,3,'missing optional context must not suppress an alert');assert.ok(!sent[2].text.includes('private-read-failure'));assert.ok(!sent[2].text.includes('ID 8471'),'new incident cannot inherit an unrelated previous context');
+ assert.equal(metadataReads,readsDuringFailure,'healthy snapshots do not need metadata reads');assert.match(sent[1].text,/RECUPERADO/);assert.match(sent[1].text,/Referencia del fallo anterior/);assert.match(sent[1].text,/no confirma la reparación de cada contenido/);assert.match(sent[1].text,/ID 8471/);
+ now+=300000;healthy=false;metadataFail=true;await call('/tick');assert.equal(sent.length,2);
+ for(let slot=1;slot<=4;slot++){now+=300000;await call('/tick')}
+ assert.equal(sent.length,3,'missing optional context must not suppress an alert');assert.ok(!sent[2].text.includes('private-read-failure'));assert.ok(!sent[2].text.includes('ID 8471'),'new incident cannot inherit an unrelated previous context');
  console.log('PASS: existing recipient preserved; bounded content metadata on alerts and historical recovery references; no probes, secrets, duplicate emails or blocked alerts on context failure.');
 }finally{Date.now=originalNow;globalThis.fetch=originalFetch}

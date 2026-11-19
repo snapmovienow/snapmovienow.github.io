@@ -11,6 +11,15 @@ export const MONITOR_CRON='*/5 * * * *';
 const interval=300000,freshness=36*3600000;
 const sustainedRecovery=new Set(['provider','startup','playback']);
 const trackedReferenceLimit=12;
+const persistentNoticeMs=20*60000;
+const transientProbeReasons=['timeout','http_error','inventory_incomplete','unavailable','invalid_reply'];
+const transientProbeTitles=new Set(transientProbeReasons.map(reason=>providerTitle({reason})));
+function deferredNotice(item){
+ return item.kind==='startup'||item.kind==='provider'&&transientProbeReasons.includes(item.provider.reason);
+}
+function openingAccepted(state,id){
+ return state.history.some(event=>event.delivery==='accepted'&&event.changes.some(change=>change.id===id&&change.kind==='opened'));
+}
 const email=value=>typeof value==='string'&&value.length<=254&&/^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?\.[a-zA-Z]{2,63}$/.test(value);
 const defaults=()=>({enabled:true,channel:'panel',to:'',from:'',version:1});
 function canaryState(state,env){
@@ -145,6 +154,10 @@ export function applyObservations(state,snapshot,now,startedAt=now){
    item.detail=providerDetail(item.provider,previous.lastValidAt,snapshot.runId);
   }
   state.checks[item.key]=previous;const incident=state.incidents[item.key];
+  if(incident?.status==='open'&&!incident.notice&&(incident.kind==='startup'||incident.kind==='provider'&&transientProbeTitles.has(incident.title))){
+   // Before this policy, the panel and email shared all incident changes.
+   incident.notice=openingAccepted(state,incident.id)?'sent':'waiting';
+  }
   if(incident?.status==='open'&&item.provider)incident.waitingForSamples=!item.bad;
   if(item.bad&&(previous.bad>=item.confirm||item.provider&&incident?.status==='open')){
    const impact=Number.isFinite(item.impact)?Math.min(4,Math.floor(Math.log2(Math.max(1,item.impact)))):null;
@@ -152,6 +165,7 @@ export function applyObservations(state,snapshot,now,startedAt=now){
    if(!incident||incident.status==='resolved'||item.kind==='catalog'&&item.revision&&item.revision!==incident.revision){
     if(Object.values(state.incidents).filter(i=>i.status==='open').length>=80)continue;
     state.incidents[item.key]={id:crypto.randomUUID(),key:item.key,kind:item.kind,...(item.revision?{revision:item.revision}:{}),title:item.title,detail:item.detail||'',status:'open',openedAt:now,lastObservedAt:now,waitingForSamples:false,...evidence,...(item.diagnosticContext?{diagnosticContext:item.diagnosticContext}:{})};
+    if(deferredNotice(item))state.incidents[item.key].notice='waiting';
     changed.push({...state.incidents[item.key],kind:'opened'});
    }else{
     const worsened=impact!==null&&impact>incident.impact;
@@ -160,7 +174,15 @@ export function applyObservations(state,snapshot,now,startedAt=now){
     if(impact!==null&&(incident.impact===undefined||worsened))incident.impact=impact;
     if(item.references)incident.references=incident.references?[...incident.references,...newReferences]:evidence.references;
     Object.assign(incident,{title:item.title,detail:item.detail||'',lastObservedAt:now,waitingForSamples:false,...(item.diagnosticContext?{diagnosticContext:item.diagnosticContext}:{})});
-    if(worsened||newReferences.length)changed.push({...incident,kind:worsened?'worsened':'evidence'});
+    if(incident.notice==='waiting'&&!deferredNotice(item)){
+     // A successful probe that finds a disabled account (or a definite
+     // configuration failure) is actionable immediately.
+     delete incident.notice;
+     changed.push({...incident,kind:'opened'});
+    }else if(incident.notice==='waiting'&&state.config.channel==='email'&&state.outbox.length<20&&previous.bad>=5&&now-incident.openedAt>=persistentNoticeMs){
+     incident.notice='queued';
+     changed.push({...incident,kind:'persistent'});
+    }else if(worsened||newReferences.length)changed.push({...incident,kind:worsened?'worsened':'evidence'});
    }
   }else if(!item.bad&&incident?.status==='open'&&previous.good>=(sustainedRecovery.has(item.kind)?3:item.confirm)){incident.status='resolved';incident.resolvedAt=now;incident.lastObservedAt=now;incident.waitingForSamples=false;changed.push({...incident,kind:'resolved',title:({startup:'Inicio de contenido',canary:'Prueba automática de reproducción',playback:'Reproducción',provider:'Comprobación de la fuente',monitor:'Comprobación del sistema',backup:'Comprobación de copias',catalog:'Actualización del catálogo observado (no valida reproducción)'}[incident.kind])||'Comprobación del servicio',detail:item.detail||'Comprobación correcta.'})}
  }
@@ -180,16 +202,23 @@ export function applyObservations(state,snapshot,now,startedAt=now){
   // Use the existing opening format for material updates, so older panel and
   // Worker versions can still display and retry these events after a rollout.
   const changes=changed.map(({kind,id,title,detail,diagnosticContext})=>{
-   const label={worsened:'EMPEORAMIENTO',evidence:'EVIDENCIA NUEVA'}[kind];
+   const label={worsened:'EMPEORAMIENTO',evidence:'EVIDENCIA NUEVA',persistent:'PERSISTENTE'}[kind];
    return {kind:label?'opened':kind,id,title:label?label+' · '+title:title,detail,...(diagnosticContext?{diagnosticContext}:{})};
   });
-  const event={id:crypto.randomUUID(),createdAt:now,changes,delivery:state.config.channel==='email'?'pending':'panel'};
+  const emailChanges=changes.flatMap((change,index)=>{
+   const item=changed[index];
+   if(item.kind==='persistent')return [{...change,confirmKey:item.key}];
+   if(!item.notice||item.notice==='sent'&&['resolved','removed'].includes(item.kind))return [change];
+   return [];
+  });
+  const sendEmail=state.config.channel==='email'&&emailChanges.length>0;
+  const event={id:crypto.randomUUID(),createdAt:now,changes,delivery:sendEmail?'pending':'panel'};
   state.history.unshift(event);state.history=state.history.slice(0,50);
-  if(state.config.channel==='email'&&state.outbox.length<20){
-   const mailChanges=changes.map(change=>({...change,detail:'Incidente: '+change.id+(change.detail?'\n'+change.detail:'')}));
-   state.outbox.push({...event,changes:mailChanges,attempts:0,nextAt:now,version:state.config.version});
+  if(sendEmail&&state.outbox.length<20){
+   const mailChanges=emailChanges.map(change=>({...change,detail:'Incidente: '+change.id+(change.detail?'\n'+change.detail:'')}));
+   state.outbox.push({...event,changes:mailChanges,attempts:0,nextAt:now,version:state.config.version,routed:true});
   }
-  else if(state.config.channel==='email')event.delivery='queue_full';
+  else if(sendEmail)event.delivery='queue_full';
  }
  state.lastCheckedAt=now;
  const resolved=Object.values(state.incidents).filter(i=>i.status==='resolved').sort((a,b)=>b.resolvedAt-a.resolvedAt);
@@ -206,6 +235,28 @@ export function applyObservations(state,snapshot,now,startedAt=now){
 }
 
 function publicStatus(state,env){return {settings:settings(state.config),createdAt:state.createdAt,lastCheckedAt:state.lastCheckedAt,lastStartedAt:state.lastStartedAt||null,monitorRunning:!!state.run&&state.run.at>Date.now()-120000,monitorReadings:state.monitorReadings||{},intervalMinutes:5,ownerDiagnostic:ownerDiagnosticStatus(state.ownerDiagnostic,Date.now()),catalogReferences:state.catalogReferences||{readStatus:'not_observed'},monitorStale:!state.lastCheckedAt||Date.now()-state.lastCheckedAt>15*60000,incidents:Object.values(state.incidents).sort((a,b)=>b.openedAt-a.openedAt),history:state.history,delivery:state.delivery,pendingEmails:state.outbox.length,canary:canaryStatus(state,env),thresholds:{failedStarts:5,errors:5,minStarts:5,stallPercent:2,startupMs:10000,backupHours:36,playbackWindowMinutes:15}}}
+// Older outbox entries omit the incident key. Use the stored incident first.
+// Its previous ID may already have been replaced after another opening.
+function legacyDeferredChange(change,incident){
+ if(incident)return incident.kind==='startup'||incident.kind==='provider'&&transientProbeTitles.has(incident.title);
+ if(change.kind==='resolved')return ['Inicio de contenido','Comprobación de la fuente'].includes(change.title);
+ if(change.kind!=='opened')return false;
+ const title=String(change.title||'').replace(/^(EMPEORAMIENTO|EVIDENCIA NUEVA) · /,'');
+ return transientProbeTitles.has(title)||['Demoras al iniciar contenido','Fallos repetidos al iniciar contenido','Demoras y fallos repetidos al iniciar contenido'].includes(title);
+}
+
+function queuedChangeEligible(change,event,state,now){
+ if(event.routed&&!change.confirmKey)return true;
+ const incident=change.confirmKey?state.incidents[change.confirmKey]:Object.values(state.incidents).find(row=>row.id===change.id);
+ if(!change.confirmKey&&!legacyDeferredChange(change,incident))return true;
+ if(change.kind==='resolved'||change.kind==='removed')return incident?.notice==='sent'||openingAccepted(state,change.id);
+ const check=state.checks[incident?.key];
+ const fresh=incident?.id===change.id&&incident.status==='open'&&!incident.waitingForSamples&&
+  incident.lastObservedAt===state.lastCheckedAt&&now-incident.lastObservedAt<interval&&check?.bad>=5&&now-incident.openedAt>=persistentNoticeMs;
+ if(!fresh&&incident?.id===change.id&&incident.notice==='queued')incident.notice='waiting';
+ return fresh;
+}
+
 function mail(event,config){return {from:config.from,to:[config.to],subject:'SNAPTVNOW · '+(event.changes.every(c=>c.kind!=='opened')?'Recuperación / comprobación':'Aviso del sistema'),text:'SNAPTVNOW\n'+new Date(event.createdAt).toISOString()+'\n\n'+event.changes.map(c=>({opened:'INCIDENCIA',resolved:'RECUPERADO',removed:'CONEXIÓN RETIRADA',test:'PRUEBA'}[c.kind])+': '+c.title+(c.detail?'\n'+c.detail:'')+(c.diagnosticContext?'\n\n'+(c.kind==='resolved'?'Referencia del fallo anterior; esta recuperación agrupada no confirma la reparación de cada contenido:':'Contenidos con fallos observados del mismo tipo; no atribuye toda la alerta a estos contenidos:')+'\n'+c.diagnosticContext:'')).join('\n\n')+'\n\nRevisa el panel: https://app.snaptvnow.com/admin.html'} }
 
 export class OperationsMonitor{
@@ -340,7 +391,23 @@ export class OperationsMonitor{
   const store=this.state.storage,now=Date.now(),claimId=crypto.randomUUID();
   const claimed=await store.transaction(async tx=>{
    const state=await tx.get('monitor');if(!state||!state.config.enabled||state.config.channel!=='email')return null;
-   const event=state.outbox[0];if(!event||event.nextAt>now||event.claimedAt>now-60000)return null;
+   let event=state.outbox[0],removed=false;
+   while(event&&!(event.claimedAt>now-60000)){
+    const eligible=event.changes.filter(change=>queuedChangeEligible(change,event,state,now));
+    if(eligible.length){
+     // Resend requires identical payloads on a retry with the same key. An
+     // old mixed email already attempted may have been accepted before a timeout.
+     if(!event.attempts&&!event.claimedAt)event.changes=eligible;
+     break;
+    }
+    const log=state.history.find(item=>item.id===event.id);
+    if(log)log.delivery='panel';
+    state.outbox.shift();removed=true;event=state.outbox[0];
+   }
+   if(!event||event.nextAt>now||event.claimedAt>now-60000){
+    if(removed)await putState(tx,state);
+    return null;
+   }
    if(now-event.createdAt>23*3600000||event.version!==state.config.version){state.outbox.shift();const log=state.history.find(e=>e.id===event.id);if(log)log.delivery='expired';await putState(tx,state);return null}
    event.claimedAt=now;event.claimId=claimId;await putState(tx,state);return {event,config:state.config};
   });if(!claimed)return;
@@ -355,6 +422,11 @@ export class OperationsMonitor{
   }catch(error){status=['email_configuration_failed','email_rate_limited','email_unavailable','email_rejected'].includes(error.message)?error.message:'email_unavailable'}
   await store.transaction(async tx=>{
    const state=await tx.get('monitor'),event=state?.outbox.find(e=>e.id===claimed.event.id);if(!event||event.claimId!==claimId)return;
+   if(status==='accepted')for(const change of claimed.event.changes){
+    if(change.kind!=='opened')continue;
+    const incident=Object.values(state.incidents).find(row=>row.id===change.id);
+    if(incident?.notice)incident.notice='sent';
+   }
    const log=state.history.find(e=>e.id===event.id);state.delivery={status,at:Date.now()};event.attempts++;delete event.claimedAt;delete event.claimId;
    if(status==='accepted'||event.attempts>=6||status==='email_rejected'||status==='email_configuration_failed'){state.outbox=state.outbox.filter(e=>e.id!==event.id);if(log)log.delivery=status==='accepted'?'accepted':'failed'}
    else{event.nextAt=Date.now()+Math.max(retryAfter,interval*2**(event.attempts-1));if(log)log.delivery='pending'}await putState(tx,state);
