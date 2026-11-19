@@ -56,21 +56,30 @@ function loginInfo(req, auth, profile) {
 
 async function mapList(rows, kind, auth, deps, base) {
   const field = idField(kind), categories = categoryKind(kind);
-  const entries = [], refs = [];
+  const entries = [], refs = [], categoryIndexes = new Map();
+  const isCategory = kind.endsWith('_category');
   for (const row of rows) {
     if (!numeric(row[field])) continue;
     const server = row._server;
     if (!server) continue;
     const activity=cleanPlaybackActivity({title:row.name||row.title},kind==='series_list'?'series':kind);
     const index = entries.push(entry(kind, server, row[field], {ext: EXTENSIONS.has(row.container_extension) ? row.container_extension : 'mp4',...(activity?{activity}:{})})) - 1;
-    const category = kind.endsWith('_category') || row.category_id == null ? null : entries.push(entry(categories, server, row.category_id)) - 1;
+    let category = null;
+    if (!isCategory && row.category_id != null) {
+      const key = JSON.stringify([server, String(row.category_id)]);
+      category = categoryIndexes.get(key);
+      if (category === undefined) {
+        category = entries.push(entry(categories, server, row.category_id)) - 1;
+        categoryIndexes.set(key, category);
+      }
+    }
     refs.push({row, index, category});
   }
   const ids = await deps.register(entries);
   return refs.map(({row, index, category}, num) => {
     const item = {...row, [field]: ids[index]}; delete item._server;
     if (category !== null) item.category_id = String(ids[category]);
-    if (kind.endsWith('_category')) {item.parent_id = 0; item.category_id = String(ids[index]);}
+    if (isCategory) {item.parent_id = 0; item.category_id = String(ids[index]);}
     else {
       item.smn_profile={type:kind==='series_list'?'series':kind,id:String(row[field]),server:row._server};
       item.num = num + 1;

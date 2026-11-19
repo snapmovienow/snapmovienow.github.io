@@ -40,6 +40,20 @@ assert.deepEqual(get.map(row=>row.container_extension),['mkv','mp4']);
 for(const secret of [...Object.values(credentials),'private-sid'])assert.equal(JSON.stringify(get).includes(secret),false);
 const post=await (await handleXtream(request('POST'),deps)).json();assert.deepEqual(post,get,'POST and refresh preserve the same contract and public IDs');
 const filtered=await (await handleXtream(request('GET',{category_id:get[0].category_id}),deps)).json();assert.deepEqual(importContract(filtered),importContract(get));
+const largeCatalog=Array.from({length:3000},(_,index)=>({
+ stream_id:index+1,name:'Movie '+index,_server:index<1500?'left':'right',
+ category_id:index%2?String(index%5):index%5
+}));
+let registration;
+const largeDeps={...deps,catalog:async()=>largeCatalog,register:async entries=>{
+ registration=entries;
+ return deps.register(entries);
+}};
+const mapped=await (await handleXtream(request(),largeDeps)).json();
+assert.equal(registration.length,3010,'3,000 titles across ten provider categories fit in one 5,000-entry registry batch');
+assert.deepEqual(mapped.map(row=>row.name),largeCatalog.map(row=>row.name));
+assert.equal(mapped[0].category_id,mapped[5].category_id,'numeric and string forms of one provider category share an ID');
+assert.notEqual(mapped[0].category_id,mapped[1500].category_id,'the same upstream category on two providers keeps separate IDs');
 user.permissions.movies=false;
 assert.deepEqual(await (await handleXtream(request(),deps)).json(),[],'disabled movie access remains disabled');
 user.permissions.movies=true;
