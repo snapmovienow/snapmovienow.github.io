@@ -1,3 +1,4 @@
+import {releaseWorkerModules} from '../cloudflare-worker/tests/workerd-bundle.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -84,7 +85,7 @@ try{
  // fixture retains isolated test credentials and catalog/profile mutations.
  const releasePath=path.join(root,'cloudflare-worker/.wrangler/quality-release/index.js');
  assert.ok(fs.existsSync(releasePath),'Build the production Wrangler artifact before browser coverage.');
- const releaseOptions={workers:[{name:'boxpanel-frontend-release',modules:true,script:fs.readFileSync(releasePath,'utf8'),compatibilityDate:'2026-10-03',compatibilityFlags:['enable_request_signal'],outboundService:()=>{throw Error('Unexpected release test external service');}}]};
+ const releaseOptions={workers:[{name:'boxpanel-frontend-release',modules:releaseWorkerModules(releasePath),compatibilityDate:'2026-10-03',compatibilityFlags:['enable_request_signal'],outboundService:()=>{throw Error('Unexpected release test external service');}}]};
  releaseRuntime=new Miniflare(convertV4MiniflareOptions?convertV4MiniflareOptions(releaseOptions):releaseOptions);await releaseRuntime.ready;const releaseWorker=await releaseRuntime.getWorker('boxpanel-frontend-release');
  await context.route('https://resellers.snaptvnow.com/**',async route=>{const req=route.request();const request=new Request(req.url(),{method:req.method(),headers:await req.allHeaders(),...(req.method()==='POST'?{body:req.postData()}: {})});const response=req.method()==='GET'&&!new URL(req.url()).pathname.startsWith('/api/')?await releaseWorker.fetch(request):await portal(request,{});await route.fulfill({status:response.status,headers:Object.fromEntries(response.headers),body:await response.text()});});
  const publicCount=operations.length;await page.goto('https://resellers.snaptvnow.com/apps');await page.locator('[data-app-catalog] [data-design=classic]').waitFor();assert.equal(await page.locator('[data-app-catalog] article').count(),7);assert.equal(await page.locator('[data-app-form]').isHidden(),true);assert.equal(await page.getByText('Marca demo',{exact:true}).count(),0);await page.locator('[data-app-catalog] [data-design=classic]').getByRole('button',{name:'Vista previa'}).click();assert.equal(await page.locator('[data-app-preview] [data-layout=classic]').count(),1);await page.locator('[data-app-catalog] [data-design=compact]').getByRole('button',{name:'Vista previa'}).click();await page.getByRole('button',{name:'Acceso',exact:true}).click();assert.equal(await page.locator('[data-app-preview] [data-layout=compact]').count(),1,'switching screens retains the inspected design');await page.getByRole('button',{name:'Inicio',exact:true}).click();

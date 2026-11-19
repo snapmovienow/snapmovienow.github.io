@@ -1,3 +1,4 @@
+import {appleFragmentPlaylist,createAppleFragments,appleFragmentResponse} from './apple-live-fragments.mjs';
 import {isSignedStreamPath,liveHlsResourceExtension,signedStreamPath} from './signed-hls-path.mjs';
 import {liveTsDocumentType} from './live-ts-document.mjs';
 import {matchesStaticAdminURL,staticAdminResponse} from './static-admin-response.mjs';
@@ -422,7 +423,7 @@ async function observedWebStream(object,req,ctx,trace){
  for(const [id,at]of object.signalReports)if(at<now-300000)object.signalReports.delete(id);
  const fresh=observe&&!object.signalReports.has(key);if(fresh){if(object.signalReports.size>=128)object.signalReports.delete(object.signalReports.keys().next().value);object.signalReports.set(key,now)}
  const report=async(ok,httpStatus,evidence,cause={})=>{if(!fresh)return;await reportLiveResult(directory,env,{sid:d.sid,request_id:d.request_id},{lease_id:d.lease_id,provider_id:d.provider_id},ok,Date.now()-now,'signal',{httpStatus,evidence,...cause});if(!ok)await directory(env,'/release',{sid:d.sid,lease_id:d.lease_id,request_id:d.request_id,reason:'upstream_failed'});};
- try{const response=await serverStreamDirect(req,env,u,ctx,trace);if([410,416].includes(response.status)||req.signal.aborted){if(fresh)object.signalReports.delete(key)}else if(response.ok)deferPlaybackReport(ctx,()=>report(true,undefined,initialMediaEvidence(response)));else await report(false,response.status,undefined,responseMediaFailure(response));return response}
+ try{const response=await serverStreamDirect(req,env,u,ctx,trace,object);if([410,416].includes(response.status)||req.signal.aborted){if(fresh)object.signalReports.delete(key)}else if(response.ok)deferPlaybackReport(ctx,()=>report(true,undefined,initialMediaEvidence(response)));else await report(false,response.status,undefined,responseMediaFailure(response));return response}
  catch(error){if(!req.signal.aborted&&!['playback_superseded','media_origin_unapproved'].includes(error.message))await report(false,error.message==='live_startup_timeout'?504:undefined,undefined,error.message==='live_startup_timeout'?{errorOrigin:'local_deadline',serviceError:'live_startup_timeout'}:{});throw error}
 }
 async function serverStream(req,env,u,ctx,trace){
@@ -447,7 +448,49 @@ async function ownPlaybackControl(env,session,target,{signal,deadline}){
  if(signal.aborted){void response.body?.cancel().catch(()=>{});throw Error('comparison_timeout')}
  return response;
 }
-async function serverStreamDirect(req,env,u,ctx,trace){
+async function appleSegment(req,claim,relay) {
+ if(claim.applePart==='init'&&claim.appleInit){
+  if(typeof claim.appleInit!=='string'||claim.appleInit.length>5462)throw Error('invalid_apple_segment');
+  return appleFragmentResponse(unb64(claim.appleInit),'init',req);
+ }
+ if(!relay.appleFragments){
+  const {convertSegment}=await import('./apple-segment-codec.mjs');
+  relay.appleFragments??=createAppleFragments(convertSegment);
+ }
+ const sourceOrigin=claim.origin||ORIGIN;
+ return relay.appleFragments(req,claim,async()=>{
+  const source=validatedMediaTarget(new URL(claim.resource),sourceOrigin);
+  const headers=new Headers({'User-Agent':'SnapMovieNow/1.0','Accept-Encoding':'identity'});
+  const fetched=await fetchValidatedMedia(source.href,headers,'live',sourceOrigin,{deadline:Date.now()+8000,directCcfEntry:relay.env.CCF_ENTRY_TRANSPORT==='tcp',signal:req.signal});
+  return fetched.response;
+ });
+}
+
+async function appleSegmentURL(req,env,u,relay,d,target,sequence,part,meta) {
+ const claim={...d,resource:target.href,applePart:part,appleSequence:sequence,appleEpoch:meta.epochMs,hlsExtension:part==='init'?'mp4':'m4s'};
+ if(part==='init'){
+  const key=JSON.stringify([d.lease_id,d.request_id,d.resource??'',meta.period]);
+  const windows=relay.appleInitWindows??=new Map();
+  const now=Date.now();for(const [id,entry]of windows)if(entry.until<=now)windows.delete(id);
+  const prior=windows.get(key);
+  if(prior){if(!prior.url)throw Error('ineligible_apple_stream');return prior.url;}
+  if(windows.size>=12)windows.delete(windows.keys().next().value);
+  const probe=new Request(req.url,{method:'GET',signal:req.signal});
+  try{
+   const sample=await appleSegment(probe,claim,relay);
+   if(sample.status!==200)throw Error('ineligible_apple_stream');
+   const init=await sample.arrayBuffer();
+   if(!init.byteLength||init.byteLength>4096)throw Error('invalid_apple_segment');
+   claim.appleInit=b64(init);
+   const url=u.origin+signedStreamPath(claim)+'?t='+await ticket(env,claim);
+   windows.set(key,{url,until:d.exp});
+   return url;
+  }catch(error){if(!req.signal.aborted)windows.set(key,{url:null,until:Date.now()+10000});throw error;}
+ }
+ return u.origin+signedStreamPath(claim)+'?t='+await ticket(env,claim);
+}
+
+async function serverStreamDirect(req,env,u,ctx,trace,relay){
  const d=await unticket(env,u.searchParams.get('t')||'');if(!d||!['movie','series','live'].includes(d.type)||!/^\d+$/.test(String(d.id)))return new Response('Expired',{status:410,headers:cors});
  const diagnostic=targetedTicket(d,env);if(d.targetedCase&&!diagnostic)return new Response('Expired',{status:410,headers:cors});
  // The selector runs after subscriber authentication. Only its encrypted ticket
@@ -481,6 +524,16 @@ async function serverStreamDirect(req,env,u,ctx,trace){
    flow?.finish('playlist_response',{status:200});
    return new Response(req.method==='HEAD'?null:warm.body,{headers:{...cors,'content-type':'application/vnd.apple.mpegurl',[INITIAL_EVIDENCE_HEADER]:'manifest'}});
   }
+ }
+ // The encrypted resource ticket binds the original TS object, customer, lease,
+ // request and output type. The caller can only choose a byte range of that output.
+ if (d.applePart) {
+  if (!d.appleFmp4 || !d.resource || !d.xtream || d.type!=='live' || d.ext!=='m3u8' || !d.lease_id) return json({error:'invalid_apple_segment'},410);
+  const result=await appleSegment(req,d,relay);
+  const lease=await directory(env,'/lease-check',{sid:d.sid,lease_id:d.lease_id,request_id:d.request_id});
+  if (!lease.ok||d.exp<=Date.now()) {await result.body?.cancel();return json({error:'playback_expired'},410);}
+  for(const [name,value] of Object.entries(cors))if(!result.headers.has(name))result.headers.set(name,value);
+  return result;
  }
  const folder=d.type==='series'?'series':d.type==='live'?'live':'movie',start=d.resource||(d.origin||ORIGIN)+'/'+folder+'/'+encodeURIComponent(d.username)+'/'+encodeURIComponent(d.password)+'/'+d.id+'.'+cleanExt(d.ext);
  const sourceOrigin=d.origin||ORIGIN;
@@ -536,26 +589,39 @@ async function serverStreamDirect(req,env,u,ctx,trace){
   await response.body?.cancel();return new Response(null,{status:response.status===206?200:response.status,headers:out})
  }
  if(playlist){const text=await timed(trace,'first_byte',()=>readLivePlaylist(response,deadline));if(!text.startsWith('#EXTM3U'))throw Error('invalid_playlist');const master=/^#EXT-X-(?:STREAM-INF|I-FRAME-STREAM-INF|MEDIA):/m.test(text);
+ const simpleMaster=master&&!/^#EXT-X-(?:MEDIA:|I-FRAME-STREAM-INF:|SESSION-KEY:)/m.test(text);
  const proxy=async(value,playlistReference=false,keyReference=false)=>{
   const target=validatedMediaTarget(new URL(value,next),sourceOrigin);
   const claim={...d,resource:target.href};
+  if(master&&!simpleMaster)delete claim.appleFmp4;
   if(d.xtream&&d.type==='live'&&d.ext==='m3u8')claim.hlsExtension=liveHlsResourceExtension(target,playlistReference,keyReference);
   return u.origin+signedStreamPath(claim)+'?t='+await ticket(env,claim);
  };
- const lines=await Promise.all(text.split(/\r?\n/).map(async line=>{
+ // Prepare is only the bounded origin check that creates a stable signed master.
+ // Expensive conversion starts on the first actual media-playlist GET.
+ const deferAppleProbe=d.appleFmp4&&!master&&!d.resource&&req.headers.get('X-SMN-Prepare')==='1';
+ let transformed=null;
+ if(d.appleFmp4&&!master&&!deferAppleProbe){
+  try{transformed=await appleFragmentPlaylist(text,(value,sequence,part,meta)=>appleSegmentURL(req,env,u,relay,d,validatedMediaTarget(new URL(value,next),sourceOrigin),sequence,part,meta));}
+  catch(error){if(req.signal.aborted||error.message==='media_origin_unapproved')throw error;}
+ }
+ const lines=transformed?null:await Promise.all(text.split(/\r?\n/).map(async line=>{
   if(!line.trim())return line;
   if(!line.startsWith('#'))return proxy(line.trim(),master);
+  // A simple provider master may announce MP2 while the selected child publishes AAC.
+  if(d.appleFmp4&&simpleMaster&&line.startsWith('#EXT-X-STREAM-INF:'))
+   line=line.replace(/([:,])CODECS="[^"]*"(,?)/,(all,delimiter,trailing)=>delimiter===':'?':':trailing?',':'');
   const playlistReference=/^#EXT-X-(?:MEDIA|I-FRAME-STREAM-INF|RENDITION-REPORT):/.test(line);
   const keyReference=/^#EXT-X-(?:SESSION-KEY|KEY):/.test(line);
   for(const match of line.matchAll(/\bURI="([^"]+)"/g))line=line.replace(match[0],'URI="'+await proxy(match[1],playlistReference,keyReference)+'"');
   return line;
- }));const body=lines.join('\n');
+ }));const body=transformed??lines.join('\n');
  if(req.headers.get('X-SMN-Prepare')==='1'&&!d.resource){
   // Xtream can return this already-rewritten master directly. An initial media
   // playlist still needs its signed refresh URL and warm first response.
   if(d.xtream&&d.type==='live'&&d.ext==='m3u8'&&master){
    out.set('X-SMN-Prepared-Master','1');
-  }else rememberLiveStart(warmKey,body);
+  }else if(!deferAppleProbe)rememberLiveStart(warmKey,body);
  }
  if(!d.resource)out.set(INITIAL_EVIDENCE_HEADER,'manifest');flow?.finish('playlist_response');return new Response(body,{headers:out})}
  const result=new Response(response.body,{status:response.status,headers:out});

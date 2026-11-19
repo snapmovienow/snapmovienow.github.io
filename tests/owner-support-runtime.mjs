@@ -1,3 +1,4 @@
+import {releaseWorkerModules} from '../cloudflare-worker/tests/workerd-bundle.mjs';
 // Real published portal bundle, synthetic accounts, and intercepted local routes.
 // This check never authenticates a real customer or requests provider media.
 import assert from 'node:assert/strict';
@@ -22,7 +23,7 @@ const owner=createOwnerPortal({getConfig:async()=>({accountId:PORTAL_ACCOUNT,sou
 try{
  const artifact='cloudflare-worker/.wrangler/quality-release/index.js';
  assert.ok(fs.existsSync(artifact),'Build the production release before checking owner support.');
- const options={workers:[{name:'owner-support-release',modules:true,script:fs.readFileSync(artifact,'utf8'),compatibilityDate:'2026-10-03',compatibilityFlags:['enable_request_signal'],outboundService:()=>{throw Error('Owner support tests never use external services.');}}]};
+ const options={workers:[{name:'owner-support-release',modules:releaseWorkerModules(artifact),compatibilityDate:'2026-10-03',compatibilityFlags:['enable_request_signal'],outboundService:()=>{throw Error('Owner support tests never use external services.');}}]};
  runtime=new Miniflare(convertV4MiniflareOptions?convertV4MiniflareOptions(options):options);await runtime.ready;const worker=await runtime.getWorker('owner-support-release');
  browser=await chromium.launch({headless:true,args:['--no-sandbox','--disable-dev-shm-usage']});
  const context=await browser.newContext({viewport:{width:390,height:1000}});

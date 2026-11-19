@@ -25,7 +25,7 @@ function playbackURL(base, login, kind, id, ext) {
   return `${base}/${kind}/${encodeURIComponent(login.username)}/${encodeURIComponent(login.password)}/${id}.${ext}`;
 }
 
-function mobileAppleLivePlayer(request) {
+export function mobileAppleLivePlayer(request) {
   const agent = request.headers.get('User-Agent') || '';
   const mobileApple = /\b(?:iPhone|iPad|iPod)(?:\d+,\d+)?\b|\b(?:iOS|iPadOS)\b/i.test(agent);
   if (/^AppleCoreMedia\//i.test(agent)) return mobileApple;

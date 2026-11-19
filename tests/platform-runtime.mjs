@@ -1,10 +1,11 @@
+import {workerBundleOptions,bundledWorkerModules} from '../cloudflare-worker/tests/workerd-bundle.mjs';
 // Actual production module in two independent local workerd/SQLite namespaces.
 import assert from 'node:assert/strict';
 import {mkdirSync,writeFileSync} from 'node:fs';
 import {build} from 'esbuild';
 import {Miniflare,convertV4MiniflareOptions} from 'miniflare';
 import {totp,unseal,seal} from '../cloudflare-worker/src/security.mjs';
-const bundled=await build({entryPoints:['cloudflare-worker/src/index.js'],bundle:true,format:'esm',platform:'browser',external:['cloudflare:sockets'],write:false});
+const bundled=await build({entryPoints:['cloudflare-worker/src/index.js'],...workerBundleOptions});
 const mailRequests=[];let mailStatus=200;
 const outboundService=async request=>{
  assert.equal(request.url,'https://api.resend.com/emails','email credentials never leave the fixed Resend endpoint');
@@ -15,8 +16,8 @@ const outboundService=async request=>{
 // renewal and replacement consume distinct TOTP steps within the allowed skew.
 const fixtureNow=Math.floor(Date.now()/30000)*30000+29999;
 const fixtureStep=Math.floor(fixtureNow/30000);
-const workerScript='Date.now=()=>'+String(fixtureNow)+';\n'+bundled.outputFiles[0].text;
-const common={modules:true,script:workerScript,compatibilityDate:'2026-10-03',compatibilityFlags:['enable_request_signal'],outboundService,durableObjects:{PLAYBACK_SESSIONS:{className:'PlaybackSession',useSQLite:true},BACKUP_RECOVERY:{className:'BackupRecovery',useSQLite:true},OPERATION_ALERTS:{className:'OperationsMonitor',useSQLite:true}},bindings:{TICKET_SECRET:'local-runtime-secret-never-deployed-123456',ADMIN_SETUP_SECRET:'local-runtime-setup-secret-never-deployed-123456',WEB_ORIGINS:'http://127.0.0.1:8788'}};
+const modules=bundledWorkerModules(bundled,'Date.now=()=>'+String(fixtureNow)+';\n');
+const common={modules,compatibilityDate:'2026-10-03',compatibilityFlags:['enable_request_signal'],outboundService,durableObjects:{PLAYBACK_SESSIONS:{className:'PlaybackSession',useSQLite:true},BACKUP_RECOVERY:{className:'BackupRecovery',useSQLite:true},OPERATION_ALERTS:{className:'OperationsMonitor',useSQLite:true}},bindings:{TICKET_SECRET:'local-runtime-secret-never-deployed-123456',ADMIN_SETUP_SECRET:'local-runtime-setup-secret-never-deployed-123456',WEB_ORIGINS:'http://127.0.0.1:8788'}};
 const options={workers:[{...common,name:'production-test',bindings:{...common.bindings,ENVIRONMENT:'production'}},{...common,name:'staging-test',bindings:{...common.bindings,ENVIRONMENT:'staging'}}],durableObjectsPersist:false};
 const mf=new Miniflare(convertV4MiniflareOptions?convertV4MiniflareOptions(options):options);
 try{

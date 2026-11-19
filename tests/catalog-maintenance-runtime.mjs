@@ -1,8 +1,9 @@
+import {workerBundleOptions,bundledWorkerModules} from '../cloudflare-worker/tests/workerd-bundle.mjs';
 // Scheduled production module, private self-requests and real SQLite storage.
 import assert from 'node:assert/strict';
 import {build} from 'esbuild';
 import {Miniflare,convertV4MiniflareOptions} from 'miniflare';
-const script=(await build({entryPoints:['cloudflare-worker/src/index.js'],bundle:true,format:'esm',platform:'browser',external:['cloudflare:sockets'],write:false})).outputFiles[0].text;
+const modules=bundledWorkerModules(await build({entryPoints:['cloudflare-worker/src/index.js'],...workerBundleOptions}));
 const generatedAt=new Date().toISOString(),seriesPage='https://ww3.gnulahd.nu/ver/dragon-ball-super-beerus/',ep=n=>'https://ww3.gnulahd.nu/dragon-ball-super-beerus-1x0'+n+'/',key='public-test-player-key',embed='https://uqload.vc/embed-testfilm.html';
 const languages={langs:[{label:'Latino',servers:[{src:embed}]}]},p=btoa(Array.from(new TextEncoder().encode(JSON.stringify(languages)),(v,i)=>String.fromCharCode(v^key.charCodeAt(i%key.length))).join(''));
 const feeds={beerus:{version:1,kind:'beerus',requestId:'sqlite-beerus-review',generatedAt,seriesPage,items:[]},movies:{version:1,kind:'movies',requestId:'sqlite-movies-review',generatedAt,items:[{id:'new-film',name:'New film',year:2026,page:'https://www2.gnula.one/movie/new-film/'}]}};
@@ -16,7 +17,7 @@ const outboundService=async req=>{const u=new URL(req.url);
  if(u.hostname==='strm1.uqload.vc')return u.pathname.endsWith('.m3u8')?new Response('#EXTM3U\n#EXTINF:4,\nsegment.ts\n#EXT-X-ENDLIST\n',{headers:{'content-type':'application/vnd.apple.mpegurl'}}):new Response(new Uint8Array(64),{headers:{'content-type':'video/mp2t'}});
  throw Error('Unexpected synthetic outbound host: '+u.hostname);
 };
-const opts={workers:[{name:'catalog-runtime',modules:true,script,compatibilityDate:'2026-10-03',compatibilityFlags:['enable_request_signal'],outboundService,durableObjects:{PLAYBACK_SESSIONS:{className:'PlaybackSession',useSQLite:true},BACKUP_RECOVERY:{className:'BackupRecovery',useSQLite:true},OPERATION_ALERTS:{className:'OperationsMonitor',useSQLite:true}},bindings:{ENVIRONMENT:'production',CATALOG_MAINTENANCE_ENABLED:'true',TICKET_SECRET:'local-only-maintenance-ticket-secret',ADMIN_SETUP_SECRET:'local-only-maintenance-setup-secret'}}],durableObjectsPersist:false};
+const opts={workers:[{name:'catalog-runtime',modules,compatibilityDate:'2026-10-03',compatibilityFlags:['enable_request_signal'],outboundService,durableObjects:{PLAYBACK_SESSIONS:{className:'PlaybackSession',useSQLite:true},BACKUP_RECOVERY:{className:'BackupRecovery',useSQLite:true},OPERATION_ALERTS:{className:'OperationsMonitor',useSQLite:true}},bindings:{ENVIRONMENT:'production',CATALOG_MAINTENANCE_ENABLED:'true',TICKET_SECRET:'local-only-maintenance-ticket-secret',ADMIN_SETUP_SECRET:'local-only-maintenance-setup-secret'}}],durableObjectsPersist:false};
 const mf=new Miniflare(convertV4MiniflareOptions(opts));
 try{
  await mf.ready;const w=await mf.getWorker('catalog-runtime');

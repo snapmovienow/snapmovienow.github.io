@@ -55,6 +55,8 @@ jobs:
           npx playwright install --with-deps chromium
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y ffmpeg
+      - name: Verify Apple live fragment picture and audio continuity
+        run: node tools/apple-segment-codec/verify.mjs
       - name: Chromium audio regression
         run: npm run test:browser
         env:
@@ -99,4 +101,5 @@ jobs:
           path: |
             artifacts/
             cloudflare-worker/.wrangler/quality-release/index.js
+            cloudflare-worker/.wrangler/quality-release/*.wasm
           if-no-files-found: ignore
