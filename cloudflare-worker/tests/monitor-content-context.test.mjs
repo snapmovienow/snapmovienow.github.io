@@ -14,7 +14,7 @@ assert.ok(!mediaFailureContext([entry('9',{title:'https://private.invalid/?passw
 assert.ok(new TextEncoder().encode(mediaFailureContext(Array.from({length:30},(_,i)=>entry(String(i),{title:'🎬'.repeat(80)})),'live',null,now)).length<=600);
 class Store{constructor(){this.data=new Map();this.queue=Promise.resolve()}async get(k){return structuredClone(this.data.get(k))}async put(k,v){this.data.set(k,structuredClone(v))}transaction(fn){const p=this.queue.then(()=>fn(this));this.queue=p.catch(()=>{});return p}}
 let healthy=false,metadataReads=0,metadataFail=false;
-const sent=[],env={ENVIRONMENT:'production',TICKET_SECRET:'context-test-secret',PLAYBACK_SESSIONS:{idFromName:x=>x,get:()=>({fetch:async url=>{
+const sent=[],env={ENVIRONMENT:'production',STARTUP_INCIDENT_EMAIL_ENABLED:'true',TICKET_SECRET:'context-test-secret',PLAYBACK_SESSIONS:{idFromName:x=>x,get:()=>({fetch:async url=>{
  const path=new URL(url).pathname;
  if(path==='/monitor-providers')return Response.json({configuredIds:[],providers:[]});
  if(path==='/operations/monitor')return Response.json({groups:[],timings:[{type:'live',platform:'other',requests:10,failures:healthy?0:3,stages:{total:{p95UpperMs:1000},origin:{p95UpperMs:1000}},statusCounts:healthy?{200:10}:{404:3,200:7}}]});
