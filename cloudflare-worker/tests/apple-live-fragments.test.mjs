@@ -1,0 +1,50 @@
+import assert from 'node:assert/strict';
+import {appleFragmentPlaylist,appleGolPeruChannel,appleFragmentResponse,createAppleFragments} from '../src/apple-live-fragments.mjs';
+
+const manifest = '#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:90\n#EXT-X-DISCONTINUITY-SEQUENCE:16\n#EXT-X-PROGRAM-DATE-TIME:2026-11-19T10:30:00Z\n#EXTINF:6.5,\na.ts\n#EXTINF:6,\nb.ts\n#EXT-X-DISCONTINUITY\n#EXTINF:7,\nc.ts\n';
+const calls = [];
+const first = await appleFragmentPlaylist(manifest, async (uri,seq,part,segment) => {
+  calls.push({uri, seq, part, period:segment.period, time:segment.epochMs});
+  return part+'-'+seq;
+});
+assert.match(first, /#EXT-X-VERSION:7/);
+assert.match(first, /#EXT-X-MAP:URI="init-90"\n#EXTINF:6.5,\nmedia-90/);
+assert.match(first, /#EXT-X-DISCONTINUITY\n#EXT-X-MAP:URI="init-92"/);
+assert.deepEqual(calls.filter(x=>x.part==='init').map(x=>[x.period,x.uri]), [[16,'a.ts'],[17,'c.ts']]);
+assert.equal(calls.find(x=>x.uri==='c.ts').time,Date.parse('2026-11-19T10:30:12.5Z'));
+for (const tag of ['#EXT-X-KEY:METHOD=AES-128','#EXT-X-BYTERANGE:12@2','#EXT-X-MAP:URI="init.mp4"','#EXT-X-PART:DURATION=1','#EXT-X-GAP']) {
+  assert.equal(await appleFragmentPlaylist(manifest+tag,()=>assert.fail('must preserve source playlist')),null);
+}
+assert.equal(appleGolPeruChannel('PER-GOL Peru (L)(1080)'),true);
+assert.equal(appleGolPeruChannel('PER-Gol Peru (TV)(1080)'),true);
+assert.equal(appleGolPeruChannel('PER-Gol Perú (TV) 1080'),true);
+for (const extra of [' Extra',' 2',' Deportes']) assert.equal(appleGolPeruChannel('PER-Gol Perú'+extra),false);
+const base='https://local.invalid/stream/resource.m4s';
+const claim={sid:'A',lease_id:'1',request_id:'r',resource:'https://origin.invalid/segment',applePart:'media',appleSequence:99,exp:Date.now()+10000};
+const init=new Uint8Array([0,1,2,3]),media=new Uint8Array([5,6,7,8,9]);
+let outputs=0,reads=0;
+const make=createAppleFragments(()=>{ outputs++; return {init,media}; });
+const origin=async()=>{reads++;return new Response(new Uint8Array([1,2,3]));};
+const head=new Request(base,{method:'HEAD',headers:{Range:'bytes=0-1'}});
+assert.equal((await make(head,claim,origin)).status,206);
+assert.equal((await make(new Request(base),claim,origin)).headers.get('content-length'),'5');
+assert.equal(reads,1);
+assert.equal(outputs,1);
+assert.equal((await make(new Request(base,{headers:{Range:'bytes=50-60'}}),claim,origin)).status,416);
+assert.equal((await make(new Request(base,{headers:{Range:'bytes=0-1','If-Range':'unknown'}}),claim,origin)).status,200);
+assert.deepEqual([...new Uint8Array(await (await make(new Request(base,{headers:{Range:'bytes=-2'}}),claim,origin)).arrayBuffer())],[8,9]);
+assert.equal((await make(new Request(base),{...claim,sid:'B'},origin)).status,200);
+assert.equal(reads,2);
+assert.equal((await make(new Request(base),{...claim,exp:Date.now()-1},origin)).status,410);
+await assert.rejects(()=>make(new Request(base),{...claim,request_id:'oversize'},async()=>new Response('a',{headers:{'content-length':String(9*1024*1024)}})));
+assert.equal(appleFragmentResponse(init,'init',new Request(base)).headers.get('content-type'),'video/mp4');
+const controller=new AbortController(), interrupted=new Request(base,{signal:controller.signal});
+const independent={...claim,request_id:'race'};
+let release;
+const gate=new Promise(resolve=>{release=resolve;});
+const cancelled=make(interrupted,independent,async()=>{await gate;return new Response('cancelled');});
+const valid=make(new Request(base),independent,async()=>new Response('valid'));
+controller.abort();release();
+assert.equal((await valid).status,200);
+await assert.rejects(()=>cancelled);
+console.log('apple live playlist, discontinuity, ranges, cancellation and scoped transform checks passed');

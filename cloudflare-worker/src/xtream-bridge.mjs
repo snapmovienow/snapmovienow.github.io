@@ -9,7 +9,8 @@ import {timed} from './playback-timings.mjs';
 import {playbackMonitorClient,attachPlaybackQuality} from './native-playback-quality.mjs';
 import {requestConnectionClient} from './connection-monitor.mjs';
 import {selectLiveFlowDiagnostic,createLiveFlowMonitor,createLiveStartupObserver} from './live-flow-diagnostics.mjs';
-import {handleXtream} from './xtream.mjs';
+import {handleXtream,mobileAppleLivePlayer} from './xtream.mjs';
+import {appleGolPeruChannel} from './apple-live-fragments.mjs';
 import {epToExclusiveId,matchesLqsaTitle} from './series-supplement.mjs';
 import {accountProfile} from './profiles.mjs';
 import {createLiveVariantFallback} from './live-variants.mjs';
@@ -95,7 +96,9 @@ export function createXtreamBridge(deps) {
       const {lease_id}=await allocation.r.json(),credentials=allocation.credentials;allocation.lease_id=lease_id;const signalAt=Date.now();
       const monitored=response=>attachPlaybackQuality(response,request,session,{lease_id,request_id},value=>deps.ticket(env,value));
       const liveFlow=selectFlow(attempt+1);
-      const encrypted=await deps.ticket(env,{sid:session.sid,username:credentials.username,password:credentials.password,origin:credentials.origin,lease_id,request_id,...(range_id?{native_range_id:range_id}:{}),xtream:true,type:item.type,id:item.upstreamId,ext:item.ext,exp:session.exp,...(liveFlow?{liveFlow}:{})});
+      const appleFmp4 = env.APPLE_LIVE_COMPAT !== 'off' && !options.confirmSignal && item.type==='live' &&
+        item.ext==='m3u8' && mobileAppleLivePlayer(request) && appleGolPeruChannel(item.activity?.title);
+      const encrypted=await deps.ticket(env,{...(appleFmp4?{appleFmp4:true}:{}),sid:session.sid,username:credentials.username,password:credentials.password,origin:credentials.origin,lease_id,request_id,...(range_id?{native_range_id:range_id}:{}),xtream:true,type:item.type,id:item.upstreamId,ext:item.ext,exp:session.exp,...(liveFlow?{liveFlow}:{})});
       const target=new URL('/stream',request.url);target.searchParams.set('t',encrypted);
       try{
         const prepared=startup?startup.prepare(request):new Request(request);
