@@ -859,14 +859,15 @@ export default {scheduled(event,env,ctx){
  localAuditBootstrap(env,ctx);
  if(event.cron===MONITOR_CRON&&diagnosticEnabled(env))ctx.waitUntil(env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_empress_diagnostic_20261104')).fetch('https://private/empress-origin-diagnostic-run',{method:'POST',body:'{}'}).then(r=>r.body?.cancel()).catch(()=>console.error({event:'empress_origin_diagnostic',reason:'diagnostic_unavailable'})));
  if(event.cron===MONITOR_CRON){
-  ctx.waitUntil(passwordProtectionReadiness(env).then(readiness=>console.log(readiness)));
-  schedulePrivateDiagnosticReport(env,ctx);ctx.waitUntil(directory(env,'/service-monitor-sample').then(r=>r.body?.cancel()).catch(()=>console.error({event:'service_monitor_sample_failed'})));ctx.waitUntil(isolatedPoolRefresh(env).status.catch(()=>console.error({event:'provider_inventory_refresh_failed'})));ctx.waitUntil(telegramTick(env).then(async ({diagnostic})=>{
+  ctx.waitUntil(passwordProtectionReadiness(env).then(readiness=>{if(!readiness.keyReady)console.error(readiness);}));
+  schedulePrivateDiagnosticReport(env,ctx);ctx.waitUntil(directory(env,'/service-monitor-sample').then(async response=>{await response.body?.cancel();if(!response.ok)console.error({event:'service_monitor_sample_failed',status:response.status});}).catch(()=>console.error({event:'service_monitor_sample_failed'})));ctx.waitUntil(isolatedPoolRefresh(env).status.catch(()=>console.error({event:'provider_inventory_refresh_failed'})));ctx.waitUntil(telegramTick(env).then(async ({diagnostic})=>{
   if(!diagnostic)return;
   const response=await monitorCall(env,'/owner-diagnostic',diagnostic).catch(()=>null);
   if(!response?.ok)console.error({event:'owner_diagnostic_record_failed'});
   await response?.body?.cancel();
- }).catch(()=>console.error({event:'telegram_tick_failed'})));ctx.waitUntil(monitorCall(env,'/tick').then(async response=>{if(!response.ok)console.error({event:'monitor_failed'});await response.body?.cancel()}).catch(()=>console.error({event:'monitor_failed'})));if(env.CATALOG_MAINTENANCE_ENABLED==='true')ctx.waitUntil(directory(env,'/catalog-maintenance-tick').then(async r=>{await r.body?.cancel()}).catch(()=>console.error({event:'catalog_maintenance_failed'})));return}
+ }).catch(()=>console.error({event:'telegram_tick_failed'})));ctx.waitUntil(monitorCall(env,'/tick').then(async response=>{if(!response.ok)console.error({event:'monitor_failed'});await response.body?.cancel()}).catch(()=>console.error({event:'monitor_failed'})));if(env.CATALOG_MAINTENANCE_ENABLED==='true')ctx.waitUntil(directory(env,'/catalog-maintenance-tick').then(async response=>{await response.body?.cancel();if(!response.ok)console.error({event:'catalog_maintenance_failed',status:response.status});}).catch(()=>console.error({event:'catalog_maintenance_failed'})));return}
  if(event.cron&&event.cron!=='17 5 * * *')return;
+ ctx.waitUntil(passwordProtectionReadiness(env).then(readiness=>{if(readiness.keyReady)console.log(readiness);else console.error(readiness);}));
  ctx.waitUntil(directory(env,'/backup-automatic').then(async response=>{const result=await response.json();if(result.error)console.error({event:'backup_failed',reason:result.error});if(result.recovery?.error)console.error({event:'backup_drill_failed',reason:result.recovery.error})}).catch(()=>console.error({event:'backup_failed',reason:'backup_service_unavailable'})).finally(async()=>{const response=await monitorCall(env,'/tick');await response.body?.cancel()}));
 },async fetch(req, env, ctx) {
  if(matchesStaticAdminURL(new URL(req.url)))return staticAdminResponse(req);

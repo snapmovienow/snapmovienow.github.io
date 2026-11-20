@@ -274,6 +274,25 @@ try{
  worker.scheduled({cron:MONITOR_CRON},scheduledEnv,{waitUntil:p=>pending.push(p)});await Promise.all(pending);assert.deepEqual([...paths].sort(),['/accounts/reseller-portal-config','/accounts/service-monitor-sample','/refresh-pool','/tick'],'scheduled inventory refresh must not fetch a second full pool or trigger daily backups');
  paths.length=0;pending.length=0;worker.scheduled({cron:'17 5 * * *'},scheduledEnv,{waitUntil:p=>pending.push(p)});await Promise.all(pending);assert.deepEqual(paths,['/accounts/backup-automatic','/tick']);
  paths.length=0;worker.scheduled({cron:MONITOR_CRON},{...scheduledEnv,ENVIRONMENT:'staging'},{waitUntil:p=>pending.push(p)});assert.equal(paths.length,0);
+ const scheduledLogs=[],log=console.log,error=console.error;
+ try{
+  console.log=value=>scheduledLogs.push(value);console.error=value=>scheduledLogs.push(value);
+  const binding={idFromName:x=>x,get:()=>({fetch:async url=>{
+   const path=new URL(url).pathname;
+   return Response.json({ok:true},{status:path.endsWith('/service-monitor-sample')||path.endsWith('/catalog-maintenance-tick')?503:200});
+  }})};
+  const runtime={...scheduledEnv,PLAYBACK_SESSIONS:binding,CATALOG_MAINTENANCE_ENABLED:'true',TICKET_SECRET:'scheduled-test-secret-value-'.repeat(2)};
+  const run=async(cron,overrides={})=>{const tasks=[];worker.scheduled({cron},{...runtime,...overrides},{waitUntil:p=>tasks.push(p)});await Promise.all(tasks);};
+  const readiness=()=>scheduledLogs.filter(value=>value.event==='password_protection_readiness_v1');
+  await run(MONITOR_CRON);
+  assert.equal(readiness().length,0,'successful readiness is not logged every five minutes');
+  assert.ok(scheduledLogs.some(value=>value.event==='service_monitor_sample_failed'&&value.status===503));
+  assert.ok(scheduledLogs.some(value=>value.event==='catalog_maintenance_failed'&&value.status===503));
+  await run('17 5 * * *');
+  assert.deepEqual(readiness().map(value=>value.keyReady),[true]);
+  await run(MONITOR_CRON,{TICKET_SECRET:''});
+  assert.deepEqual(readiness().map(value=>value.keyReady),[true,false]);
+ }finally{console.log=log;console.error=error}
  const unauthorised=await worker.fetch(new Request('https://example.test/admin',{method:'POST',body:JSON.stringify({action:'alerts-status'})}),{TICKET_SECRET:env.TICKET_SECRET});assert.equal(unauthorised.status,401);
  console.log('PASS: persistent operational incidents, confirmed recovery, idle-sample uncertainty, encrypted delivery key, idempotent retry, recipient edits, rate limits, staging isolation, metadata probes and separate cron dispatch.');
 }finally{Date.now=realNow;globalThis.fetch=realFetch}
