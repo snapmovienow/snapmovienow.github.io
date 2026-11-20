@@ -4,6 +4,7 @@ export const MONITOR_BINS=[100,250,500,1000,2000,3000,4000,5000,8000,12000,20000
 const STEP=300000,HOUR=3600000,RETENTION=7*86400000;
 const historyPrefixes=['service-monitor-counts:','service-monitor-quality:'];
 const knownScopesKey='service-monitor-retention-scopes';
+const idleSinceKey='service-monitor-idle-since';
 const identifier=v=>typeof v==='string'&&/^[A-Za-z0-9_.:-]{1,80}$/.test(v);
 const media=key=>{const [type,server]=String(key||'').split('|');return ['live','movie','series'].includes(type)&&identifier(server)?{type,server}:null;};
 const empty=()=>({reports:0,attempts:0,failedStarts:0,errors:0,watchMs:0,stallMs:0,bytes:0,bytesMeasured:0,histogram:MONITOR_BINS.map(()=>0)});
@@ -106,6 +107,13 @@ async function pruneHistory(store,accounts,now){
 }
 export async function sampleServiceMonitor(store,leases,accounts,now=Date.now()){
  const counts=await currentCounts(store,leases,accounts,now),hour=Math.floor(now/HOUR),bucket=Math.floor(now/STEP);
+ const idleSince=await store.get(idleSinceKey),idle=[...counts.values()].every(rows=>!rows.length);
+ const continuingIdle=idle&&Number.isSafeInteger(idleSince)&&idleSince<=bucket;
+ // Take the first zero after activity, then record only actual checks every
+ // 15 minutes. Historical intervals without a sample remain unknown.
+ if(continuingIdle&&bucket>idleSince&&bucket%3!==0){await pruneHistory(store,accounts,now);return counts;}
+ if(idle&&!continuingIdle)await store.put(idleSinceKey,bucket);
+ if(!idle&&idleSince!==undefined)await store.delete(idleSinceKey);
  const created=[];
  for(const [account,rows]of counts){
   const key=keys('service-monitor-counts:',account)+hour,previous=await store.get(key),data=previous||{};
@@ -134,5 +142,5 @@ export async function readServiceMonitor(store,leases,body,now=Date.now()){
   for(let n=bucket;n<=end;n++){if(countRows.has(n)){last=countRows.get(n);covered++;}if(qualityRows.has(n))add(q,qualityRows.get(n));}add(summary,q);
   points.push({at:bucket*STEP,connections:last?.connections??null,users:last?.users??null,covered,...q});
  }
- return Response.json({ok:true,checkedAt:now,accountId:account,hours,content,provider,bins:MONITOR_BINS,current:{connections:current.connections,users:current.users},summary,points,providers:[...providers].sort(),retentionDays:7,sampleMinutes:5,trafficSource:'compatible-player-reports',inputMeasured:false});
+ return Response.json({ok:true,checkedAt:now,accountId:account,hours,content,provider,bins:MONITOR_BINS,current:{connections:current.connections,users:current.users},summary,points,providers:[...providers].sort(),retentionDays:7,sampleMinutes:5,idleSampleMinutes:15,trafficSource:'compatible-player-reports',inputMeasured:false});
 }

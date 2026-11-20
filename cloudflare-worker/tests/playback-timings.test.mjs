@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {PlaybackTimings,playbackTimingsRoute,startupTimingObservations} from '../src/playback-timings.mjs';
+import {PlaybackTimings,playbackTimingsRoute,startupTimingObservations,queuePlaybackTiming} from '../src/playback-timings.mjs';
 import {traceRequest} from '../src/request-diagnostics.mjs';
 let now=0;const trace=new PlaybackTimings(()=>now).identify('series','android');
 await trace.run('auth',async()=>{now+=20});
@@ -35,3 +35,32 @@ const two=parallel.run('catalog',()=>new Promise(r=>{resolveB=r}));clock=30;reso
 assert.equal(parallel.snapshot().stages.catalog.ms,30,'a pending parallel catalog is measured through the response time');
 clock=40;resolveB();await two;assert.deepEqual(parallel.snapshot().stages.catalog,{ms:40,count:2},'overlapping catalog calls count wall time once, not the sum of both durations');
 console.log('PASS: bounded per-stage startup timing, failure attribution, DO merge without duplication, redacted aggregate p95 and invalid metric rejection.');
+
+const regular={type:'live',platform:'web',status:200,totalMs:120,stages:{origin:{ms:90,count:1}}};
+const grouped=new Store(),sent=[],pending=[];
+const binding={idFromName:name=>name,get:()=>({fetch:async(url,options)=>{
+ const body=JSON.parse(options.body);sent.push(body);
+ return playbackTimingsRoute(grouped,new Request(url,options));
+}})};
+const ctx={waitUntil:promise=>pending.push(promise)};
+let writes=0;const put=grouped.put.bind(grouped);
+grouped.put=async(k,v)=>{if(k.startsWith('startup-timing:'))writes++;return put(k,v);};
+for(let index=0;index<24;index++)queuePlaybackTiming(binding,ctx,regular);
+queuePlaybackTiming(binding,ctx,{...regular,status:502});
+assert.equal(sent.length,1,'a failure is sent without waiting for the healthy batch');
+await Promise.all(pending);
+assert.equal(sent.length,2);
+assert.equal(writes,2,'one grouped write for 24 successful starts plus one immediate failure');
+const batchReport=await(await playbackTimingsRoute(grouped,new Request('https://private/operations/timing-read',{method:'POST',body:'{}'}))).json();
+assert.equal(batchReport.groups[0].requests,25);
+assert.equal(batchReport.groups[0].failures,1);
+assert.equal(batchReport.groups[0].stages.total.samples,25);
+
+const duringRollout=[],tasks=[];
+const legacy={idFromName:name=>name,get:()=>({fetch:async(url,options)=>{
+ const body=JSON.parse(options.body);duringRollout.push(body);
+ return new Response(null,{status:body.timings?400:200});
+}})};
+for(let index=0;index<2;index++)queuePlaybackTiming(legacy,{waitUntil:p=>tasks.push(p)},regular);
+await Promise.all(tasks);
+assert.deepEqual(duringRollout.map(body=>[!!body.timings,!!body.timing]),[[true,false],[false,true],[false,true]]);

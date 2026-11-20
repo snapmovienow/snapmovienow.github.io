@@ -48,25 +48,62 @@ export function startupTimingObservations(groups){
  return result;
 }
 
+const pendingTimings=new WeakMap();
+const maxBatch=32;
+// Only the request that starts a batch owns its timer and the storage call.
+// Other requests contribute plain timing data without sharing an I/O promise.
+export function queuePlaybackTiming(binding,ctx,timing){
+ const send=async body=>{
+  const response=await binding.get(binding.idFromName('__smn_operations_v1')).fetch(
+   'https://private/operations/timing-ingest',{method:'POST',body:JSON.stringify(body)});
+  await response.body?.cancel();
+  return response.status;
+ };
+ const limit=timing.type==='live'?8000:12000;
+ if(timing.status>=400||timing.totalMs>=limit||timing.platform==='canary'){
+  ctx.waitUntil(send({timing}).catch(()=>{}));
+  return;
+ }
+ let batch=pendingTimings.get(binding);
+ if(batch&&batch.length<maxBatch){batch.push(timing);return;}
+ batch=[timing];pendingTimings.set(binding,batch);
+ ctx.waitUntil((async()=>{
+  await new Promise(resolve=>setTimeout(resolve,200));
+  if(pendingTimings.get(binding)===batch)pendingTimings.delete(binding);
+  // An older Durable Object can still handle traffic during a rollout.
+  // Its HTTP 400 means it did not write the batch.
+  if(await send({timings:batch})===400)await Promise.all(batch.map(timing=>send({timing})));
+ })().catch(()=>{}));
+}
+
 export async function playbackTimingsRoute(store,req){
  const path=new URL(req.url).pathname,body=await req.json(),now=Date.now(),bucket=Math.floor(now/300000);
  if(path==='/operations/timing-ingest'){
-  const m=body.timing;
-  if(!m||!types.has(m.type)||!['android','web','other','canary'].includes(m.platform)||!Number.isInteger(m.status)||m.status<100||m.status>599||!Number.isFinite(m.totalMs)||m.totalMs<0||m.totalMs>300000||!m.stages||Object.keys(m.stages).some(k=>!stages.has(k)))return Response.json({error:'invalid_timing'},{status:400});
-  for(const v of Object.values(m.stages))if(!v||!Number.isFinite(v.ms)||v.ms<0||v.ms>300000||!Number.isInteger(v.count)||v.count<1||v.count>100)return Response.json({error:'invalid_timing'},{status:400});
-  if(m.errorCode!==undefined&&!playbackErrorCode(m.errorCode))return Response.json({error:'invalid_timing'},{status:400});
+  const timings=Array.isArray(body.timings)?body.timings:[body.timing];
+  const invalid=()=>Response.json({error:'invalid_timing'},{status:400});
+  if(!timings.length||timings.length>maxBatch)return invalid();
+  for(const m of timings){
+   if(!m||!types.has(m.type)||!['android','web','other','canary'].includes(m.platform)||!Number.isInteger(m.status)||m.status<100||m.status>599||!Number.isFinite(m.totalMs)||m.totalMs<0||m.totalMs>300000||!m.stages||Object.keys(m.stages).some(k=>!stages.has(k)))return invalid();
+   for(const v of Object.values(m.stages))if(!v||!Number.isFinite(v.ms)||v.ms<0||v.ms>300000||!Number.isInteger(v.count)||v.count<1||v.count>100)return invalid();
+   if(m.errorCode!==undefined&&!playbackErrorCode(m.errorCode))return invalid();
+  }
   return store.transaction(async tx=>{
-   const key='startup-timing:'+bucket+':'+m.type+':'+m.platform,row=await tx.get(key)||{bucket,type:m.type,platform:m.platform,requests:0,failures:0,stages:{}};
-   if(row.schema!==2){row.schema=2;row.measuredRequests=row.requests;row.rawErrors=row.failures;row.legacyFailures=row.failures;row.accessRejected=0;row.cancelled=0;row.clientCapacity=0;row.statusCounts={};row.errorCounts={};}
-   const outcome=expectedPlaybackOutcome(m.status,m.errorCode);
-   row.requests++;row.statusCounts[m.status]=(row.statusCounts[m.status]||0)+1;if(m.status>=400)row.rawErrors++;
-   if(m.errorCode)row.errorCounts[m.errorCode]=(row.errorCounts[m.errorCode]||0)+1;
-   if(outcome)row[outcome]++;else{
-    row.measuredRequests++;if(m.status>=400)row.failures++;
-    if(m.type==='movie'&&m.catalogCost)row.catalogCost=addCatalogCost(row.catalogCost||{},m.catalogCost);
-    for(const [name,ms]of [['total',m.totalMs],...Object.entries(m.stages).map(([name,v])=>[name,v.ms])]){const v=row.stages[name]||{samples:0,sum:0,histogram:Array(limits.length).fill(0)};v.samples++;v.sum+=ms;v.histogram[limits.findIndex(n=>ms<=n)]++;row.stages[name]=v;}
+   const rows=new Map();
+   for(const m of timings){
+    const key='startup-timing:'+bucket+':'+m.type+':'+m.platform;
+    const row=rows.get(key)||await tx.get(key)||{bucket,type:m.type,platform:m.platform,requests:0,failures:0,stages:{}};
+    if(row.schema!==2){row.schema=2;row.measuredRequests=row.requests;row.rawErrors=row.failures;row.legacyFailures=row.failures;row.accessRejected=0;row.cancelled=0;row.clientCapacity=0;row.statusCounts={};row.errorCounts={};}
+    const outcome=expectedPlaybackOutcome(m.status,m.errorCode);
+    row.requests++;row.statusCounts[m.status]=(row.statusCounts[m.status]||0)+1;if(m.status>=400)row.rawErrors++;
+    if(m.errorCode)row.errorCounts[m.errorCode]=(row.errorCounts[m.errorCode]||0)+1;
+    if(outcome)row[outcome]++;else{
+     row.measuredRequests++;if(m.status>=400)row.failures++;
+     if(m.type==='movie'&&m.catalogCost)row.catalogCost=addCatalogCost(row.catalogCost||{},m.catalogCost);
+     for(const [name,ms]of [['total',m.totalMs],...Object.entries(m.stages).map(([name,v])=>[name,v.ms])]){const v=row.stages[name]||{samples:0,sum:0,histogram:Array(limits.length).fill(0)};v.samples++;v.sum+=ms;v.histogram[limits.findIndex(n=>ms<=n)]++;row.stages[name]=v;}
+    }
+    rows.set(key,row);
    }
-   await tx.put(key,row);
+   for(const [key,row]of rows)await tx.put(key,row);
    if((await tx.get('startup-timing-pruned')||0)<now-300000){for(const [key,value]of await tx.list({prefix:'startup-timing:'}))if(value.bucket<bucket-3)await tx.delete(key);await tx.put('startup-timing-pruned',now);}
    return Response.json({ok:true});
   });

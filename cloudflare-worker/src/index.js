@@ -48,7 +48,7 @@ import {traceRequest, SERVICE_VERSION} from './request-diagnostics.mjs';
 import {validateLiveFlowDiagnostic,createLiveFlowMonitor} from './live-flow-diagnostics.mjs';
 import {createFastMediaFailureBudget} from './fast-media-failure-budget.mjs';
 import {playbackErrorHeaders} from './playback-outcomes.mjs';
-import {PlaybackTimings,timed,playbackTimingsRoute} from './playback-timings.mjs';
+import {PlaybackTimings,timed,playbackTimingsRoute,queuePlaybackTiming} from './playback-timings.mjs';
 import {runPlaybackCanary} from './playback-canary.mjs';
 import {compareOwnPlayback,comparisonError} from './playback-comparison.mjs';
 import {auditLive404} from './playback-404-audit.mjs';
@@ -98,15 +98,15 @@ async function unticket(env,t){try{if(!env.TICKET_SECRET)return null;const raw=u
 
 export class PlaybackSession {
  constructor(state,env){this.state=state;this.env=env}
- async inventoryBatch(run){
+ async inventoryBatch(run,{reuseRecent=false}={}){
   // Keep completed reads only for other operations already underway when
   // the provider read starts. A later refresh or monitor always reads anew.
   const readers=this.inventoryReaders??=new Set(),completed=new Map();
   readers.add(completed);
-  try{return await run((provider,operation,read,onProgress)=>this.inventoryRead(provider,operation,read,onProgress,completed))}
+  try{return await run((provider,operation,read,onProgress,onObserved)=>this.inventoryRead(provider,operation,read,onProgress,completed,reuseRecent,onObserved))}
   finally{readers.delete(completed);completed.clear()}
  }
- async inventoryRead(provider,operation,read,onProgress,completed){
+ async inventoryRead(provider,operation,read,onProgress,completed,reuseRecent,onObserved){
   const source=provider.source,startedAt=Date.now(),reads=this.inventoryReads??=new Map();
   let flight=reads.get(source);
   const shared=!!flight&&flight.credential===provider.encrypted;
@@ -114,9 +114,19 @@ export class PlaybackSession {
    const previous=completed.get(source);
    if(previous&&previous.credential===provider.encrypted){
     completed.delete(source);
+    onObserved?.(previous.observedAt);
     if(previous.progress)onProgress?.(previous.progress);
     console.log({event:'provider_inventory_read_shared',sourceId:await hashId(source),operation,completed:true,waitMs:inventoryWaitMs(startedAt)});
     return previous.value;
+   }
+   const confirmations=this.inventoryConfirmations??=new Map();
+   const recent=confirmations.get(source);
+   confirmations.delete(source);
+   if(reuseRecent&&operation==='monitor'&&recent?.credential===provider.encrypted&&
+      startedAt>=recent.observedAt&&startedAt-recent.observedAt<=RECENT_INVENTORY_MS){
+    onObserved?.(recent.observedAt);
+    console.log({event:'provider_inventory_read_reused',operation,ageMs:startedAt-recent.observedAt});
+    return recent.value;
    }
    const alreadyWaiting=[...this.inventoryReaders].filter(reader=>reader!==completed);
    for(const reader of this.inventoryReaders)reader.delete(source);
@@ -127,9 +137,16 @@ export class PlaybackSession {
     active.progress=progress;
     for(const observer of active.observers)observer(progress);
    })).then(value=>{
+    active.observedAt=Date.now();
     if(reads.get(source)===active){
+     if(operation==='refresh'&&value?.lines?.length&&Array.isArray(value.inventory)){
+      if(confirmations.size>=64)confirmations.delete(confirmations.keys().next().value);
+      // Only counts and the observation time are reusable, never the account rows.
+      confirmations.set(source,{credential:active.credential,observedAt:active.observedAt,
+       value:{lines:{length:value.lines.length},inventory:{length:value.inventory.length}}});
+     }
      for(const reader of alreadyWaiting){
-      if(this.inventoryReaders.has(reader))reader.set(source,{credential:active.credential,progress:active.progress,value});
+      if(this.inventoryReaders.has(reader))reader.set(source,{credential:active.credential,progress:active.progress,observedAt:active.observedAt,value});
      }
     }
     return value;
@@ -139,7 +156,7 @@ export class PlaybackSession {
    flight.observers.add(onProgress);
    if(flight.progress)onProgress(flight.progress);
   }
-  try{return await flight.work}finally{
+  try{const value=await flight.work;onObserved?.(flight.observedAt);return value;}finally{
    if(onProgress)flight.observers.delete(onProgress);
    if(shared){const waitMs=inventoryWaitMs(startedAt);console.log({event:'provider_inventory_read_shared',sourceId:await hashId(source),operation,waitMs});}
   }
@@ -250,10 +267,11 @@ export class PlaybackSession {
  if(path==='/monitor-media-failures'){const health=await (await directory(this.env,'/provider-health')).json();const items=await cachedFailureNames(createProviderCatalog(catalogDeps,this.env,null,{timeoutMs:1500,cacheReadMs:300}),health.recentMediaFailures,(server,id)=>registry(this.env,'/xtream-episode',{server,id}));return Response.json({items})}
  if(path==='/monitor-providers'){
   try{
+   const options=await req.json().catch(()=>({}));
    return await this.inventoryBatch(async share=>{
     const response=await directory(this.env,'/providers');if(!response.ok)throw Error('monitor_provider_directory_unavailable');
-    return Response.json(await probeProviders(await response.json(),{decrypt:value=>unticket(this.env,value),readPanel,validateAccount:(username,password,origin)=>validateAccount(username,password,origin,6000,undefined,this.env.CCF_ENTRY_TRANSPORT==='tcp'),identifier:hashId,share:(p,read,onProgress)=>share(p,'monitor',read,onProgress)}));
-   });
+    return Response.json(await probeProviders(await response.json(),{decrypt:value=>unticket(this.env,value),readPanel,validateAccount:(username,password,origin)=>validateAccount(username,password,origin,6000,undefined,this.env.CCF_ENTRY_TRANSPORT==='tcp'),identifier:hashId,share:(p,read,onProgress,onObserved)=>share(p,'monitor',read,onProgress,onObserved)}));
+   },{reuseRecent:options?.reuseInventory===true});
   }catch{return Response.json({error:'monitor_provider_directory_unavailable'},{status:503})}
  }
  if(path.startsWith('/profile/'))return profileRoute(this.state.storage,req);
@@ -290,6 +308,7 @@ async function safeInventory(env,raw,origin){
  return Promise.all(raw.map(async l=>({id:server==='ccf'?l.id:server+':'+l.id,server,key:await hashId(origin+'|'+l.username.toLowerCase()),username:l.username,status:l.status||'active',expiresAt:l.expiresAt||null,maxConnections:l.maxConnections,reported:l.reported??l.external??0})));
 }
 const poolRefreshes=new WeakMap();
+const RECENT_INVENTORY_MS=60000;
 const inventoryWaitMs=startedAt=>Math.min(120000,Math.max(0,Date.now()-startedAt));
 async function requestPoolRefresh(env,force=false){
  const response=await env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_provider_refresh_v1')).fetch('https://private/refresh-pool',{method:'POST',body:JSON.stringify({force})});
@@ -865,13 +884,13 @@ export default {scheduled(event,env,ctx){
   const response=await monitorCall(env,'/owner-diagnostic',diagnostic).catch(()=>null);
   if(!response?.ok)console.error({event:'owner_diagnostic_record_failed'});
   await response?.body?.cancel();
- }).catch(()=>console.error({event:'telegram_tick_failed'})));ctx.waitUntil(monitorCall(env,'/tick').then(async response=>{if(!response.ok)console.error({event:'monitor_failed'});await response.body?.cancel()}).catch(()=>console.error({event:'monitor_failed'})));if(env.CATALOG_MAINTENANCE_ENABLED==='true')ctx.waitUntil(directory(env,'/catalog-maintenance-tick').then(async response=>{await response.body?.cancel();if(!response.ok)console.error({event:'catalog_maintenance_failed',status:response.status});}).catch(()=>console.error({event:'catalog_maintenance_failed'})));return}
+ }).catch(()=>console.error({event:'telegram_tick_failed'})));ctx.waitUntil(monitorCall(env,'/tick',{reuseInventory:true}).then(async response=>{if(!response.ok)console.error({event:'monitor_failed'});await response.body?.cancel()}).catch(()=>console.error({event:'monitor_failed'})));if(env.CATALOG_MAINTENANCE_ENABLED==='true')ctx.waitUntil(directory(env,'/catalog-maintenance-tick').then(async response=>{await response.body?.cancel();if(!response.ok)console.error({event:'catalog_maintenance_failed',status:response.status});}).catch(()=>console.error({event:'catalog_maintenance_failed'})));return}
  if(event.cron&&event.cron!=='17 5 * * *')return;
  ctx.waitUntil(passwordProtectionReadiness(env).then(readiness=>{if(readiness.keyReady)console.log(readiness);else console.error(readiness);}));
  ctx.waitUntil(directory(env,'/backup-automatic').then(async response=>{const result=await response.json();if(result.error)console.error({event:'backup_failed',reason:result.error});if(result.recovery?.error)console.error({event:'backup_drill_failed',reason:result.recovery.error})}).catch(()=>console.error({event:'backup_failed',reason:'backup_service_unavailable'})).finally(async()=>{const response=await monitorCall(env,'/tick');await response.body?.cancel()}));
 },async fetch(req, env, ctx) {
  if(matchesStaticAdminURL(new URL(req.url)))return staticAdminResponse(req);
- ownedMediaBootstrap(env,ctx);localAuditBootstrap(env,ctx);await markServiceVerification(req);const response=await traceRequest(req, trace => handleRequest(req, env, ctx,trace), {allowedOrigin: SITE,fastMediaFailureBudget:env.ENVIRONMENT==='production'&&env.FAST_MEDIA_FAILURE_LOGS_ENABLED==='true'?fastMediaFailureBudget:undefined,onTiming:timing=>{if(!isSignedStreamPath(new URL(req.url).pathname)&&ctx?.waitUntil&&env.PLAYBACK_SESSIONS)ctx.waitUntil(env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_operations_v1')).fetch('https://private/operations/timing-ingest',{method:'POST',body:JSON.stringify({timing})}).then(r=>r.body?.cancel()).catch(()=>{}))}});return browserResponse(response,req,env);}};
+ ownedMediaBootstrap(env,ctx);localAuditBootstrap(env,ctx);await markServiceVerification(req);const response=await traceRequest(req, trace => handleRequest(req, env, ctx,trace), {allowedOrigin: SITE,fastMediaFailureBudget:env.ENVIRONMENT==='production'&&env.FAST_MEDIA_FAILURE_LOGS_ENABLED==='true'?fastMediaFailureBudget:undefined,onTiming:timing=>{if(!isSignedStreamPath(new URL(req.url).pathname)&&ctx?.waitUntil&&env.PLAYBACK_SESSIONS)queuePlaybackTiming(env.PLAYBACK_SESSIONS,ctx,timing)}});return browserResponse(response,req,env);}};
 
 
 
