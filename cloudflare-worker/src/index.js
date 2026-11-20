@@ -21,6 +21,7 @@ import {createCcfExporter} from './ccf-record.mjs';
 import {createOwnerAdminAccess,ownerAccessState} from './owner-admin-access.mjs';
 import {selectExclusive,visibleExclusive} from './exclusive-catalog.mjs';
 import {createExclusiveService} from './exclusive-service.mjs';
+import {comedyNativeList,comedyNativeCatalog} from './comedy-native-catalog.mjs';
 import {epToExclusiveId,matchesLqsaTitle} from './series-supplement.mjs';
 import {createLqsaBootstrap} from './lqsa-bootstrap.mjs';
 import {ownedVerificationEnabled,runOwnedMediaVerification,OWNED_VERIFICATION_KEY,OWNED_VERIFICATION_OBJECT} from './owned-media-verification.mjs';
@@ -855,10 +856,11 @@ if(session.managed){
  if(kind&&!permissions.adults&&!await adultPolicy.allowed({kind,server:b.server||'ccf',upstreamId:b.series_id||b.vod_id||b.stream_id}))return json({error:'adult_content_disabled'},403);
  const params=op==='series_info'?{series_id:b.series_id}:op==='vod_info'?{vod_id:b.vod_id}:op==='live_epg'?{stream_id:b.stream_id,limit:24}:{};
  if(op==='series_info')trace?.identify('series','web');else if(op==='vod_info')trace?.identify('movie','web');
- let data=await catalog(actions[op],b.server,params);
+ let data=comedyNativeList(op,b.server)&&b.server==='exclusive'?[]:await catalog(actions[op],b.server,params);
+ if(comedyNativeList(op,b.server)&&permissions.series)data=comedyNativeCatalog({op,rows:data,items:(await exclusives.read(env)).items,permissions,origin:u.origin,server:b.server});
  if(op==='series_info')data=await exclusives.supplementInfo(env,data,{server:b.server||'ccf',seriesId:String(b.series_id)},permissions);
  if(!permissions.adults){
-  if(Array.isArray(data))data=await adultPolicy.filter(actions[op],data);
+  if(Array.isArray(data))data=comedyNativeList(op,b.server)&&b.server==='exclusive'?data:await adultPolicy.filter(actions[op],data);
   else {if(isAdult(data.info)||isAdult(data.movie_data))return json({error:'adult_content_disabled'},403);
    if(data.episodes)data={...data,episodes:Object.fromEntries(Object.entries(data.episodes).map(([season,rows])=>[season,rows.filter(ep=>!isAdult(ep)&&!isAdult(ep.info))]).filter(([,rows])=>rows.length))};
   }

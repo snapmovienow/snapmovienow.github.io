@@ -12,6 +12,9 @@ async function streamReference(id,auth,deps){
   if(!record||!['movie','episode'].includes(record.kind))return deps.json({error:'not_found'},404);
   const type=record.kind==='movie'?'movie':'series';
   if(!auth.user.permissions[contentType(type)])return deps.json({error:'content_disabled'},403);
+  if(deps.comedySeries?.matches(record)){
+    return await deps.comedySeries.progressReference(record,auth)||deps.json({error:'not_found'},404);
+  }
   if(deps.localSeries?.matches(record)){
     return await deps.localSeries.progressReference(record,auth)||deps.json({error:'not_found'},404);
   }

@@ -1,3 +1,4 @@
+import {comedyUsageRoot} from './comedy-series-catalog.mjs';
 // The caller supplies its authenticated, immutable account ID. This reader never
 // changes playback, catalog placement, permissions or historical attribution.
 const DAY=86400000,RETENTION=30*DAY,MAX_ROWS=10000,MAX_GROUPS=500,PREFIX='client-history:';
@@ -72,7 +73,7 @@ export function summarizeSeriesUsage(records,input,catalog=[],now=Date.now()){
  let catalogEpisodes=0;
  for(const row of (Array.isArray(catalog)?catalog:[]).slice(0,MAX_GROUPS)){
   if(row?.type!=='series')continue;
-  const content=cleanSeriesUsageContent({...row,name:row.name||row.title,rootServer:row.rootServer??row.supplement?.server,rootSeriesId:row.rootSeriesId??row.supplement?.seriesId});if(!content||s.seriesId&&content.id!==s.seriesId)continue;
+  const content=cleanSeriesUsageContent({...row,...comedyUsageRoot(row),name:row.name||row.title,rootServer:row.rootServer??row.supplement?.server??comedyUsageRoot(row).rootServer,rootSeriesId:row.rootSeriesId??row.supplement?.seriesId??comedyUsageRoot(row).rootSeriesId});if(!content||s.seriesId&&content.id!==s.seriesId)continue;
   const metadata={id:content.id,name:content.name,identityEvidence:'catalog_id',visible:row.visible===true,
    ...(content.rootServer?{rootServer:content.rootServer}:{}),...(content.rootSeriesId?{rootSeriesId:content.rootSeriesId}:{})};
   seriesMap.set(content.id,metadata);
