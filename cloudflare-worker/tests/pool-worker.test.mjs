@@ -242,3 +242,21 @@ for(const scenario of ['credential-change','read-failed','started-before-monitor
 }
 assert.equal(coordinator.inventoryReaders.size,0);
 console.log('PASS: overlapping queued source reads are shared, failed/older/rotated reads are retried, and the refresh summary excludes account rows.');
+
+const recentProvider={source:'fixture:recent',encrypted:'version-one'};
+let upstream=0,observed;
+const readFresh=async()=>{upstream++;return {lines:[{password:'synthetic-only'}],inventory:[{}]};};
+const readRecent=(p=recentProvider)=>coordinator.inventoryBatch(share=>share(p,'monitor',readFresh,undefined,at=>{observed=at;}),{reuseRecent:true});
+await coordinator.inventoryBatch(share=>share(recentProvider,'refresh',readFresh));
+const timeBefore=Date.now();
+assert.deepEqual(await readRecent(),{lines:{length:1},inventory:{length:1}});
+assert.ok(observed<=timeBefore);
+assert.equal(upstream,1);
+await readRecent();
+assert.equal(upstream,2,'a reused reading does not count twice');
+await coordinator.inventoryBatch(share=>share(recentProvider,'refresh',readFresh));
+await readRecent({...recentProvider,encrypted:'rotated'});
+assert.equal(upstream,4);
+await coordinator.inventoryBatch(share=>share(recentProvider,'refresh',readFresh));
+await coordinator.inventoryBatch(share=>share(recentProvider,'monitor',readFresh));
+assert.equal(upstream,6,'an explicit monitor run still reads the provider');

@@ -34,14 +34,14 @@ export async function probeProviders(providers,{decrypt,readPanel,validateAccoun
   for(;;){
    const i=cursor++;if(i>=providers.length)return;
    const p=providers[i],startedAt=Date.now();
-   let stage='credentials',reason='credentials_unreadable',receivedRows=null,acceptedRows=null;
+   let stage='credentials',reason='credentials_unreadable',receivedRows=null,acceptedRows=null,readAt;
    try{
     const credentials=await decrypt(p.encrypted||'');
     if(typeof credentials?.username!=='string'||!credentials.username||typeof credentials.password!=='string'||!credentials.password)throw Error('credentials_unreadable');
     if(credentials.kind==='reseller'){
      stage='panel_login';
      const {lines,inventory}=await share(p,onProgress=>readPanel(credentials.username,credentials.password,p.url||'http://ccf.center:8444/NYzkggyG/',{inventory:true,retryLoginTimeout:true,onProgress}),
-      progress=>{stage='inventory';receivedRows=progress.receivedRows;acceptedRows=progress.acceptedRows});
+      progress=>{stage='inventory';receivedRows=progress.receivedRows;acceptedRows=progress.acceptedRows},at=>{readAt=at;});
      stage='inventory';receivedRows=inventory.length;acceptedRows=lines.length;reason=acceptedRows?'ok':'no_active_accounts';
     }else if(credentials.kind==='provider'){
      stage='validation';
@@ -49,8 +49,8 @@ export async function probeProviders(providers,{decrypt,readPanel,validateAccoun
      receivedRows=1;acceptedRows=account?1:0;reason=account?'ok':'account_inactive';
     }
    }catch(error){reason=reasonFor(error,stage)}
-   const observedAt=Date.now();
-   results[i]={id:configuredIds[i],ok:reason==='ok',stage,reason,observedAt,durationMs:Math.max(0,observedAt-startedAt),receivedRows,acceptedRows};
+   const observedAt=readAt??Date.now();
+   results[i]={id:configuredIds[i],ok:reason==='ok',stage,reason,observedAt,durationMs:Math.max(0,Date.now()-startedAt),receivedRows,acceptedRows};
   }
  }));
  return {configuredIds,providers:results};

@@ -302,7 +302,7 @@ export class OperationsMonitor{
  constructor(state,env){this.state=state;this.env=env;this.running=null}
  async fetch(req){
   const path=new URL(req.url).pathname,b=await req.json(),store=this.state.storage;
-  if(path==='/tick'){if(!this.running)this.running=this.tick().finally(()=>{this.running=null});return Response.json(await this.running)}
+  if(path==='/tick'){const options=await req.json().catch(()=>({}));if(!this.running)this.running=this.tick(options?.reuseInventory===true).finally(()=>{this.running=null});return Response.json(await this.running)}
   if(path==='/owner-diagnostic'){
    if(this.env.ENVIRONMENT==='staging')return Response.json({ok:true,skipped:true});
    const now=Date.now(),sample=cleanOwnerDiagnostic(b,now);
@@ -350,10 +350,10 @@ export class OperationsMonitor{
   return Response.json({error:'not_found'},{status:404});
  }
  async status(){const state=await this.state.storage.get('monitor')||empty(Date.now());return Response.json(publicStatus(state,this.env))}
- async collect(){
+ async collect(reuseInventory=false){
   const binding=this.env.PLAYBACK_SESSIONS;
   const reads=[
-   ()=>binding.get(binding.idFromName('__smn_provider_refresh_v1')).fetch('https://private/monitor-providers',request('/monitor-providers')),
+   ()=>binding.get(binding.idFromName('__smn_provider_refresh_v1')).fetch('https://private/monitor-providers',request('/monitor-providers',{reuseInventory})),
    ()=>binding.get(binding.idFromName('__smn_operations_v1')).fetch('https://private/operations/monitor',request('/operations/monitor')),
    ()=>directory(this.env,'/backup-status')
   ];
@@ -391,7 +391,7 @@ export class OperationsMonitor{
   }
   return canaryStatus(await store.get('monitor')||empty(now),this.env);
  }
- async tick(){
+ async tick(reuseInventory=false){
   if(this.env.ENVIRONMENT==='staging')return {ok:true,skipped:true};
   const store=this.state.storage,now=Date.now(),runId=crypto.randomUUID();
   const claim=await store.transaction(async tx=>{
@@ -402,7 +402,7 @@ export class OperationsMonitor{
    state.run={id:runId,at:now,version:state.config.version};await putState(tx,state);return state.run;
   });
   if(claim){
-   const snapshot={...await this.collect(),runId};
+   const snapshot={...await this.collect(reuseInventory),runId};
    const evidence=await store.transaction(async tx=>{
     const state=await tx.get('monitor');if(state.run?.id!==runId)return null;
     delete state.run;

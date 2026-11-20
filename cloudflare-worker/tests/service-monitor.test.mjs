@@ -101,3 +101,14 @@ test('sparse, new and retired scopes survive clock changes and are pruned after 
  await sampleServiceMonitor(f.store,f.leases,['panel-a'],base+30*hour);
  assert.equal(f.values.has(key),false,'long outages reconcile existing history');
 });
+
+test('long idle periods skip intermediate history writes and active sessions resume the five-minute sample',async()=>{
+ const f=fixture(),step=300000,start=Math.floor(now/(3*step))*3*step;
+ f.active.clear();
+ for(let n=0;n<=4;n++)await sampleServiceMonitor(f.store,f.leases,['panel-a'],start+n*step);
+ const records=()=>Object.values(f.values.get('service-monitor-counts:panel-a:'+Math.floor(start/3600000)));
+ assert.deepEqual(records().map(row=>row.at),[start,start+3*step]);
+ f.active.set('back',{username:'alice',uid:'u1',version:1,mediaKey:'live|ccf|101|ts'});
+ await sampleServiceMonitor(f.store,f.leases,['panel-a'],start+5*step);
+ assert.equal(records().at(-1).rows[0].connections,1);
+});
