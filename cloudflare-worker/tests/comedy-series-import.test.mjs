@@ -73,5 +73,10 @@ for(const config of [{...env,ENVIRONMENT:'staging'},{...env,CATALOG_MAINTENANCE_
 // Even unexpected persisted fields are projected through a finite safe schema.
 store=new Store();await store.put(key,{state:'completed',attempts:700,claim:'never-show',reason:'https://secret.invalid/',seriesId:'https://secret.invalid/',results:[{id:row.episodes[0].id,status:'added',check:'playlist_and_segment',checkedAt:now(),page:'https://secret.invalid/'},{id:'foreign',status:'https://secret.invalid/'}]});
 const sanitized=JSON.stringify(await comedySeriesImportStatus(store));assert.equal(sanitized.includes('https://'),false);assert.equal(sanitized.includes('never-show'),false);assert.equal((await comedySeriesImportStatus(store)).attempts,3);assert.equal((await comedySeriesImportStatus(store)).results.length,1);
+// A reviewed protocol fix has its own bounded request. The failed earlier
+// attempt remains evidence; it is neither deleted nor granted more retries.
+store=new Store();const previousKey='catalog-import:comedy-series-owner-20261120-v1',previous={requestId:'comedy-series-owner-20261120-v1',state:'failed',attempts:3,reason:'source_unavailable',results:[]};
+await store.put(previousKey,previous);await runComedySeriesImport(store,leases,env,{probe:async()=>({ok:true,check:'playlist_and_segment'}),now});
+assert.equal(COMEDY_SERIES_IMPORT_REQUEST,'comedy-series-owner-20261120-v2');assert.equal((await comedySeriesImportStatus(store)).state,'completed');assert.deepEqual(await store.get(previousKey),previous);
 assert.equal(COMEDY_SERIES_DEFINITIONS.length,3);
 console.log('PASS: atomic all-26-episode comedy publication gate, maximum two source probes, exclusive concurrent claims, three persistent attempts, manual edit/hide preservation, stable catalogue/usage identity, sanitized status, blocked other series and production flag isolation.');

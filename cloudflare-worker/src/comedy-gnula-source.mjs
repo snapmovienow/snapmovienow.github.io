@@ -174,7 +174,9 @@ function definition(value) {
 export const COMEDY_GNULA_EPISODES = Object.freeze(DEFINITIONS.map(d => Object.freeze({...d})));
 export const isComedyGnulaPage = value => !!definition(value);
 const prefixPattern = /^\/hls\/[A-Za-z0-9]{20,60}\/$/;
-const tokenPattern = /^[A-Za-z0-9:_-]{1,700}$/;
+// The reviewed s13 player also uses dots in its signed query value. Keep the
+// signature opaque; accepting that punctuation does not widen host/path scope.
+const tokenPattern = /^[A-Za-z0-9:_.-]{1,700}$/;
 function validContext(page, context) {
  const d = definition(page);
  return d && context && context.provider === 'vidara' && context.page === d.page && context.season === d.season && context.episode === d.episode && context.embed === d.embed && context.host && MEDIA_HOSTS.has(context.host) && prefixPattern.test(context.prefix || '') && tokenPattern.test(context.token || '') ? d : null;
@@ -185,6 +187,9 @@ export function comedyGnulaMediaAllowed(page, value, context = {}) {
   if (!validContext(page, context) || u.hostname !== context.host || !u.pathname.startsWith(context.prefix)) return false;
   const file = u.pathname.slice(context.prefix.length);
   if (!/^(?:master\.m3u8|index_\d{2,4}x\d{2,4}\.m3u8|seg_\d{2,4}x\d{2,4}_\d{3,8}\.(?:woff2?|css|js))$/.test(file)) return false;
+  // The reviewed s13 master is signed but advertises unsigned descendants.
+  // This exception covers only known child filenames in this one file scope.
+  if (u.hostname === 's13-s501740.s1q2105.com' && file !== 'master.m3u8' && !u.search) return true;
   return [...u.searchParams.keys()].join(',') === 'token' && u.searchParams.get('token') === context.token;
  } catch { return false; }
 }
