@@ -4,8 +4,8 @@ import {COMEDY_SERIES_DEFINITIONS} from './comedy-series-catalog.mjs';
 import {COMEDY_GNULA_EPISODES} from './comedy-gnula-source.mjs';
 import {comedyDefinitionForTitle,comedyEpisodeId} from './comedy-series-xtream.mjs';
 
-const KEY='catalog-import:comedy-series-owner-20261120-v1';
-export const COMEDY_SERIES_IMPORT_REQUEST='comedy-series-owner-20261120-v1';
+const KEY='catalog-import:comedy-series-owner-20261120-v2';
+export const COMEDY_SERIES_IMPORT_REQUEST='comedy-series-owner-20261120-v2';
 const definition=COMEDY_SERIES_DEFINITIONS.find(row=>row.id==='comedy-muertos-sl');
 const poster='https://i0.wp.com/ww3.gnulahd.nu/wp-content/uploads/2026/08/g6vptk7afH3OHOKSjdjJJtEoOMh.webp';
 const plot='Tras la muerte del fundador de una funeraria familiar, su viuda y los empleados se disputan el futuro del negocio.';

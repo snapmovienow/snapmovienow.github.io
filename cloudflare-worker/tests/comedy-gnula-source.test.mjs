@@ -70,3 +70,49 @@ test('only the three observed CDN hosts are admitted by fresh player config',asy
   assert.equal(r.context.host,cdn);assert.equal(comedyGnulaMediaAllowed(d.page,r.url,r.context),true);
  }
 });
+
+test('s13 dotted signatures resolve without widening the resource capability',async()=>{
+ const d=COMEDY_GNULA_EPISODES.find(d=>d.season===1&&d.episode===7);
+ const signature='fixturehash-1790000000-fixture.with.dots-fixturesignature';
+ const cdn='s13-s501740.s1q2105.com';
+ const signed=file=>`https://${cdn}${prefix}${file}?${new URLSearchParams({token:signature})}`;
+ const data=payload(d,{streaming_url:signed('master.m3u8')});
+ const master='#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=5000000\nindex_1920x1080.m3u8?'+new URLSearchParams({token:signature})+'\n';
+ const {fetcher,calls}=fixture(d,{data,master});
+ const r=await resolveComedyGnula(d.page,{fetcher});
+ assert.equal(calls.length,3);assert.equal(r.context.token,signature);
+ for(const file of ['master.m3u8','index_1920x1080.m3u8','seg_1920x1080_000.js'])assert.equal(comedyGnulaMediaAllowed(d.page,signed(file),r.context),true);
+ assert.equal(comedyGnulaMediaAllowed(d.page,signed('master.m3u8').replace('fixture.with.dots','changed.with.dots'),r.context),false);
+ assert.equal(comedyGnulaMediaAllowed(d.page,signed('master.m3u8')+'&token=another',r.context),false);
+ assert.equal(comedyGnulaMediaAllowed(d.page,signed('master.m3u8').replace(cdn,'s13-s501740.s1q2105.com.evil.test'),r.context),false);
+ for(const invalid of ['fixture+value','fixture/value','fixture=value','fixture~value','fixture value','fixture?value','fixture&value']){
+  const bad=payload(d,{streaming_url:`https://${cdn}${prefix}master.m3u8?${new URLSearchParams({token:invalid})}`});
+  const {fetcher}=fixture(d,{data:bad});
+  await assert.rejects(resolveComedyGnula(d.page,{fetcher}),/comedy_source_unavailable/);
+ }
+});
+
+test('s13 signed masters may advertise unsigned children only in their file scope',async()=>{
+ const d=COMEDY_GNULA_EPISODES.find(d=>d.season===1&&d.episode===7);
+ const cdn='s13-s501740.s1q2105.com',signature='fixturehash-1790000000-fixture.with.dots-fixturesignature';
+ const fileRoot=`https://${cdn}${prefix}`;
+ const signed=file=>fileRoot+file+'?'+new URLSearchParams({token:signature});
+ const data=payload(d,{streaming_url:signed('master.m3u8')});
+ const master='#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=5000000\nindex_1920x1080.m3u8\n';
+ const {fetcher}=fixture(d,{data,master});
+ const r=await resolveComedyGnula(d.page,{fetcher});
+ assert.equal(comedyGnulaMediaAllowed(d.page,signed('master.m3u8'),r.context),true);
+ for(const file of ['index_1920x1080.m3u8','seg_1920x1080_000.js','seg_1920x1080_000.css','seg_1920x1080_000.woff2']){
+  assert.equal(comedyGnulaMediaAllowed(d.page,fileRoot+file,r.context),true);
+  assert.equal(comedyGnulaMediaAllowed(d.page,signed(file),r.context),true);
+  for(const query of ['?token=changed','?other=value','?token='+signature+'&extra=value','?token='])assert.equal(comedyGnulaMediaAllowed(d.page,fileRoot+file+query,r.context),false);
+ }
+ for(const u of [fileRoot+'master.m3u8',fileRoot+'other.m3u8',fileRoot+'segment.js',fileRoot.replace(prefix,'/hls/ZYXWVUTSRQPONMLKJIHGFEDCBA654321/')+'index_1920x1080.m3u8',fileRoot.replace(cdn,'s7-5042yyg.s1q2105.com')+'index_1920x1080.m3u8',fileRoot.replace(cdn,cdn+'.evil.test')+'index_1920x1080.m3u8'])assert.equal(comedyGnulaMediaAllowed(d.page,u,r.context),false);
+ assert.equal(comedyGnulaMediaAllowed(COMEDY_GNULA_EPISODES[0].page,fileRoot+'index_1920x1080.m3u8',r.context),false);
+ for(const other of ['s14-s1001604.97bf1.com','s7-5042yyg.s1q2105.com']){
+  const data=payload(d,{streaming_url:media('master.m3u8').replace(host,other)});
+  const {fetcher}=fixture(d,{data});const x=await resolveComedyGnula(d.page,{fetcher});
+  assert.equal(comedyGnulaMediaAllowed(d.page,`https://${other}${prefix}index_1920x1080.m3u8`,x.context),false);
+  assert.equal(comedyGnulaMediaAllowed(d.page,`https://${other}${prefix}seg_1920x1080_000.woff2`,x.context),false);
+ }
+});
