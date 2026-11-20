@@ -83,5 +83,36 @@ let calls=0;await runCatalogMaintenance({ENVIRONMENT:'staging',CATALOG_MAINTENAN
 const jobStore=await catalog([series]),directory=async(env,path,body={})=>catalogMaintenanceRoute(jobStore,leases,path,body,{probe:good});
 await runCatalogMaintenance({CATALOG_MAINTENANCE_ENABLED:'true'},{directory,fetcher:async url=>new Response(url===BEERUS_PAGE?episode(1).page:JSON.stringify(feed(url.endsWith('beerus.json')?'beerus':'movies',1))) });
 assert.equal((await call(jobStore,'status')).data.beerus.state,'completed');
-for(const p of ['/catalog-maintenance-start','/accounts/catalog-maintenance-start']){const r=await worker.fetch(new Request('https://api.snaptvnow.com'+p,{method:'POST',body:JSON.stringify({kind:'movies'})}),{TICKET_SECRET:'test-maintenance-secret'});assert.ok([400,401,403,404].includes(r.status),'no public maintenance mutation route');}
+// A deterministic rejection is recorded once, an outage backs off, and a new ETag resumes work.
+const retryStore=await catalog([series]);
+let clock=Date.now(),movieRequests=0,mode='expired',movieStarts=0;
+const retryDirectory=async(env,path,body={})=>{
+ if(path==='/catalog-maintenance-start'&&body.kind==='movies')movieStarts++;
+ return catalogMaintenanceRoute(retryStore,leases,path,body,{probe:good,now:()=>clock});
+};
+const runFeed=()=>runCatalogMaintenance({CATALOG_MAINTENANCE_ENABLED:'true'},{
+ directory:retryDirectory,now:()=>clock,fetcher:async(url,{headers})=>{
+  if(url===BEERUS_PAGE)return new Response(episode(1).page);
+  if(!url.endsWith('movies.json'))return new Response(JSON.stringify(feed('beerus',1)));
+  movieRequests++;
+  if(mode==='offline')return new Response(null,{status:503});
+  if(mode==='expired'){
+   if(headers['If-None-Match']==='"old"')return new Response(null,{status:304});
+   return new Response(JSON.stringify({...feed('movies',1),cinemaReview:{
+    checkedAt:new Date(clock-9*86400000).toISOString(),sources:[]
+   }}),{headers:{ETag:'"old"'}});
+  }
+  return new Response(JSON.stringify({...feed('movies',2),items:[]}),{headers:{ETag:'"new"'}});
+ }
+});
+await runFeed();await runFeed();
+assert.equal(movieStarts,0);
+assert.equal((await call(retryStore,'status')).data.feedGates.movies.reason,'invalid_cinema_review');
+assert.equal(movieRequests,2);
+mode='offline';await runFeed();await runFeed();
+assert.equal(movieRequests,3,'backoff suppresses network calls before the retry deadline');
+clock+=10*60000;mode='fixed';await runFeed();
+assert.equal(movieStarts,1);
+assert.equal((await call(retryStore,'status')).data.feedGates.movies.outcome,'done');
+for(const p of ['/catalog-maintenance-start','/accounts/catalog-maintenance-start','/accounts/catalog-maintenance-feed-result']){const r=await worker.fetch(new Request('https://api.snaptvnow.com'+p,{method:'POST',body:JSON.stringify({kind:'movies'})}),{TICKET_SECRET:'test-maintenance-secret'});assert.ok([400,401,403,404].includes(r.status),'no public maintenance mutation route');}
 console.log('PASS: validated data feeds, daily episode limit, idempotent and concurrent maintenance, stale/manual edit protection, real media checks, source repair, capped atomic rotation, unavailable-title retention, private reports and staging isolation.');

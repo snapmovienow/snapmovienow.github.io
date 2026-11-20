@@ -5,6 +5,9 @@ import {inspectCatalogSource} from './catalog-source-check.mjs';
 export const CATALOG_FEED_BRANCH='catalog-feed';
 export const BEERUS_PAGE='https://ww3.gnulahd.nu/ver/dragon-ball-super-beerus/';
 const kinds=['beerus','movies'],jobKey=kind=>'catalog-maintenance:'+kind;
+const gateKey='catalog-maintenance:feed-gates';
+const feedIntervalMs=5*60000;
+const maxRetryMs=60*60000;
 const norm=value=>String(value||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
 const managedMovie=row=>row.type==='movie'&&(row.mode==='gnula'||/gnula/i.test(row.source));
 const fail=message=>{throw Error(message);};
@@ -67,12 +70,23 @@ function planEpisodes(rows,discovered){
  return items.slice(0,100);
 }
 export async function catalogMaintenanceRoute(store,leases,path,body,{probe=inspectCatalogSource,now=Date.now}={}){
- if(path==='/catalog-maintenance-status')return Response.json({...Object.fromEntries(await Promise.all(kinds.map(async kind=>[kind,report(await store.get(jobKey(kind)))]))),runner:await store.get('catalog-maintenance:runner')||null});
+ if(path==='/catalog-maintenance-status')return Response.json({...Object.fromEntries(await Promise.all(kinds.map(async kind=>[kind,report(await store.get(jobKey(kind)))]))),runner:await store.get('catalog-maintenance:runner')||null,feedGates:await store.get(gateKey)||{}});
  if(path==='/catalog-maintenance-observe'){
   const phases=new Set(['started','feed','discovery','start','probes','completed','failed']);if(!phases.has(body.phase)||body.kind!==undefined&&!kinds.includes(body.kind))return Response.json({error:'invalid_catalog_observation'},{status:400});
   await store.transaction(async tx=>{const old=await tx.get('catalog-maintenance:runner')||{};await tx.put('catalog-maintenance:runner',{...old,...(body.phase==='started'?{startedAt:now()}:{lastStepAt:now()}),phase:body.phase,...(body.kind?{kind:body.kind}:{}),...(body.reason?{reason:String(body.reason).replace(/[^a-z_]/g,'').slice(0,60)}:body.phase==='started'?{reason:null}:{})});});return Response.json({ok:true});
  }
  const kind=body.kind;if(!kinds.includes(kind))return Response.json({error:'invalid_catalog_kind'},{status:400});
+ if(path==='/catalog-maintenance-feed-result')return store.transaction(async tx=>{
+  const gates=await tx.get(gateKey)||{},previous=gates[kind]||{};
+  const etag=typeof body.etag==='string'&&/^(?:W\/)?"[!-~]{1,160}"$/.test(body.etag)?body.etag:undefined;
+  if(body.outcome==='retry'){
+   const failures=Math.min(5,(previous.failures||0)+1);
+   gates[kind]={...previous,failures,retryAt:now()+Math.min(maxRetryMs,feedIntervalMs*2**failures)};
+  }else if(['done','rejected','pending'].includes(body.outcome)&&typeof body.hash==='string'&&/^[a-f0-9]{64}$/.test(body.hash)){
+   gates[kind]={hash:body.hash,outcome:body.outcome,...(etag?{etag}:{}),...(body.outcome==='rejected'?{reason:body.reason==='invalid_cinema_review'?'invalid_cinema_review':'invalid_catalog_feed'}:{})};
+  }else return Response.json({error:'invalid_catalog_feed_result'},{status:400});
+  await tx.put(gateKey,gates);return Response.json({ok:true});
+ });
  if(path==='/catalog-maintenance-start')return store.transaction(async tx=>{
   const feed=validateCatalogFeed(body.feed,kind),old=await tx.get(jobKey(kind));
   if(old?.hash===body.hash)return Response.json({report:report(old),pending:old.items.filter(x=>!x.result).map(x=>({key:x.key,category:x.category}))});
@@ -127,29 +141,78 @@ async function boundedText(response,max){
  if(!response.ok){await response.body?.cancel();fail('catalog_feed_unavailable');}const reader=response.body?.getReader();if(!reader)fail('catalog_feed_empty');let bytes=0,text='';const decoder=new TextDecoder();
  try{while(true){const {done,value}=await reader.read();if(done)break;bytes+=value.length;if(bytes>max)fail('catalog_feed_too_large');text+=decoder.decode(value,{stream:true});}return text+decoder.decode();}catch(e){await reader.cancel().catch(()=>{});throw e;}finally{reader.releaseLock();}
 }
-export async function runCatalogMaintenance(env,{directory,fetcher=fetch}={}){
+export async function runCatalogMaintenance(env,{directory,fetcher=fetch,now=Date.now}={}){
  if(env.ENVIRONMENT==='staging'||env.CATALOG_MAINTENANCE_ENABLED!=='true')return;
- const observe=async(phase,kind,reason)=>{const r=await directory(env,'/catalog-maintenance-observe',{phase,...(kind?{kind}:{}),...(reason?{reason}:{})});await r.body?.cancel();};await observe('started');
- const stateResponse=await directory(env,'/catalog-maintenance-status'),state=stateResponse.ok?await stateResponse.json():{};
- let failed=false;for(const kind of kinds){let phase='feed';try{
-  const url='https://raw.githubusercontent.com/snapmovienow/snapmovienow.github.io/'+CATALOG_FEED_BRANCH+'/catalog-feeds/'+kind+'.json';
-  const text=await boundedText(await fetcher(url,{redirect:'manual',headers:{Accept:'application/json'},signal:AbortSignal.timeout(10000)}),64000),feed=validateCatalogFeed(JSON.parse(text),kind);
-  const hash=[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(text)))].map(x=>x.toString(16).padStart(2,'0')).join('');
-  if(state[kind]?.hash===hash&&state[kind]?.state==='completed')continue;
-  phase='discovery';
-  let discovered=[],discoveryError=false;
-  if(kind==='beerus'&&state[kind]?.hash!==hash)try{discovered=discoverBeerusEpisodes(await boundedText(await fetcher(BEERUS_PAGE,{redirect:'manual',headers:{'User-Agent':'Mozilla/5.0'},signal:AbortSignal.timeout(20000)}),1000000));if(!discovered.length)discoveryError=true;}catch{discoveryError=true;}
-  phase='start';const begun=await directory(env,'/catalog-maintenance-start',{kind,feed,hash,discovered,discoveryError});if(!begun.ok){await begun.body?.cancel();throw Error('job_start_failed');}
-  const {pending}=await begun.json();
-  // Separate private object requests keep each media probe within its own
-  // network budget. Explicit cinema retirements free slots, then source checks
-  // precede additions so rotation sees actual health.
-  phase='probes';const selected=pending.slice(0,kind==='beerus'?8:24);
-  for(const category of ['retirement','check','addition']){
-   const items=selected.filter(x=>x.category===category);
-   for(let at=0;at<items.length;at+=4)await Promise.all(items.slice(at,at+4).map(async item=>{const response=await directory(env,'/catalog-maintenance-probe',{kind,hash,key:item.key});await response.body?.cancel();}));
+ const observe=async(phase,kind,reason)=>{const r=await directory(env,'/catalog-maintenance-observe',{phase,...(kind?{kind}:{}),...(reason?{reason}:{})});await r.body?.cancel();};
+ const record=async(kind,outcome,details={})=>{
+  const response=await directory(env,'/catalog-maintenance-feed-result',{kind,outcome,...details});
+  await response.body?.cancel();if(!response.ok)fail('catalog_feed_state_unavailable');
+ };
+ const stateResponse=await directory(env,'/catalog-maintenance-status');
+ if(!stateResponse.ok){await stateResponse.body?.cancel();fail('catalog_state_unavailable');}
+ const state=await stateResponse.json();
+ let started=false,failed=false;
+ const begin=async()=>{if(!started){await observe('started');started=true;}};
+ for(const kind of kinds){let phase='feed';
+  const gate=state.feedGates?.[kind];
+  if(gate?.retryAt>now())continue;
+  try{
+   const url='https://raw.githubusercontent.com/snapmovienow/snapmovienow.github.io/'+CATALOG_FEED_BRANCH+'/catalog-feeds/'+kind+'.json';
+   const headers={Accept:'application/json'};
+   if(gate?.etag&&gate.outcome!=='pending')headers['If-None-Match']=gate.etag;
+   const response=await fetcher(url,{redirect:'manual',headers,signal:AbortSignal.timeout(10000)});
+   if(response.status===304&&headers['If-None-Match']){
+    await response.body?.cancel();
+    if(gate.retryAt)await record(kind,gate.outcome,{hash:gate.hash,etag:gate.etag,reason:gate.reason});
+    continue;
+   }
+   const etag=response.headers.get('ETag'),raw=await boundedText(response,64000);
+   const hash=[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(raw)))].map(x=>x.toString(16).padStart(2,'0')).join('');
+   if(gate?.hash===hash&&gate.outcome==='rejected'){
+    if(gate.retryAt||(!gate.etag&&etag))await record(kind,'rejected',{hash,etag,reason:gate.reason});
+    continue;
+   }
+   if(state[kind]?.hash===hash&&state[kind]?.state==='completed'){
+    if(gate?.hash!==hash||gate.outcome!=='done'||gate.retryAt||(!gate.etag&&etag))await record(kind,'done',{hash,etag});
+    continue;
+   }
+   let feed;
+   try{feed=validateCatalogFeed(JSON.parse(raw),kind);}catch(error){
+    const reason=error.message==='invalid_cinema_review'?'invalid_cinema_review':'invalid_catalog_feed';
+    await record(kind,'rejected',{hash,etag,reason});
+    await begin();await observe('failed',kind,reason);failed=true;
+    console.error({event:'catalog_maintenance_failed',kind,reason});
+    continue;
+   }
+   await begin();
+   phase='discovery';
+   let discovered=[],discoveryError=false;
+   if(kind==='beerus'&&state[kind]?.hash!==hash)try{discovered=discoverBeerusEpisodes(await boundedText(await fetcher(BEERUS_PAGE,{redirect:'manual',headers:{'User-Agent':'Mozilla/5.0'},signal:AbortSignal.timeout(20000)}),1000000));if(!discovered.length)discoveryError=true;}catch{discoveryError=true;}
+   phase='start';const begun=await directory(env,'/catalog-maintenance-start',{kind,feed,hash,discovered,discoveryError});
+   if(!begun.ok){
+    const result=await begun.json().catch(()=>null);
+    if(begun.status===409&&result?.error==='stale_catalog_feed'){
+     await record(kind,'rejected',{hash,etag});continue;
+    }
+    fail('job_start_failed');
+   }
+   const {pending}=await begun.json();
+   phase='probes';const selected=pending.slice(0,kind==='beerus'?8:24);
+   for(const category of ['retirement','check','addition']){
+    const items=selected.filter(x=>x.category===category);
+    for(let at=0;at<items.length;at+=4)await Promise.all(items.slice(at,at+4).map(async item=>{
+     const response=await directory(env,'/catalog-maintenance-probe',{kind,hash,key:item.key});
+     await response.body?.cancel();if(!response.ok)fail('catalog_probe_failed');
+    }));
+   }
+   const outcome=pending.length?'pending':'done';
+   if(gate?.hash!==hash||gate.outcome!==outcome||gate.retryAt)await record(kind,outcome,{hash,etag});
+  }catch{
+   await record(kind,'retry');await begin();await observe('failed',kind,phase+'_failed');failed=true;
+   console.error({event:'catalog_maintenance_failed',kind,reason:phase+'_failed'});
   }
- }catch{failed=true;await observe('failed',kind,phase+'_failed');console.error({event:'catalog_maintenance_failed',kind});}}if(!failed)await observe('completed');
+ }
+ if(started&&!failed)await observe('completed');
 }
 export async function catalogMaintenanceStatus(env,directory){
  if(env.CATALOG_MAINTENANCE_ENABLED!=='true')return {enabled:false};
