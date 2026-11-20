@@ -1,3 +1,5 @@
+import {isComedySeriesPage,resolveComedySeriesSource,comedyMediaAllowed,comedyMediaHeaders} from './comedy-source.mjs';
+import {isComedyTransportStream} from './comedy-media-bytes.mjs';
 import {isWillaxPage,isWillaxMediaURL,willaxMediaReferenceURL} from './willax-live.mjs';
 import {willaxMediaFetcher} from './willax-transport.mjs';
 import {isOfficialLivePage,resolveOfficialLive,officialMediaAllowed} from './official-live.mjs';
@@ -25,13 +27,14 @@ async function readSmall(response,max){
 }
 export async function inspectCatalogSource(media,{fetcher=fetch,resolver=resolveGnula,signal=AbortSignal.timeout(40000),willaxTransportOptions}={}){
  try{
+  const comedy=isComedySeriesPage(media.page)?await resolveComedySeriesSource(media.page,{fetcher,signal}):null;
   const official=isOfficialLivePage(media.page),empress=isEmpressPage(media.page)?await resolveEmpressSource(media.page,{fetcher,signal}):null;
-  let source=empress?empress.url:official?(await resolveOfficialLive(media.page,{fetcher,signal})).url:media.mode==='gnula'?await resolver(media.page,media.preferredEmbed||null,{fetcher,signal:AbortSignal.any([signal,AbortSignal.timeout(35000)])}):exclusiveURL(media.page);
-  const origin=new URL(source).origin,options={fetcher:isWillaxPage(media.page)?willaxMediaFetcher(fetcher,willaxTransportOptions):fetcher,signal,officialPage:official?media.page:undefined,...(empress?{allowed:url=>empressMediaAllowed(media.page,url,empress.empressContext),headers:empressMediaHeaders(media.page,empress.empressContext)}:official?{allowed:url=>officialMediaAllowed(media.page,url)}:{})};
+  let source=comedy?comedy.url:empress?empress.url:official?(await resolveOfficialLive(media.page,{fetcher,signal})).url:media.mode==='gnula'?await resolver(media.page,media.preferredEmbed||null,{fetcher,signal:AbortSignal.any([signal,AbortSignal.timeout(35000)])}):exclusiveURL(media.page);
+  const origin=new URL(source).origin,options={fetcher:isWillaxPage(media.page)?willaxMediaFetcher(fetcher,willaxTransportOptions):fetcher,signal,officialPage:official?media.page:undefined,...(comedy?{allowed:url=>comedyMediaAllowed(media.page,url,comedy.comedyContext),headers:comedyMediaHeaders(media.page,comedy.comedyContext)}:empress?{allowed:url=>empressMediaAllowed(media.page,url,empress.empressContext),headers:empressMediaHeaders(media.page,empress.empressContext)}:official?{allowed:url=>officialMediaAllowed(media.page,url)}:{})};
   // These public HLS players use normal GETs; some reject synthetic byte ranges.
   // readSmall still bounds and cancels every manifest, key and media response.
   for(let depth=0;depth<4;depth++){
-   const fetched=await request(source,origin,options,empress?undefined:'bytes=0-1048575');source=fetched.url;const response=fetched.response,type=response.headers.get('content-type')||'';
+   const fetched=await request(source,origin,options,empress||comedy?undefined:'bytes=0-1048575');source=fetched.url;const response=fetched.response,type=response.headers.get('content-type')||'';
    if(!/mpegurl/i.test(type)&&!new URL(source).pathname.endsWith('.m3u8')){
     if(!/^(?:video\/|audio\/|application\/octet-stream)/i.test(type)){await response.body?.cancel();throw Error('media_not_video');}
     if((await readSmall(response,2048)).length<16)throw Error('media_empty');
@@ -53,13 +56,14 @@ export async function inspectCatalogSource(media,{fetcher=fetch,resolver=resolve
    }
    for(const line of active.values()){
     const uri=line.slice(line.indexOf(':')+1).match(/(?:^|,)\s*URI="([^"]+)"/);if(!uri)throw Error('invalid_playlist');
-    const resource=new URL(scopedMediaReference(uri[1],source,options.officialPage));const {response:extra}=await request(resource.href,origin,options,empress?undefined:'bytes=0-2047');
+    const resource=new URL(scopedMediaReference(uri[1],source,options.officialPage));const {response:extra}=await request(resource.href,origin,options,empress||comedy?undefined:'bytes=0-2047');
     if(/text\/html/i.test(extra.headers.get('content-type')||'')){await extra.body?.cancel();throw Error('media_not_video');}
     if((await readSmall(extra,2048)).length<16)throw Error('media_empty');
    }
-   const {response:segment}=await request(destination.href,origin,options,empress?undefined:'bytes=0-2047'),segmentType=segment.headers.get('content-type')||'';
-   if(!/^(?:video\/|audio\/|application\/octet-stream)/i.test(segmentType)){await segment.body?.cancel();throw Error('media_not_video');}
-   if((await readSmall(segment,2048)).length<16)throw Error('media_empty');
+   const {response:segment}=await request(destination.href,origin,options,empress||comedy?undefined:'bytes=0-2047'),segmentType=segment.headers.get('content-type')||'';
+   if(!comedy&&!/^(?:video\/|audio\/|application\/octet-stream)/i.test(segmentType)){await segment.body?.cancel();throw Error('media_not_video');}
+   const bytes=await readSmall(segment,2048);
+   if(comedy?!isComedyTransportStream(bytes):bytes.length<16)throw Error('media_empty');
    return {ok:true,check:'playlist_and_segment'};
   }throw Error('playlist_depth');
  }catch{return {ok:false,check:'unavailable'};}

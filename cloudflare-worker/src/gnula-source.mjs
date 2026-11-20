@@ -1,3 +1,4 @@
+import {isComedySeriesPage} from './comedy-source.mjs';
 import {isOfficialLivePage,resolveOfficialLive} from './official-live.mjs';
 // Resolve a saved episode page at playback time: CDN signatures are temporary.
 import {isPelisflixPage,pelisflixEmbeds} from './pelisflix-source.mjs';
@@ -5,7 +6,7 @@ import {isEmpressPage,resolveEmpressSource} from './empress-source.mjs';
 import {isEmpressSeriesPage} from './empress-catalog.mjs';
 export const GNULA_PAGE_HOSTS=new Set(['www2.gnula.one','gnula.one','www.gnula.one','ww3.gnulahd.nu']);
 // The legacy API mode remains "gnula" so installed APKs need no protocol change.
-export const supportedSourcePage=u=>GNULA_PAGE_HOSTS.has(u.hostname)||isPelisflixPage(u)||isOfficialLivePage(u)||isEmpressPage(u)||isEmpressSeriesPage(u);
+export const supportedSourcePage=u=>GNULA_PAGE_HOSTS.has(u.hostname)||isComedySeriesPage(u)||isPelisflixPage(u)||isOfficialLivePage(u)||isEmpressPage(u)||isEmpressSeriesPage(u);
 const VOE_HOSTS=new Set(['voe.sx','teresapoliticallearn.com','megankiddifference.com','jamespatterncamera.com','ashleyhardat.com']);
 const embedPattern=/^https:\/\/(?:voe\.sx\/e\/[a-z0-9]+|uqload\.(?:com|vc)\/embed-[a-z0-9]+\.html)$/;
 export function allowedGnula(u){return u.protocol==='https:'&&/^(?:strm\d+\.uqload\.vc|ugc-cdn-caching-[a-z0-9]+\.cloudwindow-route\.com)$/.test(u.hostname)&&!u.port&&!u.username&&!u.password;}

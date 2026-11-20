@@ -1,0 +1,12 @@
+import assert from 'node:assert/strict';
+import {isComedyTransportStream,checkedComedySegment} from '../src/comedy-media-bytes.mjs';
+const ts=new Uint8Array(188*8);for(let i=0;i<ts.length;i++)ts[i]=i%251;for(let i=0;i<ts.length;i+=188)ts[i]=0x47;
+assert.equal(isComedyTransportStream(ts),true);
+assert.equal(isComedyTransportStream(new TextEncoder().encode('<html>File deleted</html>')),false);
+const checked=await checkedComedySegment(new Response(new ReadableStream({start(c){c.enqueue(ts.slice(0,90));c.enqueue(ts.slice(90,400));c.enqueue(ts.slice(400));c.close();}}),{headers:{'Content-Type':'font/woff2'}}));
+assert.equal(checked.headers.get('content-type'),'video/mp2t');
+assert.deepEqual(new Uint8Array(await checked.arrayBuffer()),ts);
+let cancelled=false;
+await assert.rejects(checkedComedySegment(new Response(new ReadableStream({start(c){c.enqueue(new Uint8Array(700));},cancel(){cancelled=true;}}),{headers:{'Content-Type':'video/mp2t'}})),/media_not_video/);
+assert.equal(cancelled,true);
+console.log('PASS comedy media verifies TS bytes and preserves split stream chunks.');

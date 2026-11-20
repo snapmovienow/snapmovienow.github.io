@@ -1,3 +1,5 @@
+import {runComedySeriesImport,comedySeriesImportStatus} from './comedy-series-import.mjs';
+import {comedyUsageRoot} from './comedy-series-catalog.mjs';
 import {recordRejectedAdminLogin} from './admin-login-alert.mjs';
 import {readXtreamReferences} from './xtream-reference-diagnostic.mjs';
 import {liveProcessingPreparation} from './live-processing-preparation.mjs';
@@ -104,10 +106,11 @@ export async function accountsFetch(state,env,req){
   await runOwnedMediaMigration(store,leases,env);
   await runUnivisionNyImport(store,leases,env);
   await runWillaxImport(store,leases,env);
+  await runComedySeriesImport(store,leases,env);
   await runBrandingTestWithdrawal(store,leases,env);
   await runCatalogMaintenance(env,{directory:(env,path,body={})=>path==='/catalog-maintenance-status'?catalogMaintenanceRoute(store,leases,path,body):env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_accounts_v1')).fetch('https://private/accounts'+path,{method:'POST',body:JSON.stringify(body)})});return answer({ok:true});
  }
- if(p==='/catalog-maintenance-status'){const response=await catalogMaintenanceRoute(store,leases,p,b);return answer({...await response.json(),lqsaImport:await lqsaImportStatus(store),exclusiveImport:await yagaImportStatus(store),localTvImport:await localTvImportStatus(store),localTvExpansion:await localTvExpansionStatus(store),regionalTvImport:await regionalTvImportStatus(store),publicTvImport:await publicTvImportStatus(store),empressImport:await empressImportStatus(store),ownedMedia:await ownedMediaMigrationStatus(store),univisionNyImport:await univisionNyImportStatus(store),willaxImport:await willaxImportStatus(store),brandingTestImport:await brandingTestImportStatus(store),localTvXtream:await localTvXtreamStatus(store)});}
+ if(p==='/catalog-maintenance-status'){const response=await catalogMaintenanceRoute(store,leases,p,b);return answer({...await response.json(),lqsaImport:await lqsaImportStatus(store),exclusiveImport:await yagaImportStatus(store),localTvImport:await localTvImportStatus(store),localTvExpansion:await localTvExpansionStatus(store),regionalTvImport:await regionalTvImportStatus(store),publicTvImport:await publicTvImportStatus(store),empressImport:await empressImportStatus(store),ownedMedia:await ownedMediaMigrationStatus(store),univisionNyImport:await univisionNyImportStatus(store),willaxImport:await willaxImportStatus(store),comedySeriesImport:await comedySeriesImportStatus(store),brandingTestImport:await brandingTestImportStatus(store),localTvXtream:await localTvXtreamStatus(store)});}
  if(['/catalog-maintenance-status','/catalog-maintenance-start','/catalog-maintenance-probe','/catalog-maintenance-observe','/catalog-maintenance-feed-result'].includes(p))return await catalogMaintenanceRoute(store,leases,p,b);
  if(['/exclusive-read','/exclusive-item-read','/exclusive-save','/exclusive-cover-save','/exclusive-cover-read'].includes(p))return store.transaction(async tx=>{
   const response=await exclusiveCatalogRoute(tx,p,b);
@@ -328,7 +331,7 @@ export async function accountsFetch(state,env,req){
   await local.removeFor({sid:b.sid});const used=await local.count({uid:b.uid});
   const mediaKey=found.row.type+'|'+found.row.profileServer+'|'+b.exclusiveId+'|'+(found.media.mode==='gnula'?'m3u8':new URL(found.media.page).pathname.split('.').at(-1));
   const activity=found.row.type==='series'?{title:found.media.title,seriesTitle:found.row.name,season:found.media.season,episode:found.media.episode_num}:{title:found.row.name};
-  const content=found.row.type==='series'?{type:'series',id:found.row.id,name:found.row.name,episodeId:found.media.id,season:found.media.season,episode:found.media.episode_num,...(found.row.supplement?{rootServer:found.row.supplement.server,rootSeriesId:found.row.supplement.seriesId}:{})}:null;
+  const content=found.row.type==='series'?{type:'series',id:found.row.id,name:found.row.name,episodeId:found.media.id,season:found.media.season,episode:found.media.episode_num,...(found.row.supplement?{rootServer:found.row.supplement.server,rootSeriesId:found.row.supplement.seriesId}:comedyUsageRoot(found.row))}:null;
   if(used>=3){await recordConnectionLimit(tx,user,{...b,mediaKey,activity},used);return answer({error:'user_connection_limit'},409);}
   const id=crypto.randomUUID();await local.put(id,{sid:b.sid,uid:b.uid,username:user.username,version:user.version,request_id:b.request_id,exclusiveId:b.exclusiveId,exclusiveParentId:found.row.id,playbackRevision:b.playbackRevision,mediaKey,activity,...(content?{content}:{}),client:cleanConnectionClient(b.client),...(usageChannel(found.row)?{channel:usageChannel(found.row)}:{}),startedAt:Date.now(),until:Date.now()+90000,...(b.xtream?{xtream:true}:{})});await recordCustomerActivity(tx,user.id,Date.now(),b.client);return answer({lease_id:id});
  });
