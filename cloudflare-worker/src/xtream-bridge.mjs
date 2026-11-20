@@ -105,7 +105,10 @@ export function createXtreamBridge(deps) {
       const monitored=response=>attachPlaybackQuality(response,request,session,{lease_id,request_id},value=>deps.ticket(env,value));
       const liveFlow=selectFlow(attempt+1);
       const appleFmp4=wantsApple&&appleGolPeruChannel(activity?.title);
-      const encrypted=await deps.ticket(env,{...(appleFmp4?{appleFmp4:true}:{}),sid:session.sid,username:credentials.username,password:credentials.password,origin:credentials.origin,lease_id,request_id,...(range_id?{native_range_id:range_id}:{}),xtream:true,type:item.type,id:item.upstreamId,ext:item.ext,exp:session.exp,...(liveFlow?{liveFlow}:{})});
+      const pilotUsername=env.NATIVE_TS_RELAY_TEST_USERNAME?.trim().toLowerCase();
+      const nativeTsPilot=pilotUsername&&session.username?.toLowerCase()===pilotUsername&&
+        item.type==='live'&&item.ext==='ts'&&request.method==='GET';
+      const encrypted=await deps.ticket(env,{...(nativeTsPilot?{nativeTsPilot:pilotUsername}:{}),...(appleFmp4?{appleFmp4:true}:{}),sid:session.sid,username:credentials.username,password:credentials.password,origin:credentials.origin,lease_id,request_id,...(range_id?{native_range_id:range_id}:{}),xtream:true,type:item.type,id:item.upstreamId,ext:item.ext,exp:session.exp,...(liveFlow?{liveFlow}:{})});
       const target=new URL('/stream',request.url);target.searchParams.set('t',encrypted);
       try{
         const prepared=startup?startup.prepare(request):new Request(request);

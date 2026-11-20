@@ -21,12 +21,16 @@ const realNow = Date.now, realFetch = globalThis.fetch, realTimeout = AbortSigna
 let now = realNow(), mode = 'healthy', charge = false;
 const signalBudgets = new WeakMap(), calls = {validations: [], signals: [], ranges: []};
 const objects = new Map(), pending = new Set();
+let relayCalls=0;
 const env = {TICKET_SECRET: 'local-performance-fixture-secret', ADMIN_SETUP_SECRET: 'local-performance-setup-12345678901234567890'};
 env.PLAYBACK_SESSIONS = {
   idFromName: value => value,
   get(id) {
     if (!objects.has(id)) objects.set(id, new PlaybackSession({storage: new Store()}, env));
-    return {fetch: (url, options) => objects.get(id).fetch(new Request(url, options))};
+    return {fetch: (url, options) => {
+      if(id.startsWith('__smn_media_v1:'))relayCalls++;
+      return objects.get(id).fetch(new Request(url, options));
+    }};
   }
 };
 const ctx = {waitUntil(promise) { pending.add(promise); promise.catch(() => {}).finally(() => pending.delete(promise)); }};
@@ -183,6 +187,28 @@ try {
     assert.equal(await leases.count(), 0, 'unavailable source attempts cannot leak reservations');
     mark(type + '-all-sources-timeout', started, {deadlineMs: deadline, status: result.status});
   }
+  mode='healthy';await accounts.delete('provider-health');await drain();
+  env.NATIVE_TS_RELAY_TEST_USERNAME='LOCAL-VIEWER-2';
+  let checkpoint=relayCalls;
+  const eligible=await live('local-viewer-2',0);
+  assert.equal(eligible.status,200);
+  const transport=eligible.body.getReader();
+  assert.deepEqual([...(await transport.read()).value],[0x47,1,2,3]);
+  await transport.cancel();await drain();
+  assert.equal(await leases.count(),0);
+  assert.equal(relayCalls-checkpoint,0,'only the nominated native TS account uses the experimental direct relay');
+  checkpoint=relayCalls;
+  const other=await live('local-viewer-3',0);
+  assert.equal(other.status,200);await cancel(other);
+  const hls=await live('local-viewer-2',0,'m3u8');
+  assert.equal(hls.status,200);await hls.text();await drain();
+  assert.equal(relayCalls-checkpoint,2,'another account and HLS keep the production relay');
+  delete env.NATIVE_TS_RELAY_TEST_USERNAME;
+  checkpoint=relayCalls;
+  const disabled=await live('local-viewer-2',0);
+  assert.equal(disabled.status,200);await cancel(disabled);
+  assert.equal(relayCalls-checkpoint,1,'clearing the opt-in returns native TS to the normal route');
+  assert.equal(await leases.count(),0);
   if (process.env.SMN_PERFORMANCE_REPORT) {
     const target = path.resolve(process.env.SMN_PERFORMANCE_REPORT);
     fs.mkdirSync(path.dirname(target), {recursive: true});

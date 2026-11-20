@@ -471,6 +471,16 @@ async function serverStream(req,env,u,ctx,trace){
  // bottleneck; control-plane revocation and provider capacity remain separate.
  if(u.pathname!=='/stream' && u.pathname!==signedStreamPath(d))return new Response('Expired',{status:410,headers:cors});
  const canonical=new URL(u);canonical.pathname='/stream';
+ const pilotUsername=env.NATIVE_TS_RELAY_TEST_USERNAME?.trim().toLowerCase();
+ if(d.xtream&&pilotUsername&&d.nativeTsPilot===pilotUsername&&
+    d.type==='live'&&d.ext==='ts'&&!d.resource&&!d.canary&&req.method==='GET'){
+  trace?.identify('live');
+  try{return consumeInitialEvidence(await observedWebStream({env},new Request(canonical.href,req),ctx,trace));}
+  catch(error){
+   if(error.message==='media_origin_unapproved')throw error;
+   return json({error:['live_startup_timeout','media_empty'].includes(error.message)?error.message:'stream_unavailable'},error.message==='live_startup_timeout'?504:502);
+  }
+ }
  if(!d.resource)trace?.identify(d.type);const response=await env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_media_v1:'+d.sid)).fetch(new Request(canonical.href,req));if(trace)trace.merge(response);return consumeInitialEvidence(response);
 }
 async function ownPlaybackControl(env,session,target,{signal,deadline}){
