@@ -1,3 +1,4 @@
+import {createComedyProviderCompletion} from './comedy-provider-completion.mjs';
 import {appleFragmentPlaylist,createAppleFragments,appleFragmentResponse} from './apple-live-fragments.mjs';
 import {isSignedStreamPath,liveHlsResourceExtension,signedStreamPath} from './signed-hls-path.mjs';
 import {liveTsDocumentType} from './live-ts-document.mjs';
@@ -708,9 +709,19 @@ function localAuditBootstrap(env,ctx){
  if(localAuditQueued||!ctx?.waitUntil||!env.PLAYBACK_SESSIONS||!localAuditEnabled(env))return;localAuditQueued=true;
  ctx.waitUntil(env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_local_tv_audit_20261104_v1')).fetch('https://private/local-tv-audit-start',{method:'POST',body:'{}'}).then(response=>response.body?.cancel()).catch(()=>console.error({event:'local_tv_audit_start',reason:'unavailable'})));
 }
-const exclusives=createExclusiveService({directory,sessionCall,ticket,unticket,resolveGnula,requestConnectionClient,guardXtreamResponse});
+const exclusives=createExclusiveService({directory,sessionCall,ticket,unticket,resolveGnula,requestConnectionClient,guardXtreamResponse,
+ prepareProvider:async(req,env,session,row,episode,context)=>{
+  const body={op:'stream_token',access_token:await ticket(env,session),type:'series',id:episode.upstreamId,series_id:row.providerBinding.seriesId,server:row.providerBinding.server,ext:episode.container_extension,request_id:crypto.randomUUID(),revision:1};
+  const response=await handleRequest(new Request('https://api.snaptvnow.com/',{method:'POST',headers:{'Content-Type':'application/json','User-Agent':req.headers.get('User-Agent')||'SNAPTVNOW'},body:JSON.stringify(body),signal:req.signal}),env,context||{waitUntil:p=>p.catch(()=>{})});
+  const prepared=await response.json();if(!response.ok)throw Object.assign(Error(prepared.error||'source_unavailable'),{status:response.status});
+  const target=new URL(prepared.url);if(target.origin!=='https://api.snaptvnow.com'||target.pathname!=='/stream'||!target.searchParams.get('t'))throw Error('provider_media_scope');return prepared;
+ },providerMedia:(req,env,ctx)=>handleRequest(req,env,ctx)});
 const catalogDeps={cors,exclusives,directory,registry,sessionCall,ticket,managedPlayback,serverStream,json,catalogCredentials:async(env,server,ctx)=>(await catalogCredentials(env,server,ctx,3)).map(p=>({...p,origin:p.origin||ORIGIN}))};
 const lqsaBootstrap=createLqsaBootstrap({directory,catalogFactory:(env,ctx)=>createProviderCatalog(catalogDeps,env,ctx)});
+const comedyProviderCompletion=createComedyProviderCompletion({directory,catalogFactory:(env,ctx)=>createProviderCatalog(catalogDeps,env,ctx),probe:async(env,ctx,sample)=>{
+ const adapter=ownPlaybackCanaryAdapter({env,storage:{async get(){},async put(){},async delete(){}},directory,ownSession,ticket,sessionCall,request:request=>traceRequest(request,trace=>handleRequest(request,env,ctx,trace))});
+ return runPlaybackCanary({username:env.PLAYBACK_CANARY_USERNAME,type:'series',diagnostic:true,sample},adapter);
+}});
 const xtreamRequest=createXtreamBridge(catalogDeps);
 const liveProcessingAdmin=createLiveProcessingAdmin({directory,catalog:(env,ctx)=>createProviderCatalog(catalogDeps,env,ctx,{timeoutMs:5000})});
 async function sealPortalConfig(env,value){const iv=crypto.getRandomValues(new Uint8Array(12)),data=await crypto.subtle.encrypt({name:'AES-GCM',iv,additionalData:new TextEncoder().encode('reseller-portal:'+PORTAL_ACCOUNT)},await aesKey(env.TICKET_SECRET),new TextEncoder().encode(JSON.stringify(value))),raw=new Uint8Array(12+data.byteLength);raw.set(iv);raw.set(new Uint8Array(data),12);return b64(raw)}
@@ -823,7 +834,7 @@ if(op==="logout"){if(session.managed)await directory(env,"/customer-logout",{uid
 b.username=session.username;b.password=session.password;
 if(op==='gnula_catalog')return json((await exclusives.catalog(env,permissions,u.origin,{legacy:!session.managed})).items);
 if(op==='gnula_series_info')try{return json(await exclusives.episodes(env,b.series_id,permissions,u.origin))}catch(e){return json({error:e.message},e.status||502)}
-if(op==='gnula_token'&&session.managed){try{return json(await exclusives.prepare(req,env,session,b.id,{request_id:b.request_id,revision:b.revision}))}catch(e){return json({error:e.message},e.status||502)}}
+if(op==='gnula_token'&&session.managed){try{return json(await exclusives.prepare(req,env,session,b.id,{request_id:b.request_id,revision:b.revision,context:ctx}))}catch(e){return json({error:e.message},e.status||502)}}
 if(op==="gnula_token"){
  const selection=selectExclusive((await exclusives.read(env)).items,b.id);if(!selection||!visibleExclusive(selection.row,permissions)||selection.media.mode!=='gnula'||selection.row.type==='series'&&selection.row===selection.media)return json({error:'title_not_allowed'},404);
  const source=await resolveGnula(selection.media.page,selection.media.preferredEmbed),data={kind:'gnula',source,sid:session.sid,exclusiveId:b.id,parentId:selection.row.id,playbackRevision:selection.row.playbackRevision,exp:Math.min(session.exp,Date.now()+3*60*60*1000)};
@@ -857,7 +868,7 @@ if(session.managed){
  const params=op==='series_info'?{series_id:b.series_id}:op==='vod_info'?{vod_id:b.vod_id}:op==='live_epg'?{stream_id:b.stream_id,limit:24}:{};
  if(op==='series_info')trace?.identify('series','web');else if(op==='vod_info')trace?.identify('movie','web');
  let data=comedyNativeList(op,b.server)&&b.server==='exclusive'?[]:await catalog(actions[op],b.server,params);
- if(comedyNativeList(op,b.server)&&permissions.series)data=comedyNativeCatalog({op,rows:data,items:(await exclusives.read(env)).items,permissions,origin:u.origin,server:b.server});
+ if(comedyNativeList(op,b.server)&&permissions.series)data=comedyNativeCatalog({op,rows:data,items:(await exclusives.seriesRead(env)).items,permissions,origin:u.origin,server:b.server});
  if(op==='series_info')data=await exclusives.supplementInfo(env,data,{server:b.server||'ccf',seriesId:String(b.series_id)},permissions);
  if(!permissions.adults){
   if(Array.isArray(data))data=comedyNativeList(op,b.server)&&b.server==='exclusive'?data:await adultPolicy.filter(actions[op],data);
@@ -876,6 +887,7 @@ export default {scheduled(event,env,ctx){
  if(env.ENVIRONMENT==='staging')return;
  // Import status belongs to scheduled maintenance, independent of customer traffic.
  lqsaBootstrap(env,ctx,{force:true});
+ comedyProviderCompletion(env,ctx);
  ownedMediaBootstrap(env,ctx);
  localAuditBootstrap(env,ctx);
  if(event.cron===MONITOR_CRON&&diagnosticEnabled(env))ctx.waitUntil(env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_empress_diagnostic_20261104')).fetch('https://private/empress-origin-diagnostic-run',{method:'POST',body:'{}'}).then(r=>r.body?.cancel()).catch(()=>console.error({event:'empress_origin_diagnostic',reason:'diagnostic_unavailable'})));

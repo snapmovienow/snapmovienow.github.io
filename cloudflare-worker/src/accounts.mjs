@@ -1,3 +1,4 @@
+import {COMEDY_PROVIDER_KEY,comedyProviderRoute,publicProviderComedyStatus,providerComedyItems,providerComedyContent} from './comedy-provider-completion.mjs';
 import {runComedySeriesImport,comedySeriesImportStatus} from './comedy-series-import.mjs';
 import {comedyUsageRoot} from './comedy-series-catalog.mjs';
 import {recordRejectedAdminLogin} from './admin-login-alert.mjs';
@@ -81,6 +82,7 @@ export async function accountsFetch(state,env,req){
  if(['/reseller-portal-rotation-status','/reseller-portal-rotation-begin','/reseller-portal-rotation-finish'].includes(p))return gatewayRotationStore(store,p,b);
  if(p==='/xtream-reference-diagnostic'){const result=await store.transaction(tx=>readXtreamReferences(tx,b.queries));return answer(result,result.error?400:200);}
  const leases=await openLeaseStore(store);
+ if(['/comedy-provider-read','/comedy-provider-status','/comedy-provider-claim','/comedy-provider-finish'].includes(p))return comedyProviderRoute(store,p,b);
  if(p==='/lqsa-import-status')return answer(await lqsaImportStatus(store));
  if(p==='/lqsa-import-run'){
   if(!Array.isArray(b.candidates)||b.candidates.length>8)return answer({error:'invalid_import_snapshot'},400);
@@ -110,7 +112,7 @@ export async function accountsFetch(state,env,req){
   await runBrandingTestWithdrawal(store,leases,env);
   await runCatalogMaintenance(env,{directory:(env,path,body={})=>path==='/catalog-maintenance-status'?catalogMaintenanceRoute(store,leases,path,body):env.PLAYBACK_SESSIONS.get(env.PLAYBACK_SESSIONS.idFromName('__smn_accounts_v1')).fetch('https://private/accounts'+path,{method:'POST',body:JSON.stringify(body)})});return answer({ok:true});
  }
- if(p==='/catalog-maintenance-status'){const response=await catalogMaintenanceRoute(store,leases,p,b);return answer({...await response.json(),lqsaImport:await lqsaImportStatus(store),exclusiveImport:await yagaImportStatus(store),localTvImport:await localTvImportStatus(store),localTvExpansion:await localTvExpansionStatus(store),regionalTvImport:await regionalTvImportStatus(store),publicTvImport:await publicTvImportStatus(store),empressImport:await empressImportStatus(store),ownedMedia:await ownedMediaMigrationStatus(store),univisionNyImport:await univisionNyImportStatus(store),willaxImport:await willaxImportStatus(store),comedySeriesImport:await comedySeriesImportStatus(store),brandingTestImport:await brandingTestImportStatus(store),localTvXtream:await localTvXtreamStatus(store)});}
+ if(p==='/catalog-maintenance-status'){const response=await catalogMaintenanceRoute(store,leases,p,b);return answer({...await response.json(),lqsaImport:await lqsaImportStatus(store),exclusiveImport:await yagaImportStatus(store),localTvImport:await localTvImportStatus(store),localTvExpansion:await localTvExpansionStatus(store),regionalTvImport:await regionalTvImportStatus(store),publicTvImport:await publicTvImportStatus(store),empressImport:await empressImportStatus(store),ownedMedia:await ownedMediaMigrationStatus(store),univisionNyImport:await univisionNyImportStatus(store),willaxImport:await willaxImportStatus(store),comedySeriesImport:await comedySeriesImportStatus(store),comedyProviderCompletion:publicProviderComedyStatus(await store.get(COMEDY_PROVIDER_KEY)),brandingTestImport:await brandingTestImportStatus(store),localTvXtream:await localTvXtreamStatus(store)});}
  if(['/catalog-maintenance-status','/catalog-maintenance-start','/catalog-maintenance-probe','/catalog-maintenance-observe','/catalog-maintenance-feed-result'].includes(p))return await catalogMaintenanceRoute(store,leases,p,b);
  if(['/exclusive-read','/exclusive-item-read','/exclusive-save','/exclusive-cover-save','/exclusive-cover-read'].includes(p))return store.transaction(async tx=>{
   const response=await exclusiveCatalogRoute(tx,p,b);
@@ -123,7 +125,7 @@ export async function accountsFetch(state,env,req){
  if(p==='/playback-quality')return store.transaction(tx=>updateConnectionQuality(tx,leases.in(tx),b,Date.now(),store.sql));
  if(p==='/reseller-live-connections')return store.transaction(tx=>resellerLiveConnections(tx,leases.in(tx),b));
  if(p==='/reseller-channel-usage'){await leases.prune();return store.transaction(async tx=>readChannelUsage(tx,store.sql,b,(await exclusiveSnapshot(tx)).items));}
- if(p==='/reseller-series-usage'){await leases.prune();return store.transaction(async tx=>readSeriesUsage(tx,store.sql,b,(await exclusiveSnapshot(tx)).items));}
+ if(p==='/reseller-series-usage'){await leases.prune();return store.transaction(async tx=>readSeriesUsage(tx,store.sql,b,[...(await exclusiveSnapshot(tx)).items,...providerComedyItems(await tx.get(COMEDY_PROVIDER_KEY))]));}
  if(p==='/reseller-client-history'){await leases.prune();return store.transaction(tx=>readClientHistory(tx,store.sql,b));}
  if(p==='/customer-logout'){const user=await store.get('user:'+normal(b.username));if(user?.id===b.uid)await safelyRecord(()=>recordClientAccess(store,store.sql,user,'logout',b.connection));return answer({ok:true});}
  if(p==='/reseller-integrity')return resellerIntegrity(store,b);
@@ -391,6 +393,7 @@ export async function accountsFetch(state,env,req){
   const previousRanges=nativeRangeId?owned.find(([,lease])=>lease.request_id===b.request_id&&lease.mediaKey===b.mediaKey)?.[1].nativeRanges:null;
   if(nativeRangeId&&previousRanges&&!previousRanges[nativeRangeId]&&Object.keys(previousRanges).length>=64)return answer({error:'try_later'},409);
   const extra={startedAt:Date.now(),client:cleanConnectionClient(b.client),...(canary?{canary:true}:{}),...(b.xtream?{xtream:true}:{}),...(b.request_id?{mediaKey:b.mediaKey,request_id:b.request_id}:{}),...(activity?{activity}:{})};
+  const comedyContent=String(b.mediaKey||'').startsWith('series|')?providerComedyContent(await tx.get(COMEDY_PROVIDER_KEY),b.mediaKey):null;if(comedyContent)extra.content=comedyContent;
   if(nativeRangeId)extra.nativeRanges={[nativeRangeId]:true};
   if(provider.mode==='panel'){
    // Inventory refresh stays off the streaming path. Counts use an index,
