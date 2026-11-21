@@ -116,12 +116,12 @@ export function createComedySeriesXtream({read,prepare,media},env,ctx){
    const entry=(await current(auth.user.permissions)).find(value=>value.definition.id===definition.id);
    if(!entry)return Response.json({error:'title_not_allowed'},{status:404});
    const {row,episodes:choices}=entry,cover=image(row.poster,base),category=await categoryId({...input,action:'get_series_info'}),releaseDate=definition.releaseDate||'';
-   const ids=await register(choices.map(episode=>({kind:'episode',server:COMEDY_SERIES_SERVER,upstreamId:episode.upstreamId,parentId:String(definition.upstreamId),ext:'m3u8',activity:{title:episode.title,seriesTitle:definition.name,season:episode.season,episode:episode.number}})));
+   const ids=await register(choices.map(episode=>({kind:'episode',server:COMEDY_SERIES_SERVER,upstreamId:episode.upstreamId,parentId:String(definition.upstreamId),ext:episode.metadata.container_extension||'m3u8',activity:{title:episode.title,seriesTitle:definition.name,season:episode.season,episode:episode.number}})));
    const episodes={};
    for(const [index,episode]of choices.entries()){
     const seconds=duration(episode.metadata.durationSeconds),season=String(episode.season);
     if(!episodes[season])episodes[season]=[];
-    episodes[season].push({id:String(ids[index]),episode_num:episode.number,title:episode.title,container_extension:'m3u8',season:episode.season,added:timestamp(row.createdAt),custom_sid:'',direct_source:base+'/series/'+encodeURIComponent(auth.username)+'/'+encodeURIComponent(auth.password)+'/'+ids[index]+'.m3u8',info:{movie_image:image(episode.metadata.poster||row.poster,base),plot:episode.metadata.plot||row.plot||'',duration_secs:seconds,duration:clock(seconds),releasedate:episode.metadata.releaseDate||releaseDate,rating:0},smn_profile:{type:'series',id:row.id,server:row.profileServer,episodeId:episode.id}});
+    episodes[season].push({id:String(ids[index]),episode_num:episode.number,title:episode.title,container_extension:episode.metadata.container_extension||'m3u8',season:episode.season,added:timestamp(row.createdAt),custom_sid:'',direct_source:base+'/series/'+encodeURIComponent(auth.username)+'/'+encodeURIComponent(auth.password)+'/'+ids[index]+'.'+(episode.metadata.container_extension||'m3u8'),info:{movie_image:image(episode.metadata.poster||row.poster,base),plot:episode.metadata.plot||row.plot||'',duration_secs:seconds,duration:clock(seconds),releasedate:episode.metadata.releaseDate||releaseDate,rating:0},smn_profile:{type:'series',id:row.id,server:row.profileServer,episodeId:episode.id}});
    }
    const info={name:definition.name,cover,plot:row.plot||'',cast:definition.cast||'',director:definition.director||'',genre:'Comedia',releaseDate,release_date:releaseDate,year:definition.year,last_modified:timestamp(row.updatedAt||row.createdAt),rating:'0',rating_5based:0,backdrop_path:[],youtube_trailer:'',episode_run_time:'',category_id:category};
    return Response.json({info,seasons:Object.entries(episodes).map(([season,items])=>({season_number:Number(season),id:Number(season),name:'Temporada '+season,episode_count:items.length,air_date:releaseDate,overview:row.plot||'',cover,cover_big:cover})),episodes});
@@ -130,7 +130,7 @@ export function createComedySeriesXtream({read,prepare,media},env,ctx){
    if(!auth.user.permissions.series)return Response.json({error:'content_disabled'},{status:403});
    const entry=await selectedEpisode(record,auth);
    if(!entry)return Response.json({error:'title_not_allowed'},{status:404});
-   if(record.ext!=='m3u8')return Response.json({error:'invalid_stream'},{status:400});
+   if(record.ext!==(entry.episode.metadata.container_extension||'m3u8'))return Response.json({error:'invalid_stream'},{status:400});
    const prepared=await prepare(request,env,auth.session,entry.episode.id,{usageRootContext:{rootServer:COMEDY_SERIES_SERVER,rootSeriesId:entry.definition.id}});
    try{return await media(new Request(prepared.url,request),env,ctx);}
    catch(error){await prepared.release?.();throw error;}
