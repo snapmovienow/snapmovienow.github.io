@@ -129,8 +129,11 @@ try{
  assert.equal(await degraded.locator('body').evaluate(e=>e.classList.contains('authenticated')),true,'partial catalog keeps the restored session');
  assert.equal(await degraded.locator('#movieStatus').textContent(),'0 títulos');
  assert.equal(await degraded.locator('#seriesRow .card b').first().textContent(),'Serie disponible');
- assert.equal(await degraded.locator('#liveStatus').textContent(),'1 canales');
- assert.equal(await degraded.locator('#liveCategory option').count(),1);
+ assert.equal(await degraded.locator('#liveStatus').textContent(),'2 canales');
+ assert.equal(await degraded.locator('#liveCategory option').count(),2);
+ await degraded.locator('#liveCategory').selectOption({label:'Venezuela'});
+ assert.equal(await degraded.locator('#liveGrid .channel').count(),1);
+ assert.match(await degraded.locator('#liveGrid .channel').textContent(),/Meridiano TV · señal oficial/);
  await degraded.evaluate(()=>localStorage.removeItem('smn_session'));await degraded.reload();
  await degraded.locator('#heroLogin').click();await degraded.locator('#user').fill('testuser');await degraded.locator('#pass').fill('customer-password-test');await degraded.locator('#submit').click();
  await degraded.locator('#welcome').filter({hasText:'Parte del catálogo'}).waitFor();
