@@ -108,11 +108,11 @@ async function login(page,secret=password){
  await page.locator('#heroLogin').click();await page.locator('#user').fill(username);await page.locator('#pass').fill(secret);await page.locator('#submit').click();
 }
 async function catalog(page){
- await page.waitForFunction(()=>authenticated&&allMovies.length===1&&allSeries.length===1&&allLive.length===1);
+ await page.waitForFunction(()=>authenticated&&allMovies.length===1&&allSeries.length===1&&allLive.length===2);
  assert.equal(await page.locator('#content').isVisible(),true);
  assert.equal(await page.locator('#movieRow .card b').first().textContent(),'Película sintética');
  assert.equal(await page.locator('#seriesRow .card b').first().textContent(),'Serie sintética');
- assert.equal(await page.locator('#liveGrid .channel').count(),1);
+ assert.equal(await page.locator('#liveGrid .channel').count(),2);
 }
 async function persistence(page,cookieMode,{temporary=false}={}){
  const snapshot=await page.evaluate(()=>__sessionStorageFixture.snapshot());
